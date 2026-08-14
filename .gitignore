@@ -4,3 +4,5 @@ __pycache__/
 *.png
 _test_*.csv
 explore*.py
+medir_volumen.py
+data/muestra_2026.parquet
