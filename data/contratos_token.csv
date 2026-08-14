@@ -1,0 +1,4 @@
+﻿idContrato,nroContratacion,desContratacion,objeto,descripcion,entidad,estado,fecPublica,fecIniCotizacion,fecFinCotizacion,relevancia,terminos_detectados,keyword,fecha_captura
+78188,116381001,CM-116381001-2026-OTIC,Servicio,Servicio de tokens de procesamiento de nube publica para la IA,MINISTERIO DE TRABAJO Y PROMOCION DEL EMPLEO,Culminado,08/07/2026 16:47:41,08/07/2026 17:00:00,10/07/2026 09:00:00,ALTA,token,token,2026-08-14 15:12 UTC
+80192,116381002,CM-116381002-2026-OTIC,Servicio,Servicio de tokens de procesamiento de nube publica para la IA,MINISTERIO DE TRABAJO Y PROMOCION DEL EMPLEO,Culminado,16/07/2026 08:01:34,16/07/2026 09:00:00,20/07/2026 10:30:00,ALTA,token,token,2026-08-14 15:12 UTC
+75828,116381,CM-116381-2026-OTIC,Servicio,SERVICIO DE TOKENS DE PROCESAMIENTO DE UBE PUBÑLICA PARA LA IA,MINISTERIO DE TRABAJO Y PROMOCION DEL EMPLEO,Culminado,30/06/2026 16:43:04,30/06/2026 17:00:00,01/07/2026 14:00:00,ALTA,token,token,2026-08-14 15:12 UTC
