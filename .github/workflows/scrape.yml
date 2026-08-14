@@ -1,0 +1,58 @@
+name: Scrape SEACE contrataciones menores
+
+on:
+  schedule:
+    # 11:00 UTC diario = 06:00 hora Peru (UTC-5)
+    - cron: "0 11 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: scrape-seace
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright pandas
+          playwright install --with-deps chromium
+
+      - name: Ejecutar scraper
+        run: |
+          python scraper_seace_menores.py \
+            --keyword token \
+            --objeto Servicio \
+            --out data/contratos_token.csv
+
+      - name: Marcar fecha de corrida
+        run: |
+          date -u '+%Y-%m-%d %H:%M:%S UTC' > data/ultima_corrida.txt
+          echo "Ultima corrida:"
+          cat data/ultima_corrida.txt
+
+      - name: Commit y push de data/
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/
+          if git diff --cached --quiet; then
+            echo "Sin cambios en data/; nada que commitear."
+          else
+            git commit -m "chore(data): actualizar contrataciones SEACE ($(date -u '+%Y-%m-%d %H:%M UTC'))"
+            git push
+          fi

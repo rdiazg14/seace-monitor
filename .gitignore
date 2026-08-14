@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+*.png
+_test_*.csv
+explore*.py
