@@ -1,0 +1,517 @@
+{
+  "87161": {
+    "id": 87161,
+    "nro": "506",
+    "descripcion": "CM-506-2026-UZANC",
+    "detail_url": "https://prod6.seace.gob.pe/buscador-publico/contrataciones/87161",
+    "api_calls": [
+      {
+        "url": "https://prod6.seace.gob.pe/v1/s8uit-services/buscadorpublico/contrataciones/listar-completo?id_contrato=87161",
+        "method": "GET",
+        "status": 200,
+        "body": {
+          "uitContratoCompletoProjection": {
+            "idContrato": 87161,
+            "idSigla": 2025,
+            "nomSigla": "UNIDAD ZONAL VI - ANCASH",
+            "idAreaUsuaria": 7273,
+            "nomAreaUsuaria": "0325 MANTENIMIENTO RUTINARIO RED VIAL PAVIMENTADA DE LA CARRETERA: PALLASCA-MOLLEPATA-MOLLEBAMBA-SAN",
+            "idEstadoContrato": 2,
+            "nomEstadoContrato": "Vigente",
+            "idObjetoContrato": 2,
+            "nomObjetoContrato": "Servicio",
+            "idTipoInvitacion": 1,
+            "nomTipoInvitacion": "INVITACIÓN ABIERTA",
+            "nroCorrelativo": 506,
+            "nroDescripcion": "CM-506-2026-UZANC",
+            "anio": 2026,
+            "desObjetoContrato": "SERVICIO DE \nOPERADOR DE CAMION VOLQUETE A TODO COSTO PARA EL \nMANTENIMIENTO RUTINARIO DE LA CARRETERA PALLASCA ¿ MOLLEPATA ¿ \nMOLLEBAMBA ¿ SANTIAGO DE CHUCO - EMP. RUTA 10 TRAMO PALLASCA ¿ \nMOLLEPATA. RUTA PE-3N; MULTIDISTRITAL PALLASCA -ANCASH ",
+            "codTieneProy": 0,
+            "nroCcmn": "4",
+            "desCcmn": "Cuadro Multianual de Necesidades",
+            "desJustifTipInvit": null,
+            "fecPublica": "14/08/2026 19:43:47",
+            "idEntidad": 200019,
+            "nomEntidad": "MTC-PROYECTO ESPECIAL DE INFRAESTRUCTURA DE TRANSPORTE NACIONAL (PROVIAS NACIONAL)",
+            "activo": 1,
+            "numCcp": null
+          },
+          "uitContratoEtapaProjectionList": [
+            {
+              "idContratoEtapa": 205742,
+              "idContrato": 87161,
+              "idEtapaContrato": 1,
+              "nomEtapaContrato": "ETAPA DE CONSULTAS",
+              "desJustif": null,
+              "nroDniAprobador": null,
+              "nomAprobador": null,
+              "fecIni": "14/08/2026 20:00:00",
+              "fecFin": "17/08/2026 12:00:00"
+            },
+            {
+              "idContratoEtapa": 205743,
+              "idContrato": 87161,
+              "idEtapaContrato": 2,
+              "nomEtapaContrato": "ETAPA DE COTIZACIÓN",
+              "desJustif": null,
+              "nroDniAprobador": null,
+              "nomAprobador": null,
+              "fecIni": "14/08/2026 20:00:00",
+              "fecFin": "17/08/2026 18:00:00"
+            }
+          ],
+          "uitContratoItemProjectionList": [
+            {
+              "idContratoItem": 2723,
+              "idCcontrato": null,
+              "idCubso": 2723,
+              "codCubso": "7214150500335559",
+              "codCubso8": null,
+              "nomCubso": "SERVICIO DE OPERACION DE MAQUINARIA PESADA",
+              "idMoneda": null,
+              "nomMoneda": null,
+              "tipoCambio": null,
+              "idUnidadMedida": 36,
+              "nomUnidadMedida": "SERVICIO",
+              "idDistrito": null,
+              "nomDistrito": "ANCASH/PALLASCA/PALLASCA",
+              "ubigeo": null,
+              "nomDistritoExt": "ANCASH/PALLASCA/PALLASCA",
+              "descripcionItem": "SERVICIO DE \nOPERADOR DE CAMION VOLQUETE A TODO COSTO PARA EL \nMANTENIMIENTO RUTINARIO DE LA CARRETERA PALLASCA ¿ MOLLEPATA ¿ \nMOLLEBAMBA ¿ SANTIAGO DE CHUCO - EMP. RUTA 10 TRAMO PALLASCA ¿ \nMOLLEPATA. RUTA PE-3N; MULTIDISTRITAL PALLASCA -ANCASH ",
+              "cantidad": 1,
+              "idCotizacion": null,
+              "codRuc": null,
+              "nomRazonSocial": null,
+              "precioTotal": null,
+              "nomEstadoCotiza": null,
+              "docSolicitado": null
+            }
+          ]
+        }
+      }
+    ],
+    "pdf_url_dom": null
+  },
+  "87159": {
+    "id": 87159,
+    "nro": "1194",
+    "descripcion": "CM-1194-2026-RAPI",
+    "detail_url": "https://prod6.seace.gob.pe/buscador-publico/contrataciones/87159",
+    "api_calls": [
+      {
+        "url": "https://prod6.seace.gob.pe/v1/s8uit-services/buscadorpublico/contrataciones/listar-completo?id_contrato=87159",
+        "method": "GET",
+        "status": 200,
+        "body": {
+          "uitContratoCompletoProjection": {
+            "idContrato": 87159,
+            "idSigla": 1059,
+            "nomSigla": "RED ASISTENCIAL PIURA",
+            "idAreaUsuaria": 3883,
+            "nomAreaUsuaria": "SERVICIO ESPECIALIDADES QUIRURGICAS HJCH PIURA",
+            "idEstadoContrato": 2,
+            "nomEstadoContrato": "Vigente",
+            "idObjetoContrato": 1,
+            "nomObjetoContrato": "Bien",
+            "idTipoInvitacion": 1,
+            "nomTipoInvitacion": "INVITACIÓN ABIERTA",
+            "nroCorrelativo": 1194,
+            "nroDescripcion": "CM-1194-2026-RAPI",
+            "anio": 2026,
+            "desObjetoContrato": "ADQUISICION DE MATERIAL MEDICO COMPRA LOCAL: - ESPACIADOR INTERVERTEBRAL LUMBAR ANTERIOR CON SISTEMA DE \nBLOQUEO DE ANCLAJE N( ALIF)/ - INJERTO OSEO ESPONJOSO SERVICIO NEUROCIRUGIA HOSPITAL III CAYETANO HEREDIA RED ASISTENCIAL PIURA. SGD: 0372520260000254",
+            "codTieneProy": 0,
+            "nroCcmn": "AnexoN02",
+            "desCcmn": "CUADRO MULTIANUAL",
+            "desJustifTipInvit": null,
+            "fecPublica": "14/08/2026 19:36:18",
+            "idEntidad": 2543,
+            "nomEntidad": "SEGURO SOCIAL DE SALUD",
+            "activo": 1,
+            "numCcp": null
+          },
+          "uitContratoEtapaProjectionList": [
+            {
+              "idContratoEtapa": 205740,
+              "idContrato": 87159,
+              "idEtapaContrato": 1,
+              "nomEtapaContrato": "ETAPA DE CONSULTAS",
+              "desJustif": null,
+              "nroDniAprobador": null,
+              "nomAprobador": null,
+              "fecIni": "17/08/2026 08:00:00",
+              "fecFin": "17/08/2026 09:00:00"
+            },
+            {
+              "idContratoEtapa": 205741,
+              "idContrato": 87159,
+              "idEtapaContrato": 2,
+              "nomEtapaContrato": "ETAPA DE COTIZACIÓN",
+              "desJustif": null,
+              "nroDniAprobador": null,
+              "nomAprobador": null,
+              "fecIni": "17/08/2026 09:01:00",
+              "fecFin": "19/08/2026 09:00:00"
+            }
+          ],
+          "uitContratoItemProjectionList": [
+            {
+              "idContratoItem": 12345,
+              "idCcontrato": null,
+              "idCubso": 12345,
+              "codCubso": "4232161000179772",
+              "codCubso8": null,
+              "nomCubso": "ESPACIADOR INTERESPINOSO LUMBAR DE TITANIO 10 mm DE DIAMETRO USO QUIRURGICO",
+              "idMoneda": null,
+              "nomMoneda": null,
+              "tipoCambio": null,
+              "idUnidadMedida": 40,
+              "nomUnidadMedida": "UNIDAD",
+              "idDistrito": null,
+              "nomDistrito": "PIURA/PIURA/CASTILLA",
+              "ubigeo": null,
+              "nomDistritoExt": "PIURA/PIURA/CASTILLA",
+              "descripcionItem": "ESPACIADOR INTERVERTEBRAL LUMBAR ANTERIOR CON SISTEMA DE BLOQUEO DE ANCLAJE N( ALIF)",
+              "cantidad": 1,
+              "idCotizacion": null,
+              "codRuc": null,
+              "nomRazonSocial": null,
+              "precioTotal": null,
+              "nomEstadoCotiza": null,
+              "docSolicitado": null
+            },
+            {
+              "idContratoItem": 7006,
+              "idCcontrato": null,
+              "idCubso": 7006,
+              "codCubso": "4231210600318469",
+              "codCubso8": null,
+              "nomCubso": "INJERTO OSEO DE TIRA ILIACA TRICORTICAL CADAVERICO DE 10 mm X 20 mm X 27 mm PARA RECONSTRUCCION QUIRURGICA",
+              "idMoneda": null,
+              "nomMoneda": null,
+              "tipoCambio": null,
+              "idUnidadMedida": 40,
+              "nomUnidadMedida": "UNIDAD",
+              "idDistrito": null,
+              "nomDistrito": "PIURA/PIURA/CASTILLA",
+              "ubigeo": null,
+              "nomDistritoExt": "PIURA/PIURA/CASTILLA",
+              "descripcionItem": "INJERTO OSEO ESPONJOSO",
+              "cantidad": 1,
+              "idCotizacion": null,
+              "codRuc": null,
+              "nomRazonSocial": null,
+              "precioTotal": null,
+              "nomEstadoCotiza": null,
+              "docSolicitado": null
+            }
+          ]
+        }
+      }
+    ],
+    "pdf_url_dom": null
+  },
+  "87158": {
+    "id": 87158,
+    "nro": "293",
+    "descripcion": "CM-293-2026-SERFOR",
+    "detail_url": "https://prod6.seace.gob.pe/buscador-publico/contrataciones/87158",
+    "api_calls": [
+      {
+        "url": "https://prod6.seace.gob.pe/v1/s8uit-services/buscadorpublico/contrataciones/listar-completo?id_contrato=87158",
+        "method": "GET",
+        "status": 200,
+        "body": {
+          "uitContratoCompletoProjection": {
+            "idContrato": 87158,
+            "idSigla": 1882,
+            "nomSigla": "SERFOR",
+            "idAreaUsuaria": 3319,
+            "nomAreaUsuaria": "DIRECCIÓN GENERAL DE INFORMACIÓN Y ORDENAMIENTO FORESTAL Y DE FAUNA SILVESTRE",
+            "idEstadoContrato": 2,
+            "nomEstadoContrato": "Vigente",
+            "idObjetoContrato": 2,
+            "nomObjetoContrato": "Servicio",
+            "idTipoInvitacion": 1,
+            "nomTipoInvitacion": "INVITACIÓN ABIERTA",
+            "nroCorrelativo": 293,
+            "nroDescripcion": "CM-293-2026-SERFOR",
+            "anio": 2026,
+            "desObjetoContrato": "SERVICIO DE ASISTENCIA TÉCNICA ORGANIZACIÓN DE EVENTOS PARA LA ATENCIÓN LOGÍSTICA DEL ¿CURSO DE FORMACIÓN DE BRIGADISTAS DE APOYO A GOBIERNOS LOCALES DIRIGIDO A PARTICIPANTES DE LOS ÁMBITOS DE LAS PROVINCIAS DE LUCANAS, PARINACOCHAS Y PAUCAR DEL SARA SARA¿, PARA LA DIRECCIÓN GENERAL DE INFORMACIÓN Y ORDENAMIENTO FORESTAL Y DE FAUNA SILVESTRE DEL SERFOR",
+            "codTieneProy": 0,
+            "nroCcmn": "04",
+            "desCcmn": "APROBACIÓN DE MODIFICACIONES AL CUADRO MULTIANUAL DE NECESIDADES N° 00000051",
+            "desJustifTipInvit": null,
+            "fecPublica": "14/08/2026 19:25:52",
+            "idEntidad": 23308,
+            "nomEntidad": "SERVICIO NACIONAL FORESTAL Y DE FAUNA SILVESTRE",
+            "activo": 1,
+            "numCcp": null
+          },
+          "uitContratoEtapaProjectionList": [
+            {
+              "idContratoEtapa": 205718,
+              "idContrato": 87158,
+              "idEtapaContrato": 1,
+              "nomEtapaContrato": "ETAPA DE CONSULTAS",
+              "desJustif": null,
+              "nroDniAprobador": null,
+              "nomAprobador": null,
+              "fecIni": "14/08/2026 19:30:00",
+              "fecFin": "15/08/2026 09:00:00"
+            },
+            {
+              "idContratoEtapa": 205719,
+              "idContrato": 87158,
+              "idEtapaContrato": 2,
+              "nomEtapaContrato": "ETAPA DE COTIZACIÓN",
+              "desJustif": null,
+              "nroDniAprobador": null,
+              "nomAprobador": null,
+              "fecIni": "15/08/2026 11:00:00",
+              "fecFin": "17/08/2026 14:00:00"
+            }
+          ],
+          "uitContratoItemProjectionList": [
+            {
+              "idContratoItem": 1552,
+              "idCcontrato": null,
+              "idCubso": 1552,
+              "codCubso": "8014160700284416",
+              "codCubso8": null,
+              "nomCubso": "SERVICIO DE PRODUCCION Y REALIZACION DE EVENTOS",
+              "idMoneda": null,
+              "nomMoneda": null,
+              "tipoCambio": null,
+              "idUnidadMedida": 36,
+              "nomUnidadMedida": "SERVICIO",
+              "idDistrito": null,
+              "nomDistrito": "AYACUCHO/LUCANAS/PUQUIO",
+              "ubigeo": null,
+              "nomDistritoExt": "AYACUCHO/LUCANAS/PUQUIO",
+              "descripcionItem": "SERVICIO DE ASISTENCIA TÉCNICA ORGANIZACIÓN DE EVENTOS PARA LA ATENCIÓN LOGÍSTICA DEL ¿CURSO DE FORMACIÓN DE BRIGADISTAS DE APOYO A GOBIERNOS LOCALES DIRIGIDO A PARTICIPANTES DE LOS ÁMBITOS DE LAS PROVINCIAS DE LUCANAS, PARINACOCHAS Y PAUCAR DEL SARA SARA¿, PARA LA DIRECCIÓN GENERAL DE INFORMACIÓN Y ORDENAMIENTO FORESTAL Y DE FAUNA SILVESTRE DEL SERFOR",
+              "cantidad": 1,
+              "idCotizacion": null,
+              "codRuc": null,
+              "nomRazonSocial": null,
+              "precioTotal": null,
+              "nomEstadoCotiza": null,
+              "docSolicitado": null
+            }
+          ]
+        }
+      }
+    ],
+    "pdf_url_dom": null
+  },
+  "87157": {
+    "id": 87157,
+    "nro": "1193",
+    "descripcion": "CM-1193-2026-RAPI",
+    "detail_url": "https://prod6.seace.gob.pe/buscador-publico/contrataciones/87157",
+    "api_calls": [
+      {
+        "url": "https://prod6.seace.gob.pe/v1/s8uit-services/buscadorpublico/contrataciones/listar-completo?id_contrato=87157",
+        "method": "GET",
+        "status": 200,
+        "body": {
+          "uitContratoCompletoProjection": {
+            "idContrato": 87157,
+            "idSigla": 1059,
+            "nomSigla": "RED ASISTENCIAL PIURA",
+            "idAreaUsuaria": 3883,
+            "nomAreaUsuaria": "SERVICIO ESPECIALIDADES QUIRURGICAS HJCH PIURA",
+            "idEstadoContrato": 2,
+            "nomEstadoContrato": "Vigente",
+            "idObjetoContrato": 1,
+            "nomObjetoContrato": "Bien",
+            "idTipoInvitacion": 1,
+            "nomTipoInvitacion": "INVITACIÓN ABIERTA",
+            "nroCorrelativo": 1193,
+            "nroDescripcion": "CM-1193-2026-RAPI",
+            "anio": 2026,
+            "desObjetoContrato": "ADQUISICION DE MATERIAL MEDICO COMPRA LOCAL: - CLIP DE ANEURISMA TEMPORAL CURVO, 9 MM DE LARGO, PRESION DE 70 GR/       \n-  CLIP DE ANEURISMA TEMPORAL RECTO 7 MM DE LARGO SERVICIO NEUROCIRUGIA HOSPITAL III CAYETANO HEREDIA RED ASISTENCIAL PIURA. SGD: 0372520260000356\n\n",
+            "codTieneProy": 0,
+            "nroCcmn": "AnexoN02",
+            "desCcmn": "CUADRO MULTIANUAL",
+            "desJustifTipInvit": null,
+            "fecPublica": "14/08/2026 19:19:47",
+            "idEntidad": 2543,
+            "nomEntidad": "SEGURO SOCIAL DE SALUD",
+            "activo": 1,
+            "numCcp": null
+          },
+          "uitContratoEtapaProjectionList": [
+            {
+              "idContratoEtapa": 205716,
+              "idContrato": 87157,
+              "idEtapaContrato": 1,
+              "nomEtapaContrato": "ETAPA DE CONSULTAS",
+              "desJustif": null,
+              "nroDniAprobador": null,
+              "nomAprobador": null,
+              "fecIni": "17/08/2026 08:00:00",
+              "fecFin": "17/08/2026 09:00:00"
+            },
+            {
+              "idContratoEtapa": 205717,
+              "idContrato": 87157,
+              "idEtapaContrato": 2,
+              "nomEtapaContrato": "ETAPA DE COTIZACIÓN",
+              "desJustif": null,
+              "nroDniAprobador": null,
+              "nomAprobador": null,
+              "fecIni": "17/08/2026 09:01:00",
+              "fecFin": "19/08/2026 09:00:00"
+            }
+          ],
+          "uitContratoItemProjectionList": [
+            {
+              "idContratoItem": 23680,
+              "idCcontrato": null,
+              "idCubso": 23680,
+              "codCubso": "4222160600048893",
+              "codCubso8": null,
+              "nomCubso": "CLIP DE ANEURISMA DE TITANIO CURVO 9 mm PARA USO QUIRURGICO",
+              "idMoneda": null,
+              "nomMoneda": null,
+              "tipoCambio": null,
+              "idUnidadMedida": 40,
+              "nomUnidadMedida": "UNIDAD",
+              "idDistrito": null,
+              "nomDistrito": "PIURA/PIURA/CASTILLA",
+              "ubigeo": null,
+              "nomDistritoExt": "PIURA/PIURA/CASTILLA",
+              "descripcionItem": "CLIP DE ANEURISMA TEMPORAL CURVO, 9 MM DE LARGO, PRESION DE 70 GR",
+              "cantidad": 4,
+              "idCotizacion": null,
+              "codRuc": null,
+              "nomRazonSocial": null,
+              "precioTotal": null,
+              "nomEstadoCotiza": null,
+              "docSolicitado": null
+            },
+            {
+              "idContratoItem": 23681,
+              "idCcontrato": null,
+              "idCubso": 23681,
+              "codCubso": "4222160600048902",
+              "codCubso8": null,
+              "nomCubso": "CLIP DE ANEURISMA DE TITANIO MINI RECTO 7 mm PARA USO QUIRURGICO",
+              "idMoneda": null,
+              "nomMoneda": null,
+              "tipoCambio": null,
+              "idUnidadMedida": 40,
+              "nomUnidadMedida": "UNIDAD",
+              "idDistrito": null,
+              "nomDistrito": "PIURA/PIURA/CASTILLA",
+              "ubigeo": null,
+              "nomDistritoExt": "PIURA/PIURA/CASTILLA",
+              "descripcionItem": "CLIP DE ANEURISMA TEMPORAL RECTO 7 MM DE LARGO\n",
+              "cantidad": 4,
+              "idCotizacion": null,
+              "codRuc": null,
+              "nomRazonSocial": null,
+              "precioTotal": null,
+              "nomEstadoCotiza": null,
+              "docSolicitado": null
+            }
+          ]
+        }
+      }
+    ],
+    "pdf_url_dom": null
+  },
+  "87153": {
+    "id": 87153,
+    "nro": "507",
+    "descripcion": "CM-507-2026-UZANC",
+    "detail_url": "https://prod6.seace.gob.pe/buscador-publico/contrataciones/87153",
+    "api_calls": [
+      {
+        "url": "https://prod6.seace.gob.pe/v1/s8uit-services/buscadorpublico/contrataciones/listar-completo?id_contrato=87153",
+        "method": "GET",
+        "status": 200,
+        "body": {
+          "uitContratoCompletoProjection": {
+            "idContrato": 87153,
+            "idSigla": 2025,
+            "nomSigla": "UNIDAD ZONAL VI - ANCASH",
+            "idAreaUsuaria": 7273,
+            "nomAreaUsuaria": "0325 MANTENIMIENTO RUTINARIO RED VIAL PAVIMENTADA DE LA CARRETERA: PALLASCA-MOLLEPATA-MOLLEBAMBA-SAN",
+            "idEstadoContrato": 2,
+            "nomEstadoContrato": "Vigente",
+            "idObjetoContrato": 2,
+            "nomObjetoContrato": "Servicio",
+            "idTipoInvitacion": 1,
+            "nomTipoInvitacion": "INVITACIÓN ABIERTA",
+            "nroCorrelativo": 507,
+            "nroDescripcion": "CM-507-2026-UZANC",
+            "anio": 2026,
+            "desObjetoContrato": "SERVICIO  DE  REVESTIDAS,  LIMPIEZA DE CUNETAS  Y  OTRAS  PARA  EL  MANTENIMIENTO RUTINARIO DE LA RED VIAL  PAVIMENTADA PALLASCA ¿ MOLLEPATA ¿  MOLLEBAMBA ¿ SANTIAGO DE CHUCO - EMP.  RUTA 10 TRAMO PALLASCA ¿ MOLLEPATA.  RUTA PE-3N; MULTIDISTRITAL PALLASCA  ANCASH. ",
+            "codTieneProy": 0,
+            "nroCcmn": "4",
+            "desCcmn": "Cuadro Multianual de Necesidades",
+            "desJustifTipInvit": null,
+            "fecPublica": "14/08/2026 19:51:50",
+            "idEntidad": 200019,
+            "nomEntidad": "MTC-PROYECTO ESPECIAL DE INFRAESTRUCTURA DE TRANSPORTE NACIONAL (PROVIAS NACIONAL)",
+            "activo": 1,
+            "numCcp": null
+          },
+          "uitContratoEtapaProjectionList": [
+            {
+              "idContratoEtapa": 205730,
+              "idContrato": 87153,
+              "idEtapaContrato": 1,
+              "nomEtapaContrato": "ETAPA DE CONSULTAS",
+              "desJustif": null,
+              "nroDniAprobador": null,
+              "nomAprobador": null,
+              "fecIni": "14/08/2026 20:00:00",
+              "fecFin": "17/08/2026 12:00:00"
+            },
+            {
+              "idContratoEtapa": 205731,
+              "idContrato": 87153,
+              "idEtapaContrato": 2,
+              "nomEtapaContrato": "ETAPA DE COTIZACIÓN",
+              "desJustif": null,
+              "nroDniAprobador": null,
+              "nomAprobador": null,
+              "fecIni": "14/08/2026 20:00:00",
+              "fecFin": "17/08/2026 18:00:00"
+            }
+          ],
+          "uitContratoItemProjectionList": [
+            {
+              "idContratoItem": 7577,
+              "idCcontrato": null,
+              "idCubso": 7577,
+              "codCubso": "7214100300361943",
+              "codCubso8": null,
+              "nomCubso": "SERVICIO DE MANTENIMIENTO DE CUNETAS DE CAMINOS Y CARRETERAS",
+              "idMoneda": null,
+              "nomMoneda": null,
+              "tipoCambio": null,
+              "idUnidadMedida": 36,
+              "nomUnidadMedida": "SERVICIO",
+              "idDistrito": null,
+              "nomDistrito": "ANCASH/PALLASCA/PALLASCA",
+              "ubigeo": null,
+              "nomDistritoExt": "ANCASH/PALLASCA/PALLASCA",
+              "descripcionItem": "SERVICIO DE LIMPIEZA DE CUNETAS REVESTIDAS, Y OTRAS PARA EL MANTENIMIENTO RUTINARIO DE LA \nRED VIAL PAVIMENTADA PALLASCA ¿ MOLLEPATA ¿ MOLLEBAMBA ¿ SANTIAGO DE CHUCO - EMP. RUTA \n10 TRAMO PALLASCA ¿ MOLLEPATA. RUTA PE-3N; MULTIDISTRITAL PALLASCA -ANCASH.",
+              "cantidad": 1,
+              "idCotizacion": null,
+              "codRuc": null,
+              "nomRazonSocial": null,
+              "precioTotal": null,
+              "nomEstadoCotiza": null,
+              "docSolicitado": null
+            }
+          ]
+        }
+      }
+    ],
+    "pdf_url_dom": null
+  }
+}
