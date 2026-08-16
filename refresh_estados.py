@@ -230,7 +230,7 @@ def main():
     print("=" * 60, flush=True)
     print("G1 — Refresco de estados", flush=True)
     print(f"  dry-run={args.dry_run}  gc={args.gc}  "
-          f"limit={args.limit or '∞'}  max-evaluacion={args.max_evaluacion}",
+          f"limit={args.limit or 'all'}  max-evaluacion={args.max_evaluacion}",
           flush=True)
     print("=" * 60, flush=True)
 
