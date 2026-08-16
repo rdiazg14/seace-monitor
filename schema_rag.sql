@@ -51,8 +51,9 @@ CREATE POLICY "chunks_tdr_select_anon"
 --    Retorna: id_contrato, chunk_index, tipo, texto, similarity score
 CREATE OR REPLACE FUNCTION buscar_tdr(
   query_embedding vector(768),
-  match_count     INT     DEFAULT 5,
-  filter_estado   TEXT    DEFAULT NULL
+  match_count     INT     DEFAULT 10,
+  filter_estado   TEXT    DEFAULT NULL,
+  min_similarity  FLOAT   DEFAULT 0.80
 )
 RETURNS TABLE (
   contrato_id   BIGINT,
@@ -72,6 +73,7 @@ LANGUAGE SQL STABLE AS $$
   JOIN contratos  c ON c.id = ct.contrato_id
   WHERE ct.embedding IS NOT NULL
     AND (filter_estado IS NULL OR c.estado = filter_estado)
+    AND (1 - (ct.embedding <=> query_embedding)) > min_similarity
   ORDER BY ct.embedding <=> query_embedding
   LIMIT match_count;
 $$;
