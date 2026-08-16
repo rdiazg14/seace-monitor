@@ -50,6 +50,13 @@ jobs:
         run: |
           python ingesta_completa.py
 
+      - name: Refresco de estados (G1)
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          python refresh_estados.py
+
       - name: Enriquecer detalle web (vigentes)
         env:
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}

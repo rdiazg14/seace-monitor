@@ -9,4 +9,3 @@ data/muestra_2026.parquet
 .env
 .env.local
 data/rag_pruebas.json
-docs/
