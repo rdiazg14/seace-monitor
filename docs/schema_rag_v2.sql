@@ -29,9 +29,13 @@ ALTER TABLE contratos ADD COLUMN IF NOT EXISTS pdf_procesado         BOOLEAN    
 ALTER TABLE contratos ADD COLUMN IF NOT EXISTS pdf_es_imagen         BOOLEAN;
 ALTER TABLE contratos ADD COLUMN IF NOT EXISTS tdr_texto             TEXT;
 ALTER TABLE contratos ADD COLUMN IF NOT EXISTS pdf_hash              TEXT;
+ALTER TABLE contratos ADD COLUMN IF NOT EXISTS pdf_archivo_id        BIGINT;
+ALTER TABLE contratos ADD COLUMN IF NOT EXISTS pdf_nombre            TEXT;
 ALTER TABLE contratos ADD COLUMN IF NOT EXISTS estado_verificado_at  TIMESTAMPTZ;
 
 COMMENT ON COLUMN contratos.req_url              IS 'URL de descarga del requerimiento (TDR).';
+COMMENT ON COLUMN contratos.pdf_archivo_id       IS 'idContratoArchivo del anexo PDF en SEACE.';
+COMMENT ON COLUMN contratos.pdf_nombre           IS 'nombre original del archivo TDR/requerimiento.';
 COMMENT ON COLUMN contratos.pdf_es_imagen        IS 'TRUE si PyMuPDF no extrajo texto y se uso OCR (PDF escaneado).';
 COMMENT ON COLUMN contratos.estado_verificado_at IS 'Ultimo refresco de estado (FASE G1 / frescura).';
 
