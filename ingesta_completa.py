@@ -17,15 +17,26 @@ Salidas:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
 import time
 import unicodedata
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pandas as pd
 from playwright.sync_api import sync_playwright
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+
+_env = Path(__file__).parent / ".env"
+if _env.exists():
+    for line in _env.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, _, v = line.partition("=")
+            os.environ.setdefault(k.strip(), v.strip())
 
 # ── Configuración ──────────────────────────────────────────────────────────
 URL_SPA  = "https://prod6.seace.gob.pe/buscador-publico/contrataciones"
@@ -176,6 +187,122 @@ def parsear_fecha(s: str | None) -> str | None:
         return datetime.strptime(s.strip(), _FMT_SEACE).isoformat() + "+00:00"
     except Exception:
         return None
+
+
+class RegistroSeace(BaseModel):
+    """Campos que la ingesta necesita. Extra se permite (la API manda más)."""
+    model_config = ConfigDict(extra="allow")
+
+    idContrato: int
+    nroContratacion: int | str | None = None
+    desContratacion: str | None = None
+    nomObjetoContrato: str | None = None
+    desObjetoContrato: str | None = None
+    nomEntidad: str | None = None
+    nomEstadoContrato: str | None = None
+    fecPublica: str | None = None
+    fecIniCotizacion: str | None = None
+    fecFinCotizacion: str | None = None
+    idTipoCotizacion: int | str | None = None
+    cotizar: bool | None = None
+
+    @field_validator("idContrato")
+    @classmethod
+    def id_positivo(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("idContrato debe ser > 0")
+        return v
+
+    @field_validator(
+        "desContratacion", "nomObjetoContrato", "desObjetoContrato",
+        "nomEntidad", "nomEstadoContrato",
+        "fecPublica", "fecIniCotizacion", "fecFinCotizacion",
+        mode="before",
+    )
+    @classmethod
+    def vacio_a_none(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, (dict, list)):
+            raise ValueError("se esperaba texto, llegó estructura")
+        s = str(v).strip()
+        return s or None
+
+
+def _id_contrato_de(payload: dict) -> int | None:
+    try:
+        n = int(payload.get("idContrato"))
+        return n if n > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+# Nunca persistir contexto de sesión Playwright / HTTP.
+_KEYS_SESION = {
+    "cookie", "cookies", "authorization", "token", "access_token",
+    "refresh_token", "set-cookie", "headers", "header", "csrf",
+    "x-csrf-token", "api_key", "apikey", "session", "playwright",
+    "request", "response",
+}
+
+
+def payload_solo_datos(registro: dict) -> dict:
+    """Copia el registro de la API. Sin cookies, headers ni tokens."""
+    out: dict = {}
+    for k, v in registro.items():
+        lk = str(k).lower()
+        if lk in _KEYS_SESION or "cookie" in lk or "token" in lk:
+            continue
+        if lk.startswith("authorization") or lk.startswith("x-"):
+            continue
+        out[k] = v
+    return out
+
+
+def registrar_rechazo(
+    client,
+    payload: dict,
+    motivo: str,
+    origen: str = "ingesta",
+) -> None:
+    if client is None:
+        print(f"  [rechazo] (sin supabase) {motivo[:180]}", flush=True)
+        return
+    datos = payload_solo_datos(payload) if isinstance(payload, dict) else {"_raw": str(payload)[:2000]}
+    fila = {
+        "id_contrato": _id_contrato_de(datos),
+        "origen": origen,
+        "motivo": (motivo or "invalido")[:2000],
+        "payload": datos,
+        "resuelto": False,
+    }
+    try:
+        client.table("ingesta_rechazados").insert(fila).execute()
+    except Exception as e:
+        print(
+            f"  [rechazo] no persistido ({e}). "
+            f"El registro NO entra a contratos. "
+            f"Si falta la tabla, ejecuta ingesta_rechazados.sql",
+            flush=True,
+        )
+
+
+def filtrar_validos(raw: list[dict], client) -> tuple[list[dict], int]:
+    """Devuelve (aceptados, n_rechazados). Los inválidos van a ingesta_rechazados."""
+    ok: list[dict] = []
+    n_rech = 0
+    for r in raw:
+        if not isinstance(r, dict):
+            n_rech += 1
+            registrar_rechazo(client, {"_raw": r}, "registro no es un objeto JSON")
+            continue
+        try:
+            RegistroSeace.model_validate(r)
+            ok.append(r)
+        except ValidationError as e:
+            n_rech += 1
+            registrar_rechazo(client, r, str(e))
+    return ok, n_rech
 
 
 def preparar_fila_db(r: dict) -> dict:
@@ -329,11 +456,53 @@ def main():
                     help="ignora max_id y re-descarga todo el corpus")
     ap.add_argument("--headed", action="store_true",
                     help="navegador visible (útil para depurar)")
+    ap.add_argument("--simular-rechazo", action="store_true",
+                    help="G2: inserta un payload inválido en ingesta_rechazados y sale")
     args = ap.parse_args()
     os.makedirs("data", exist_ok=True)
 
     # ── 1. Iniciar Supabase ────────────────────────────────────────────
     supa = init_supabase()
+
+    if args.simular_rechazo:
+        fake = {
+            "desObjetoContrato": "SIMULACION G2 — sin idContrato",
+            "nomEntidad": "ENTIDAD DE PRUEBA",
+            "nomEstadoContrato": {"inesperado": True},
+        }
+        print("G2 --simular-rechazo: payload inválido a propósito", flush=True)
+        print(json.dumps(fake, ensure_ascii=False), flush=True)
+        try:
+            RegistroSeace.model_validate(fake)
+            raise SystemExit("ERROR: el payload simulado no debería pasar el esquema")
+        except ValidationError as e:
+            motivo = str(e)
+            print(f"  ValidationError:\n{motivo}", flush=True)
+            registrar_rechazo(supa, fake, motivo, origen="ingesta")
+        if not supa:
+            raise SystemExit("ERROR: sin Supabase; el rechazo no se persistió")
+        try:
+            res = (
+                supa.table("ingesta_rechazados")
+                .select("id,id_contrato,origen,motivo,payload,resuelto,created_at")
+                .order("id", desc=True)
+                .limit(1)
+                .execute()
+            )
+        except Exception as e:
+            raise SystemExit(
+                f"ERROR: no pude leer ingesta_rechazados ({e}). "
+                "Pega ingesta_rechazados.sql en Supabase → SQL Editor y reintenta."
+            )
+        row = (res.data or [None])[0]
+        if not row:
+            raise SystemExit(
+                "ERROR: no hay fila en ingesta_rechazados. "
+                "Pega ingesta_rechazados.sql en Supabase → SQL Editor y reintenta."
+            )
+        print("\nFila persistida:", flush=True)
+        print(json.dumps(row, ensure_ascii=False, indent=2, default=str), flush=True)
+        return
 
     # ── 2. Determinar punto de partida (incremental vs completo) ───────
     max_id = 0
@@ -353,6 +522,7 @@ def main():
     # ── 3. Descarga desde el SEACE ────────────────────────────────────
     t0 = time.time()
     nuevas_raw: list[dict] = []
+    alerta_anomala = 0
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=not args.headed)
@@ -370,10 +540,13 @@ def main():
             total_api, lote, status = _api_call(page, pagina)
             if status != 200:
                 print(f"[error] pagina {pagina}: HTTP {status}")
+                alerta_anomala = 1
                 break
             if pagina == 1:
-                total_pags = -(-total_api // PAGE_SIZE)
+                total_pags = -(-total_api // PAGE_SIZE) if total_api else 0
                 print(f"totalElements={total_api:,}  paginas={total_pags}")
+                if total_api == 0:
+                    alerta_anomala = 1
 
             if max_id > 0:
                 nuevos = [r for r in lote if r.get("idContrato", 0) > max_id]
@@ -402,13 +575,33 @@ def main():
     print(f"\nDescarga: {len(nuevas_raw):,} registros en {time.time()-t0:.0f}s")
 
     if not nuevas_raw and max_id == 0:
+        alerta_anomala = 1
         print("ERROR: sin registros.", file=sys.stderr)
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        with open(OUT_LOG, "w", encoding="utf-8") as fh:
+            fh.write(
+                f"{ts}\n"
+                f"total_registros=0\n"
+                f"nuevos_esta_corrida=0\n"
+                f"rechazados_esta_corrida=0\n"
+                f"alerta_anomala=1\n"
+            )
         sys.exit(1)
 
-    # ── 4. Clasificar ─────────────────────────────────────────────────
+    # ── 4. Validar (G2) + clasificar ───────────────────────────────────
+    n_rech = 0
     if nuevas_raw:
+        print("Validando esquema (G2)...", flush=True)
+        nuevas_raw, n_rech = filtrar_validos(nuevas_raw, supa)
+        print(f"  aceptados={len(nuevas_raw):,}  rechazados={n_rech:,}", flush=True)
         print("Clasificando registros...")
-        filas_db = [preparar_fila_db(r) for r in nuevas_raw]
+        filas_db: list[dict] = []
+        for r in nuevas_raw:
+            try:
+                filas_db.append(preparar_fila_db(r))
+            except Exception as e:
+                n_rech += 1
+                registrar_rechazo(supa, r, f"preparar_fila_db: {e}")
         n_it = sum(1 for f in filas_db if f["categoria_it"])
         n_ia = sum(1 for f in filas_db if f["relevancia_ia"])
         print(f"  categoria_it asignada: {n_it:,}  |  relevancia_ia: {n_ia:,}")
@@ -450,12 +643,15 @@ def main():
             f"{ts}\n"
             f"total_registros={n_total:,}\n"
             f"nuevos_esta_corrida={len(nuevas_raw):,}\n"
+            f"rechazados_esta_corrida={n_rech}\n"
+            f"alerta_anomala={alerta_anomala}\n"
         )
     print(f"[log] {ts}")
 
     print("\n===== RESUMEN FINAL =====")
     print(f"Total corpus local: {n_total:,}")
     print(f"Nuevos esta corrida: {len(nuevas_raw):,}")
+    print(f"Rechazados (G2): {n_rech:,}")
     print(f"Supabase: {'✓ upsert completado' if supa and filas_db else '✗ no configurado o sin datos nuevos'}")
     print("=========================")
 

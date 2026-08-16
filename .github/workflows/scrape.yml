@@ -4,10 +4,16 @@ on:
   schedule:
     # 11:00 UTC diario = 06:00 hora Peru (UTC-5)
     - cron: "0 11 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      simular_alerta:
+        description: "G3: no scrapea; abre un issue de prueba"
+        type: boolean
+        default: false
 
 permissions:
-  contents: write
+  issues: write
+  contents: read
 
 concurrency:
   group: scrape-seace
@@ -15,8 +21,12 @@ concurrency:
 
 jobs:
   scrape:
+    if: ${{ github.event.inputs.simular_alerta != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      issues: write
+      contents: write
     env:
       PYTHONUNBUFFERED: "1"
     steps:
@@ -97,3 +107,28 @@ jobs:
             git commit -m "chore(data): SEACE $(date -u '+%Y-%m-%d') — corpus=${TOTAL} nuevos=${NUEVOS}"
             git push
           fi
+
+      - name: Alerta G3
+        if: always() && !cancelled()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python alerta_g3.py --job-status ${{ job.status }}
+
+  alerta_prueba:
+    if: ${{ github.event.inputs.simular_alerta == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Configurar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Disparo de prueba G3
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python alerta_g3.py --simular
