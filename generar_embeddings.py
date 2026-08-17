@@ -23,6 +23,8 @@ from pathlib import Path
 import httpx
 from supabase import create_client
 
+from chunker_contratos import cuerpo_chunk
+
 _env = Path(__file__).parent / ".env"
 if _env.exists():
     for line in _env.read_text(encoding="utf-8").splitlines():
@@ -54,6 +56,65 @@ BATCH_GEMINI = 16
 DELAY_GEMINI_S = 0.4
 MAX_CHARS_GEMINI = 8_000  # ~2k tokens
 GEMINI_BACKOFF = (2.0, 4.0, 8.0, 16.0, 32.0, 64.0)
+
+
+class QuotaExceeded(RuntimeError):
+    """429 de Gemini. El caller debe PARAR; no reintentar."""
+
+
+EMBED_STATS: dict[str, int] = {
+    "requests": 0,
+    "texts": 0,
+    "chars": 0,
+    "tokens_api": 0,
+}
+
+
+def reset_embed_stats() -> None:
+    for k in EMBED_STATS:
+        EMBED_STATS[k] = 0
+
+
+def print_embed_stats(prefix: str = "") -> None:
+    est = EMBED_STATS["chars"] / 4.0
+    api = EMBED_STATS["tokens_api"]
+    print(
+        f"{prefix}embed_stats requests={EMBED_STATS['requests']} "
+        f"texts={EMBED_STATS['texts']} chars={EMBED_STATS['chars']} "
+        f"tokens_est(chars/4)={est:.0f} tokens_api={api or '—'}",
+        flush=True,
+    )
+
+
+def modo_embed_fila(row: dict, mode: str) -> str:
+    if mode in ("header", "body"):
+        return mode
+    return "body" if (row.get("fuente") or "") == "pdf" else "header"
+
+
+def texto_para_embed(row: dict, mode: str) -> str:
+    t = (row.get("texto") or "")[:MAX_CHARS_GEMINI]
+    if modo_embed_fila(row, mode) == "body":
+        t = cuerpo_chunk(t)[:MAX_CHARS_GEMINI]
+    return t
+
+
+def reset_embedding_v2(supa, ids: list[int], fuente: str) -> int:
+    """Pone embedding_v2=NULL solo en la muestra (requiere ids+fuente)."""
+    if not ids or not fuente:
+        raise SystemExit("ERROR: --reset-v2 exige --ids y --fuente (no masivo)")
+    n = 0
+    for i in range(0, len(ids), 80):
+        lote = ids[i:i + 80]
+        res = (
+            supa.table("chunks_tdr")
+            .update({"embedding_v2": None})
+            .in_("contrato_id", lote)
+            .eq("fuente", fuente)
+            .execute()
+        )
+        n += len(res.data or [])
+    return n
 
 
 def vec_literal(vec: list[float]) -> str:
@@ -135,7 +196,12 @@ def paginar_ids_vigentes(supa) -> list[int]:
     return ids
 
 
-def chunks_sin_embedding_v2(supa, vigente_ids: list[int], limit: int) -> list[dict]:
+def chunks_sin_embedding_v2(
+    supa,
+    vigente_ids: list[int],
+    limit: int,
+    fuente: str | None = None,
+) -> list[dict]:
     """Solo chunks de vigentes con embedding_v2 NULL. No re-embebe filas ya llenas."""
     out: list[dict] = []
     for i in range(0, len(vigente_ids), 80):
@@ -145,15 +211,15 @@ def chunks_sin_embedding_v2(supa, vigente_ids: list[int], limit: int) -> list[di
             take = PAGE if not limit else min(PAGE, limit - len(out))
             if take <= 0:
                 return out
-            res = (
+            q = (
                 supa.table("chunks_tdr")
-                .select("id, contrato_id, chunk_index, tipo, texto")
+                .select("id, contrato_id, chunk_index, tipo, texto, fuente")
                 .in_("contrato_id", lote_ids)
                 .is_("embedding_v2", "null")
-                .order("id")
-                .range(offset, offset + take - 1)
-                .execute()
             )
+            if fuente:
+                q = q.eq("fuente", fuente)
+            res = q.order("id").range(offset, offset + take - 1).execute()
             batch = res.data or []
             out.extend(batch)
             if len(batch) < take:
@@ -164,7 +230,11 @@ def chunks_sin_embedding_v2(supa, vigente_ids: list[int], limit: int) -> list[di
     return out[:limit] if limit else out
 
 
-def embed_lote_gemini(client: httpx.Client, texts: list[str]) -> list[list[float]]:
+def embed_lote_gemini(
+    client: httpx.Client,
+    texts: list[str],
+    fail_fast: bool = False,
+) -> list[list[float]]:
     payload = {
         "requests": [
             {
@@ -176,8 +246,9 @@ def embed_lote_gemini(client: httpx.Client, texts: list[str]) -> list[list[float
             for t in texts
         ]
     }
+    waits = [0.0] if fail_fast else [0.0] + list(GEMINI_BACKOFF)
     last_err: Exception | None = None
-    for attempt, wait in enumerate([0.0] + list(GEMINI_BACKOFF)):
+    for attempt, wait in enumerate(waits):
         if wait:
             print(f"    [gemini backoff {wait:.0f}s attempt={attempt}]", flush=True)
             time.sleep(wait)
@@ -192,7 +263,10 @@ def embed_lote_gemini(client: httpx.Client, texts: list[str]) -> list[list[float
                 timeout=120.0,
             )
             if r.status_code == 429:
-                last_err = RuntimeError(f"429 {r.text[:200]}")
+                msg = f"429 {r.text[:200]}"
+                if fail_fast:
+                    raise QuotaExceeded(msg)
+                last_err = RuntimeError(msg)
                 retry_after = r.headers.get("Retry-After")
                 if retry_after:
                     try:
@@ -210,6 +284,17 @@ def embed_lote_gemini(client: httpx.Client, texts: list[str]) -> list[list[float
                     f"gemini respuesta inesperada keys={list(body)[:8]} "
                     f"n={len(raw) if isinstance(raw, list) else None}"
                 )
+            EMBED_STATS["requests"] += 1
+            EMBED_STATS["texts"] += len(texts)
+            EMBED_STATS["chars"] += sum(len(t) for t in texts)
+            um = body.get("usageMetadata") or {}
+            tok = um.get("totalTokenCount") or um.get("promptTokenCount") or 0
+            try:
+                EMBED_STATS["tokens_api"] += int(tok or 0)
+            except (TypeError, ValueError):
+                pass
+            if EMBED_STATS["requests"] == 1:
+                print(f"  gemini keys={list(body)[:12]} usage={um or '—'}", flush=True)
             out: list[list[float]] = []
             for item in raw:
                 vals = item.get("values") if isinstance(item, dict) else None
@@ -221,15 +306,24 @@ def embed_lote_gemini(client: httpx.Client, texts: list[str]) -> list[list[float
                     raise RuntimeError(f"dimensión {len(vals)} != {GEMINI_DIM}")
                 out.append(l2_normalize([float(x) for x in vals]))
             return out
+        except QuotaExceeded:
+            raise
         except httpx.HTTPStatusError as e:
             last_err = e
+            code = e.response.status_code if e.response is not None else 0
+            if fail_fast and code == 429:
+                raise QuotaExceeded(str(e)) from e
             if e.response is not None and e.response.status_code in (429, 500, 503):
+                if fail_fast:
+                    raise
                 print(f"    [retry {attempt}] HTTP {e.response.status_code}", flush=True)
                 continue
             raise
         except Exception as e:
             last_err = e
             print(f"    [retry {attempt}] {e}", flush=True)
+            if fail_fast:
+                raise
     raise RuntimeError(f"embed_lote_gemini falló: {last_err}")
 
 
@@ -351,35 +445,60 @@ def run_bge(supa, limit: int) -> None:
     print("=" * 60, flush=True)
 
 
-def run_gemini(supa, limit: int) -> None:
+def run_gemini(
+    supa,
+    limit: int,
+    fuente: str | None = None,
+    ids: list[int] | None = None,
+    batch: int | None = None,
+    embed_mode: str = "auto",
+    delay: float | None = None,
+    fail_fast: bool = False,
+) -> dict:
     if not GEMINI_API_KEY:
         raise SystemExit("ERROR: GEMINI_API_KEY no encontrado (env / .env / GitHub secret)")
 
+    lote_n = batch if batch and batch > 0 else BATCH_GEMINI
+    pause = delay if delay is not None and delay >= 0 else (
+        (2.0 if fail_fast else 8.0) if lote_n <= 2 else DELAY_GEMINI_S
+    )
     print("=" * 60, flush=True)
     print("Embeddings gemini-embedding-001 @1536 → embedding_v2", flush=True)
-    print("  taskType=RETRIEVAL_DOCUMENT  solo Vigente  WHERE embedding_v2 IS NULL", flush=True)
+    print("  taskType=RETRIEVAL_DOCUMENT  WHERE embedding_v2 IS NULL", flush=True)
+    print(
+        f"  fuente={fuente or '(todas)'}  ids={ids or '(vigentes)'}  "
+        f"batch={lote_n}  embed_mode={embed_mode}  delay={pause:.1f}s  "
+        f"fail_fast={fail_fast}",
+        flush=True,
+    )
     print("=" * 60, flush=True)
 
-    vigente_ids = paginar_ids_vigentes(supa)
-    print(f"  contratos vigentes: {len(vigente_ids):,}", flush=True)
-    pendientes = chunks_sin_embedding_v2(supa, vigente_ids, limit)
+    vigente_ids = ids if ids else paginar_ids_vigentes(supa)
+    print(f"  contratos: {len(vigente_ids):,}", flush=True)
+    pendientes = chunks_sin_embedding_v2(supa, vigente_ids, limit, fuente=fuente)
     total = len(pendientes)
     print(f"  chunks vigentes sin embedding_v2: {total:,}", flush=True)
     if total == 0:
         print("Nada que hacer (idempotente).", flush=True)
-        print_cobertura(cobertura_vigentes(supa))
-        return
+        if fuente or ids:
+            print("  (muestra: 0 pendientes)", flush=True)
+        else:
+            print_cobertura(cobertura_vigentes(supa))
+        return {"ok": 0, "err": 0, "total": 0, "pendientes": 0}
 
     t0 = time.time()
     ok = 0
     errores = 0
 
     with httpx.Client() as http:
-        for i in range(0, total, BATCH_GEMINI):
-            lote = pendientes[i:i + BATCH_GEMINI]
-            texts = [(row.get("texto") or "")[:MAX_CHARS_GEMINI] for row in lote]
+        for i in range(0, total, lote_n):
+            lote = pendientes[i:i + lote_n]
+            texts = [texto_para_embed(row, embed_mode) for row in lote]
+            if i == 0 and texts:
+                preview = texts[0][:80].replace("\n", " | ")
+                print(f"  preview embed[0]={preview!r}", flush=True)
             try:
-                embs = embed_lote_gemini(http, texts)
+                embs = embed_lote_gemini(http, texts, fail_fast=fail_fast)
                 for row, vec in zip(lote, embs):
                     (
                         supa.table("chunks_tdr")
@@ -388,12 +507,23 @@ def run_gemini(supa, limit: int) -> None:
                         .execute()
                     )
                 ok += len(lote)
+            except QuotaExceeded as e:
+                errores += len(lote)
+                pending = total - ok
+                print(
+                    f"  STOP 429  ok={ok}/{total}  lote={i}-{i+len(lote)}  "
+                    f"sin backoff. {e}",
+                    flush=True,
+                )
+                raise QuotaExceeded(f"ok={ok} pendientes={pending}: {e}") from e
             except Exception as e:
                 errores += len(lote)
                 print(f"  [error] lote {i}-{i+len(lote)}: {e}", flush=True)
+                if fail_fast:
+                    raise
 
-            done = min(i + BATCH_GEMINI, total)
-            if done % (BATCH_GEMINI * 4) < BATCH_GEMINI or done == total:
+            done = min(i + lote_n, total)
+            if done % max(lote_n, 1) == 0 or done == total:
                 elapsed = time.time() - t0
                 rate = ok / elapsed if elapsed else 0
                 print(
@@ -401,11 +531,24 @@ def run_gemini(supa, limit: int) -> None:
                     f"{elapsed:.0f}s  {rate:.1f}/s",
                     flush=True,
                 )
-            time.sleep(DELAY_GEMINI_S)
+            time.sleep(pause)
 
     elapsed = time.time() - t0
     print(f"\nGemini v2 completado en {elapsed:.0f}s  ok={ok:,} err={errores:,}", flush=True)
-    print_cobertura(cobertura_vigentes(supa))
+    print_embed_stats("  ")
+    if fuente or ids:
+        n_pdf = (
+            supa.table("chunks_tdr")
+            .select("id", count="exact")
+            .in_("contrato_id", vigente_ids)
+        )
+        if fuente:
+            n_pdf = n_pdf.eq("fuente", fuente)
+        n_pdf = n_pdf.not_.is_("embedding_v2", "null").limit(1).execute()
+        print(f"  embedding_v2 NOT NULL en muestra: {n_pdf.count}", flush=True)
+    else:
+        print_cobertura(cobertura_vigentes(supa))
+    return {"ok": ok, "err": errores, "total": total, "pendientes": total - ok}
 
 
 def main():
@@ -422,6 +565,45 @@ def main():
         action="store_true",
         help="Solo reporta cobertura v2 de vigentes; no embebe",
     )
+    ap.add_argument(
+        "--fuente",
+        default="",
+        help="Filtra chunks por fuente (api|pdf). Vacio = todas.",
+    )
+    ap.add_argument(
+        "--ids",
+        default="",
+        help="Ids de contrato separados por coma (no re-embebe el resto)",
+    )
+    ap.add_argument(
+        "--batch",
+        type=int,
+        default=0,
+        help="Tamano de lote Gemini (0 = default 16)",
+    )
+    ap.add_argument(
+        "--embed-mode",
+        choices=["auto", "header", "body"],
+        default="auto",
+        help="auto: pdf=cuerpo sin header, api=texto completo. "
+             "header/body fuerzan el modo (A/B del header PDF).",
+    )
+    ap.add_argument(
+        "--delay",
+        type=float,
+        default=-1,
+        help="Pausa entre lotes Gemini en segundos (-1 = auto: 8s si batch<=2)",
+    )
+    ap.add_argument(
+        "--reset-v2",
+        action="store_true",
+        help="Pone embedding_v2=NULL en --ids + --fuente (no embebe). Exige ambos.",
+    )
+    ap.add_argument(
+        "--fail-fast",
+        action="store_true",
+        help="Ante 429 PARA sin backoff (validacion de muestra).",
+    )
     args = ap.parse_args()
 
     if not SUPABASE_URL or not SUPABASE_KEY:
@@ -432,8 +614,23 @@ def main():
         print_cobertura(cobertura_vigentes(supa))
         return
 
+    ids = [int(x) for x in args.ids.replace(" ", "").split(",") if x] if args.ids else None
+    if args.reset_v2:
+        n = reset_embedding_v2(supa, ids or [], args.fuente)
+        print(f"reset embedding_v2: {n} filas (fuente={args.fuente} ids={ids})", flush=True)
+        return
+
     if args.backend == "gemini":
-        run_gemini(supa, args.limit)
+        run_gemini(
+            supa,
+            args.limit,
+            fuente=(args.fuente or None),
+            ids=ids,
+            batch=(args.batch or None),
+            embed_mode=args.embed_mode,
+            delay=(None if args.delay < 0 else args.delay),
+            fail_fast=args.fail_fast,
+        )
     else:
         run_bge(supa, args.limit)
 
