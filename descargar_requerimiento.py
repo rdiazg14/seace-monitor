@@ -1320,6 +1320,13 @@ def run_ocr_selectivo(
         "AND fecha_fin_cotizacion > now()  (NULL no gasta Flash)",
         flush=True,
     )
+    if not columnas_extraccion_ok(supa):
+        print(
+            "  [warn] columnas tdr_tipo_extraccion/paginas_ocr_* ausentes; "
+            "la cola usa data/tdr_extraccion.jsonl "
+            "(aplica tdr_extraccion_meta.sql + --sync-meta)",
+            flush=True,
+        )
     print("=" * 60, flush=True)
 
     def _log_final(
