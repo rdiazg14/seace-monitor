@@ -1,0 +1,201 @@
+# Pipeline diario unificado: ingesta → G1 → detalle → PDF nativo → OCR 2h → chunk/embed.
+# Nace SOLO como workflow_dispatch. El cron 09:00 Perú NO está activo.
+name: Pipeline diario SEACE
+
+on:
+  workflow_dispatch:
+    inputs:
+      ocr_max_segundos:
+        description: "Tope de tiempo OCR en segundos (0 = sin tope de reloj; cupo Flash sigue)"
+        required: false
+        default: "7200"
+      ocr_rpm:
+        description: "Tope Flash OCR por minuto"
+        required: false
+        default: "6"
+      skip_ocr:
+        description: "Saltar el paso OCR"
+        type: boolean
+        default: false
+      solo_ocr:
+        description: "Prueba: solo OCR (salta ingesta/G1/detalle/PDF/chunk/embed)"
+        type: boolean
+        default: false
+      dry_run:
+        description: "OCR en dry-run (no escribe ni llama Flash)"
+        type: boolean
+        default: false
+
+# Cutover futuro (NO activar ahora):
+# schedule:
+#   - cron: "0 14 * * *"   # 09:00 America/Lima (UTC-5)
+
+permissions:
+  issues: write
+  contents: read
+
+concurrency:
+  group: scrape-seace
+  cancel-in-progress: false
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    permissions:
+      issues: write
+      contents: write
+    env:
+      PYTHONUNBUFFERED: "1"
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+
+      - name: Ingesta incremental corpus completo
+        id: ingesta
+        if: ${{ github.event.inputs.solo_ocr != 'true' }}
+        run: python ingesta_completa.py
+
+      - name: Refresco de estados (G1)
+        id: g1
+        if: ${{ success() && github.event.inputs.solo_ocr != 'true' }}
+        run: python refresh_estados.py
+
+      - name: Enriquecer detalle web (vigentes)
+        id: detalle
+        if: ${{ success() && github.event.inputs.solo_ocr != 'true' }}
+        continue-on-error: true
+        run: python enriquecer_detalle.py
+
+      - name: G3 detalle
+        if: ${{ always() && !cancelled() && github.event.inputs.solo_ocr != 'true' && steps.detalle.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python alerta_g3.py --paso detalle --job-status failure
+
+      - name: PDF nativo (PyMuPDF, sin Flash)
+        id: pdf
+        if: ${{ success() && github.event.inputs.solo_ocr != 'true' }}
+        continue-on-error: true
+        run: python descargar_requerimiento.py --solo-nativo --limit 0
+
+      - name: G3 pdf
+        if: ${{ always() && !cancelled() && github.event.inputs.solo_ocr != 'true' && steps.pdf.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python alerta_g3.py --paso pdf --job-status failure
+
+      - name: OCR selectivo (TI, tope reloj)
+        id: ocr
+        if: ${{ !cancelled() && github.event.inputs.skip_ocr != 'true' && (github.event.inputs.solo_ocr == 'true' || success()) }}
+        timeout-minutes: 125
+        continue-on-error: true
+        run: |
+          MAX="${{ github.event.inputs.ocr_max_segundos }}"
+          RPM="${{ github.event.inputs.ocr_rpm }}"
+          if [ -z "$MAX" ]; then MAX=7200; fi
+          if [ -z "$RPM" ]; then RPM=6; fi
+          DRY=""
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then DRY="--dry-run"; fi
+          python descargar_requerimiento.py --solo-ocr --solo-ti \
+            --max-segundos "$MAX" --rpm "$RPM" --max-ocr-dia 6000 --limit 0 $DRY
+          echo "=== ultima_ocr.txt ==="
+          cat data/ultima_ocr.txt || true
+
+      - name: G3 ocr
+        if: ${{ always() && !cancelled() && github.event.inputs.skip_ocr != 'true' && steps.ocr.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python alerta_g3.py --paso ocr --job-status failure
+
+      - name: Chunking TDR api
+        id: chunk_api
+        if: ${{ success() && github.event.inputs.solo_ocr != 'true' }}
+        continue-on-error: true
+        run: python chunker_contratos.py
+
+      - name: G3 chunk api
+        if: ${{ always() && !cancelled() && github.event.inputs.solo_ocr != 'true' && steps.chunk_api.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python alerta_g3.py --paso chunk_api --job-status failure
+
+      - name: Chunking TDR pdf delta
+        id: chunk_pdf
+        if: ${{ success() && github.event.inputs.solo_ocr != 'true' }}
+        continue-on-error: true
+        run: python chunker_contratos.py --solo-pdf --solo-nuevos
+
+      - name: G3 chunk pdf
+        if: ${{ always() && !cancelled() && github.event.inputs.solo_ocr != 'true' && steps.chunk_pdf.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python alerta_g3.py --paso chunk_pdf --job-status failure
+
+      - name: Embeddings bge-base-en-v1.5
+        id: embed_bge
+        if: ${{ success() && github.event.inputs.solo_ocr != 'true' }}
+        continue-on-error: true
+        run: python generar_embeddings.py
+
+      - name: G3 embed bge
+        if: ${{ always() && !cancelled() && github.event.inputs.solo_ocr != 'true' && steps.embed_bge.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python alerta_g3.py --paso embed_bge --job-status failure
+
+      - name: Embeddings Gemini v2
+        id: embed_v2
+        if: ${{ success() && github.event.inputs.solo_ocr != 'true' }}
+        continue-on-error: true
+        run: python generar_embeddings.py --backend gemini
+
+      - name: G3 embed v2
+        if: ${{ always() && !cancelled() && github.event.inputs.solo_ocr != 'true' && steps.embed_v2.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python alerta_g3.py --paso embed_v2 --job-status failure
+
+      - name: Marcar fecha de corrida
+        if: ${{ success() }}
+        run: |
+          date -u '+%Y-%m-%d %H:%M:%S UTC' > data/ultima_corrida.txt
+          echo "=== ultima_corrida.txt ==="; cat data/ultima_corrida.txt
+          echo "=== ultima_ingesta.txt ==="; cat data/ultima_ingesta.txt || true
+          echo "=== ultima_ocr.txt ==="; cat data/ultima_ocr.txt || true
+
+      - name: Commit y push de data/
+        if: ${{ success() }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/
+          if git diff --cached --quiet; then
+            echo "Sin cambios en data/; nada que commitear."
+          else
+            TOTAL=$(grep total_registros data/ultima_ingesta.txt | cut -d= -f2 || true)
+            NUEVOS=$(grep nuevos_esta_corrida data/ultima_ingesta.txt | cut -d= -f2 || true)
+            MOTIVO=$(grep motivo_parada data/ultima_ocr.txt | cut -d= -f2 || true)
+            git commit -m "chore(data): pipeline $(date -u '+%Y-%m-%d') — corpus=${TOTAL:-?} nuevos=${NUEVOS:-?} ocr=${MOTIVO:-skip}"
+            git push
+          fi
+
+      - name: Alerta G3
+        if: always() && !cancelled()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python alerta_g3.py --job-status ${{ job.status }}

@@ -97,6 +97,11 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--job-status", default="", help="success | failure | cancelled")
     ap.add_argument("--simular", action="store_true", help="Disparo de prueba [G3][prueba]")
+    ap.add_argument(
+        "--paso",
+        default="",
+        help="Eslabón que falló (ingesta, g1, detalle, pdf, ocr, chunk, embed)",
+    )
     args = ap.parse_args()
 
     status = (args.job_status or os.environ.get("JOB_STATUS") or "").lower()
@@ -123,8 +128,12 @@ def main() -> None:
         return
 
     motivos: list[str] = []
+    paso = (args.paso or "").strip()
     if status == "failure":
-        motivos.append("La corrida de GitHub Actions terminó en **failure** (scraper, refresh, embed u otro step).")
+        if paso:
+            motivos.append(f"Falló el eslabón **{paso}** del pipeline diario.")
+        else:
+            motivos.append("La corrida de GitHub Actions terminó en **failure** (scraper, refresh, embed u otro step).")
     if log.get("alerta_anomala") == "1":
         motivos.append(
             "Ingesta marcó **alerta_anomala=1** (API HTTP ≠ 200, totalElements=0, o sin registros en corrida completa)."
@@ -149,7 +158,10 @@ def main() -> None:
     )
     if run_url:
         cuerpo += f"\nRun: {run_url}\n"
-    _publicar(f"[G3] Corrida SEACE falló o anómala — {ts}", cuerpo, prueba=False)
+    titulo = (
+        f"[G3] Falló {paso} — {ts}" if paso else f"[G3] Corrida SEACE falló o anómala — {ts}"
+    )
+    _publicar(titulo, cuerpo, prueba=False)
 
 
 if __name__ == "__main__":
