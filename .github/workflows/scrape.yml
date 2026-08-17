@@ -1,9 +1,11 @@
+# Cutover: el diario es pipeline.yml (09:00 Perú). Este workflow queda solo manual.
+# Sigue en el mismo concurrency group scrape-seace para no solaparse con el pipeline.
 name: Scrape SEACE contrataciones menores
 
 on:
-  schedule:
-    # 11:00 UTC diario = 06:00 hora Peru (UTC-5)
-    - cron: "0 11 * * *"
+  # schedule:
+  #   # 11:00 UTC diario = 06:00 hora Peru (UTC-5)
+  #   - cron: "0 11 * * *"
   workflow_dispatch:
     inputs:
       simular_alerta:
