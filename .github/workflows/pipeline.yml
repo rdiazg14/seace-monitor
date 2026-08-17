@@ -1,8 +1,10 @@
-# Pipeline diario unificado: ingesta → G1 → detalle → PDF nativo → OCR 2h → chunk/embed.
-# Nace SOLO como workflow_dispatch. El cron 09:00 Perú NO está activo.
+# Pipeline diario unificado: ingesta → G1 → detalle → PDF nativo → OCR 2h → chunk + embed v2.
+# Cron 09:00 Perú (14:00 UTC). Solo alimenta embedding_v2; no llama al Worker /embed ni escribe embedding(768).
 name: Pipeline diario SEACE
 
 on:
+  schedule:
+    - cron: "0 14 * * *"   # 09:00 America/Lima (UTC-5)
   workflow_dispatch:
     inputs:
       ocr_max_segundos:
@@ -25,10 +27,6 @@ on:
         description: "OCR en dry-run (no escribe ni llama Flash)"
         type: boolean
         default: false
-
-# Cutover futuro (NO activar ahora):
-# schedule:
-#   - cron: "0 14 * * *"   # 09:00 America/Lima (UTC-5)
 
 permissions:
   issues: write
@@ -145,18 +143,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python alerta_g3.py --paso chunk_pdf --job-status failure
-
-      - name: Embeddings bge-base-en-v1.5
-        id: embed_bge
-        if: ${{ success() && github.event.inputs.solo_ocr != 'true' }}
-        continue-on-error: true
-        run: python generar_embeddings.py
-
-      - name: G3 embed bge
-        if: ${{ always() && !cancelled() && github.event.inputs.solo_ocr != 'true' && steps.embed_bge.outcome == 'failure' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python alerta_g3.py --paso embed_bge --job-status failure
 
       - name: Embeddings Gemini v2
         id: embed_v2
