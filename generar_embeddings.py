@@ -11,6 +11,7 @@ Uso:
   python generar_embeddings.py [--limit N]
   python generar_embeddings.py --backend gemini [--limit N]
   python generar_embeddings.py --backend gemini --cobertura
+  python generar_embeddings.py --backend gemini --auth-check
 """
 from __future__ import annotations
 
@@ -551,6 +552,33 @@ def run_gemini(
     return {"ok": ok, "err": errores, "total": total, "pendientes": total - ok}
 
 
+def auth_check_gemini() -> int:
+    """Llama a Gemini y reporta solo el HTTP. No imprime la key ni el body."""
+    if not GEMINI_API_KEY:
+        print("gemini_auth HTTP=missing auth_ok=false", flush=True)
+        return 2
+    r = httpx.post(
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{GEMINI_EMBED_MODEL}:embedContent",
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": GEMINI_API_KEY,
+        },
+        json={
+            "model": f"models/{GEMINI_EMBED_MODEL}",
+            "content": {"parts": [{"text": "ok"}]},
+            "taskType": "RETRIEVAL_DOCUMENT",
+            "outputDimensionality": GEMINI_DIM,
+        },
+        timeout=30.0,
+    )
+    code = r.status_code
+    auth_fail = code in (401, 403)
+    ok = (not auth_fail) and code < 400
+    print(f"gemini_auth HTTP={code} auth_fail={auth_fail} auth_ok={ok}", flush=True)
+    return 0 if ok else 1
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=0, help="0 = todos")
@@ -604,7 +632,15 @@ def main():
         action="store_true",
         help="Ante 429 PARA sin backoff (validacion de muestra).",
     )
+    ap.add_argument(
+        "--auth-check",
+        action="store_true",
+        help="Ping Gemini (embedContent) y sale. No toca la BD ni imprime la key.",
+    )
     args = ap.parse_args()
+
+    if args.auth_check:
+        raise SystemExit(auth_check_gemini())
 
     if not SUPABASE_URL or not SUPABASE_KEY:
         raise SystemExit("ERROR: SUPABASE_URL / SUPABASE_SERVICE_KEY no encontrados")
