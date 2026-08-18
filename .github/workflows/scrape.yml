@@ -1,11 +1,9 @@
-# Cutover: el diario es pipeline.yml (09:00 Perú). Este workflow queda solo manual.
-# Sigue en el mismo concurrency group scrape-seace para no solaparse con el pipeline.
-name: Scrape SEACE contrataciones menores
+# DEPRECATED: el diario es pipeline.yml (09:00 Perú).
+# Este workflow NO hace ingesta/G1/PDF/OCR/embed. No llama a BGE.
+# Solo queda lo que el pipeline no tiene: snapshot token CSV + prueba G3.
+name: "[DEPRECATED] Scrape SEACE (token CSV / prueba G3)"
 
 on:
-  # schedule:
-  #   # 11:00 UTC diario = 06:00 hora Peru (UTC-5)
-  #   - cron: "0 11 * * *"
   workflow_dispatch:
     inputs:
       simular_alerta:
@@ -22,10 +20,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  scrape:
+  token_csv:
     if: ${{ github.event.inputs.simular_alerta != 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
     permissions:
       issues: write
       contents: write
@@ -46,7 +44,6 @@ jobs:
           pip install -r requirements.txt
           playwright install --with-deps chromium
 
-      # ── Vista filtrada: "token" (rápida, 10-20 registros) ──────────────
       - name: Scraper filtrado (token + Servicio)
         run: |
           python scraper_seace_menores.py \
@@ -54,67 +51,17 @@ jobs:
             --objeto Servicio \
             --out data/contratos_token.csv
 
-      # ── Ingesta incremental: corpus completo → Supabase + parquet/CSV ──
-      - name: Ingesta incremental corpus completo
-        env:
-          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: |
-          python ingesta_completa.py
-
-      - name: Refresco de estados (G1)
-        env:
-          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: |
-          python refresh_estados.py
-
-      - name: Enriquecer detalle web (vigentes)
-        env:
-          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: |
-          python enriquecer_detalle.py
-
-      - name: Chunking TDR
-        env:
-          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: |
-          python chunker_contratos.py
-
-      - name: Embeddings bge-base-en-v1.5
-        env:
-          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: |
-          python generar_embeddings.py
-
-      - name: Marcar fecha de corrida
-        run: |
-          date -u '+%Y-%m-%d %H:%M:%S UTC' > data/ultima_corrida.txt
-          echo "=== ultima_corrida.txt ==="; cat data/ultima_corrida.txt
-          echo "=== ultima_ingesta.txt ==="; cat data/ultima_ingesta.txt
-
       - name: Commit y push de data/
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/
+          git add data/contratos_token.csv
           if git diff --cached --quiet; then
-            echo "Sin cambios en data/; nada que commitear."
+            echo "Sin cambios en contratos_token.csv"
           else
-            TOTAL=$(grep total_registros data/ultima_ingesta.txt | cut -d= -f2)
-            NUEVOS=$(grep nuevos_esta_corrida data/ultima_ingesta.txt | cut -d= -f2)
-            git commit -m "chore(data): SEACE $(date -u '+%Y-%m-%d') — corpus=${TOTAL} nuevos=${NUEVOS}"
+            git commit -m "chore(data): snapshot token CSV $(date -u '+%Y-%m-%d')"
             git push
           fi
-
-      - name: Alerta G3
-        if: always() && !cancelled()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python alerta_g3.py --job-status ${{ job.status }}
 
   alerta_prueba:
     if: ${{ github.event.inputs.simular_alerta == 'true' }}
