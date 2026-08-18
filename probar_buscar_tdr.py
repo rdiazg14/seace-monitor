@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prueba rápida de búsqueda semántica contra buscar_tdr()."""
+"""Prueba rápida de búsqueda semántica contra buscar_tdr_v2() (Gemini)."""
 from __future__ import annotations
 
 import json
@@ -10,6 +10,8 @@ from pathlib import Path
 import httpx
 from supabase import create_client
 
+from eval_retrieval import GEMINI_API_KEY, embed_query_gemini
+
 _env = Path(__file__).parent / ".env"
 if _env.exists():
     for line in _env.read_text(encoding="utf-8").splitlines():
@@ -18,25 +20,19 @@ if _env.exists():
             k, _, v = line.partition("=")
             os.environ.setdefault(k.strip(), v.strip())
 
-EMBED_URL = os.environ.get(
-    "EMBED_URL",
-    "https://seace-ai-proxy.rdiazg14.workers.dev/embed",
-)
-
-
-def embed(text: str) -> list[float]:
-    r = httpx.post(EMBED_URL, json={"texts": [text]}, timeout=60.0)
-    r.raise_for_status()
-    return r.json()["embeddings"][0]
-
 
 def main():
     query = " ".join(sys.argv[1:]) or "equipo de computo core i3"
+    if not GEMINI_API_KEY:
+        raise SystemExit("ERROR: GEMINI_API_KEY requerido")
     supa = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
-    vec = embed(query)
-    res = supa.rpc("buscar_tdr", {
+    with httpx.Client() as http:
+        vec = embed_query_gemini(http, query)
+    res = supa.rpc("buscar_tdr_v2", {
         "query_embedding": vec,
         "match_count": 5,
+        "filter_estado": "Vigente",
+        "min_similarity": 0.20,
     }).execute()
     print(f"query: {query}")
     print(f"hits: {len(res.data or [])}")
@@ -46,6 +42,7 @@ def main():
             "rank": i,
             "contrato_id": row.get("contrato_id"),
             "tipo": row.get("tipo"),
+            "fuente": row.get("fuente"),
             "similarity": row.get("similarity"),
             "texto": texto,
         }, ensure_ascii=False, indent=2))
