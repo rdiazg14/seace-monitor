@@ -1,4 +1,4 @@
-ts=2026-08-17T15:00:53.742624+00:00
+ts=2026-08-18T15:03:46.266308+00:00
 modo=ocr_selectivo
 solo_ti=True
 max_segundos=7200
@@ -8,9 +8,9 @@ cola_alta=0
 cola_categoria_it=0
 cola_media=0
 cola_baja=0
-descartados_no_ti=99
+descartados_no_ti=65
 descartados_ventana_null=0
-descartados_vencidos=1309
+descartados_vencidos=1265
 ocr_contratos=0
 ocr_paginas=0
 err=0
