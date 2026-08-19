@@ -94,6 +94,10 @@ def modo_embed_fila(row: dict, mode: str) -> str:
 
 
 def texto_para_embed(row: dict, mode: str) -> str:
+    if (row.get("fuente") or "") == "pdf":
+        extra = (row.get("chunk_embed_text") or "").strip()
+        if extra:
+            return extra[:MAX_CHARS_GEMINI]
     t = (row.get("texto") or "")[:MAX_CHARS_GEMINI]
     if modo_embed_fila(row, mode) == "body":
         t = cuerpo_chunk(t)[:MAX_CHARS_GEMINI]
@@ -214,7 +218,7 @@ def chunks_sin_embedding_v2(
                 return out
             q = (
                 supa.table("chunks_tdr")
-                .select("id, contrato_id, chunk_index, tipo, texto, fuente")
+                .select("id, contrato_id, chunk_index, tipo, texto, fuente, chunk_embed_text")
                 .in_("contrato_id", lote_ids)
                 .is_("embedding_v2", "null")
             )
