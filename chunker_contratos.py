@@ -121,6 +121,45 @@ def cuerpo_chunk(texto: str) -> str:
     return t[m.end():].lstrip() if m else t
 
 
+_MEMBRETE_LINE_RE = re.compile(
+    r"(?i)^("
+    r"---\s*pagina\s+\d+\s*---"
+    r"|per[uú]"
+    r"|ministerio de defensa"
+    r"|av\.\s*del parque norte\b.*"
+    r"|https?://\S+"
+    r"|www\.gob\.pe/\S*"
+    r"|facilita\.gob\.pe\S*"
+    r"|mesadepartes@\S+"
+    r"|[“\"]decenio de la igualdad.*"
+    r"|[“\"]año de la esperanza.*"
+    r")$"
+)
+
+
+def cuerpo_sin_membrete(texto: str) -> str:
+    """Quita membrete/páginas del extractor PDF. No toca el display (`texto`)."""
+    out: list[str] = []
+    for line in (texto or "").splitlines():
+        s = line.strip()
+        if s and _MEMBRETE_LINE_RE.match(s):
+            continue
+        out.append(line)
+    return "\n".join(out).strip()
+
+
+def objeto_corto(c: dict) -> str:
+    asunto = (c.get("descripcion") or c.get("objeto") or "").strip()
+    return " ".join(asunto.split())[:80] or "s/a"
+
+
+def embed_text_pdf(c: dict, texto_display: str) -> str:
+    """Header semántico [entidad | objeto | nro] + cuerpo sin membrete."""
+    cuerpo = cuerpo_sin_membrete(cuerpo_chunk(texto_display))
+    entidad = (c.get("entidad") or "").strip() or "s/e"
+    return f"[{entidad} | {objeto_corto(c)} | {nro_contrato(c)}] {cuerpo}".strip()
+
+
 def con_contexto(c: dict, texto: str) -> str:
     return f"{encabezado(c)}\n{texto}"
 
@@ -158,6 +197,7 @@ def chunks_de_pdf(c: dict, chunk_index_offset: int = 0) -> list[dict]:
             "texto": con_contexto_pdf(c, parte),
             "fuente": "pdf",
         }
+        row["chunk_embed_text"] = embed_text_pdf(c, row["texto"])
         row.update(meta)
         out.append(row)
     return out
@@ -360,14 +400,23 @@ def insert_lote(supa, lote: list[dict]):
         ).execute()
     except Exception as e:
         msg = str(e).lower()
-        if "meta_entidad" in msg or "meta_nro" in msg or "pgrst204" in msg:
+        if (
+            "meta_entidad" in msg
+            or "meta_nro" in msg
+            or "chunk_embed_text" in msg
+            or "pgrst204" in msg
+        ):
             print(
-                "  [aviso] columnas meta_entidad/meta_nro ausentes; "
-                "aplica chunks_pdf_meta.sql. Inserto sin metadata.",
+                "  [aviso] columna meta/chunk_embed_text ausente; "
+                "inserto sin esos campos.",
                 flush=True,
             )
             stripped = [
-                {k: v for k, v in row.items() if k not in ("meta_entidad", "meta_nro")}
+                {
+                    k: v
+                    for k, v in row.items()
+                    if k not in ("meta_entidad", "meta_nro", "chunk_embed_text")
+                }
                 for row in lote
             ]
             supa.table("chunks_tdr").upsert(
