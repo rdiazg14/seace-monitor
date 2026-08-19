@@ -9,3 +9,14 @@ data/muestra_2026.parquet
 .env
 .env.local
 data/rag_pruebas.json
+
+# Evals / auditorías locales (no son fuente)
+data/eval_*.json
+data/auditoria_rag.json
+*.bak
+
+# Export estático de Penpot
+/docs/SEACE Monitor.html
+/docs/SEACE Monitor 2.html
+/docs/SEACE Monitor_files/
+/docs/SEACE Monitor 2_files/
