@@ -1,7 +1,7 @@
 {
-  "fecha": "2026-08-16",
-  "requests": 308,
-  "prompt_tokens": 349888,
-  "out_tokens": 221827,
-  "usd_est": 0.8404249999999999
+  "fecha": "2026-08-19",
+  "requests": 17,
+  "prompt_tokens": 19312,
+  "out_tokens": 11063,
+  "usd_est": 0.042845
 }
