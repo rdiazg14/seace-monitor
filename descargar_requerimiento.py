@@ -722,11 +722,65 @@ def reporte_jsonl() -> dict:
     }
 
 
+def payload_extraccion(rec: dict) -> dict:
+    tipo = rec.get("tdr_tipo_extraccion")
+    pend = rec.get("paginas_ocr_pendientes")
+    if pend is None:
+        pend = rec.get("ocr_paginas") or []
+    hechas = rec.get("paginas_ocr_hechas")
+    if hechas is None:
+        hechas = rec.get("ocr_hechas") or []
+    pdf_img = rec.get("pdf_es_imagen")
+    if pdf_img is None:
+        pdf_img = tipo != "nativo_puro" if tipo else None
+    return {
+        "pdf_es_imagen": pdf_img,
+        "tdr_tipo_extraccion": tipo,
+        "paginas_ocr_pendientes": list(pend or []),
+        "paginas_ocr_hechas": list(hechas or []),
+        "tdr_n_paginas": rec.get("tdr_n_paginas") or rec.get("n_paginas"),
+        "tdr_n_paginas_nativas": rec.get("tdr_n_paginas_nativas")
+        or rec.get("n_paginas_nativas"),
+        "tdr_n_paginas_ocr": rec.get("tdr_n_paginas_ocr")
+        or rec.get("n_paginas_ocr"),
+    }
+
+
+def _update_extraccion(supa, cid: int, payload: dict) -> None:
+    """Escribe columnas de extracción. No traga errores (el slim de
+    `_update_contrato` dejaba mixto/imagen en NULL si PostgREST aún no
+    cacheaba el DDL)."""
+    try:
+        supa.table("contratos").update(payload).eq("id", cid).execute()
+    except Exception as e:
+        raise RuntimeError(f"sync id={cid} falló: {e}") from e
+
+
+def group_by_tipo(supa, *, vigentes: bool = True) -> dict[str, int]:
+    """Equivalente a SELECT tdr_tipo_extraccion, COUNT(*) GROUP BY 1."""
+    out: dict[str, int] = {}
+    offset = 0
+    while True:
+        q = supa.table("contratos").select("tdr_tipo_extraccion,req_url,pdf_es_imagen")
+        if vigentes:
+            q = q.eq("estado", "Vigente")
+        res = q.range(offset, offset + PAGE_DB - 1).execute()
+        batch = res.data or []
+        for r in batch:
+            tipo = r.get("tdr_tipo_extraccion")
+            key = tipo if tipo else "NULL"
+            out[key] = out.get(key, 0) + 1
+        if len(batch) < PAGE_DB:
+            break
+        offset += PAGE_DB
+    return out
+
+
 def sync_meta_jsonl(supa) -> int:
     if not columnas_extraccion_ok(supa):
         raise SystemExit(
             "ERROR: faltan columnas. Ejecuta tdr_extraccion_meta.sql "
-            "y reintenta --sync-meta"
+            "(y NOTIFY pgrst, 'reload schema') y reintenta --sync-meta"
         )
     if not META_LOG.exists():
         print("  [sync] no hay data/tdr_extraccion.jsonl", flush=True)
@@ -737,22 +791,95 @@ def sync_meta_jsonl(supa) -> int:
         if line:
             rec = json.loads(line)
             by_id[int(rec["id"])] = rec
+    print(
+        f"  [sync] jsonl ids={len(by_id)}  "
+        + " ".join(
+            f"{k}={sum(1 for r in by_id.values() if r.get('tdr_tipo_extraccion')==k)}"
+            for k in ("nativo_puro", "mixto", "imagen_total")
+        ),
+        flush=True,
+    )
+    probe_id, probe_rec = next(iter(by_id.items()))
+    probe_payload = payload_extraccion(probe_rec)
+    _update_extraccion(supa, probe_id, probe_payload)
+    check = (
+        supa.table("contratos")
+        .select("tdr_tipo_extraccion")
+        .eq("id", probe_id)
+        .limit(1)
+        .execute()
+    )
+    got = (check.data or [{}])[0].get("tdr_tipo_extraccion")
+    want = probe_payload.get("tdr_tipo_extraccion")
+    if got != want:
+        raise SystemExit(
+            f"ERROR: PostgREST no persistió tdr_tipo_extraccion "
+            f"(id={probe_id} escribió={want!r} leyó={got!r}). "
+            f"En SQL Editor: NOTIFY pgrst, 'reload schema'; y reintenta."
+        )
+    print(f"  [sync] probe id={probe_id} tipo={got} OK", flush=True)
+
     n = 0
+    err = 0
     for cid, rec in by_id.items():
-        _update_contrato(supa, cid, {
-            "pdf_es_imagen": rec.get("pdf_es_imagen"),
-            "tdr_tipo_extraccion": rec.get("tdr_tipo_extraccion"),
-            "paginas_ocr_pendientes": rec.get("paginas_ocr_pendientes") or [],
-            "paginas_ocr_hechas": rec.get("paginas_ocr_hechas") or [],
-            "tdr_n_paginas": rec.get("tdr_n_paginas"),
-            "tdr_n_paginas_nativas": rec.get("tdr_n_paginas_nativas"),
-            "tdr_n_paginas_ocr": rec.get("tdr_n_paginas_ocr"),
-        })
-        n += 1
+        if cid == probe_id:
+            n += 1
+            continue
+        try:
+            _update_extraccion(supa, cid, payload_extraccion(rec))
+            n += 1
+        except Exception as e:
+            err += 1
+            print(f"  [sync] FAIL id={cid}: {e}", flush=True)
+            if err >= 5:
+                raise SystemExit("ERROR: demasiados fallos de sync; aborto")
         if n % 200 == 0:
             print(f"  [sync] {n}/{len(by_id)}", flush=True)
-    print(f"  [sync] actualizados={n}", flush=True)
-    return n
+    print(f"  [sync] jsonl escritos={n} err={err}", flush=True)
+
+    # Gemelos con texto nativo que quedaron pdf_es_imagen=true sin sidecar.
+    n_nat = 0
+    offset = 0
+    while True:
+        res = (
+            supa.table("contratos")
+            .select("id,tdr_texto,pdf_es_imagen,tdr_tipo_extraccion,req_url")
+            .eq("estado", "Vigente")
+            .eq("pdf_es_imagen", True)
+            .is_("tdr_tipo_extraccion", "null")
+            .range(offset, offset + PAGE_DB - 1)
+            .execute()
+        )
+        batch = res.data or []
+        for r in batch:
+            cid = int(r["id"])
+            if cid in by_id:
+                continue
+            tdr = r.get("tdr_texto") or ""
+            if (r.get("req_url") or "") == "sin_pdf":
+                continue
+            if "(ocr)" in tdr or chars_utiles(tdr) < MIN_CHARS_PAGINA:
+                print(
+                    f"  [sync] huerfano id={cid} no clasificado "
+                    f"(chars={chars_utiles(tdr)})",
+                    flush=True,
+                )
+                continue
+            _update_extraccion(supa, cid, {
+                "tdr_tipo_extraccion": "nativo_puro",
+                "pdf_es_imagen": False,
+                "paginas_ocr_pendientes": [],
+                "paginas_ocr_hechas": [],
+                "tdr_n_paginas_ocr": 0,
+            })
+            n_nat += 1
+            print(f"  [sync] huerfano id={cid} → nativo_puro", flush=True)
+        if len(batch) < PAGE_DB:
+            break
+        offset += PAGE_DB
+    if n_nat:
+        print(f"  [sync] huerfanos nativo_puro={n_nat}", flush=True)
+    return n + n_nat
 
 
 def _as_int_list(raw) -> list[int]:
@@ -1942,6 +2069,14 @@ def main() -> None:
             tipos = reporte_extraccion(supa)
             print("  --- vigentes BD ---", flush=True)
             for k, v in tipos.items():
+                print(f"    {k}={v}", flush=True)
+            gb = group_by_tipo(supa, vigentes=True)
+            print("  --- GROUP BY tdr_tipo_extraccion (vigentes) ---", flush=True)
+            for k, v in sorted(gb.items(), key=lambda kv: (-kv[1], kv[0])):
+                print(f"    {k}={v}", flush=True)
+            gb_all = group_by_tipo(supa, vigentes=False)
+            print("  --- GROUP BY tdr_tipo_extraccion (todos) ---", flush=True)
+            for k, v in sorted(gb_all.items(), key=lambda kv: (-kv[1], kv[0])):
                 print(f"    {k}={v}", flush=True)
         else:
             print("  (columnas nuevas aún no aplicadas)", flush=True)

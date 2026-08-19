@@ -25,7 +25,12 @@ COMMENT ON COLUMN contratos.tdr_n_paginas IS 'Total de páginas del PDF.';
 COMMENT ON COLUMN contratos.tdr_n_paginas_nativas IS 'Páginas con texto PyMuPDF (>= 80 chars).';
 COMMENT ON COLUMN contratos.tdr_n_paginas_ocr IS 'Páginas imagen pendientes o ya OCR (conteo).';
 
--- Los 672 nativos del PASO 1 (pdf_es_imagen no true, con tdr_texto, no sin_pdf).
+-- Tras ALTER, recarga el cache de PostgREST (si no, --sync-meta no escribe mixto/imagen):
+--   NOTIFY pgrst, 'reload schema';
+
+-- Los nativos del PASO 1 (pdf_es_imagen no true, con tdr_texto, no sin_pdf).
+-- mixto / imagen_total NO se infieren aquí: salen de data/tdr_extraccion.jsonl
+-- vía `uv run python descargar_requerimiento.py --sync-meta --reporte`.
 UPDATE contratos
 SET tdr_tipo_extraccion = 'nativo_puro',
     pdf_es_imagen = FALSE,
