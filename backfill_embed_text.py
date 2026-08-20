@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import time
 from pathlib import Path
 
 from supabase import create_client
@@ -113,30 +114,52 @@ def main() -> int:
         print("dry-run: no escribí ni reseteé embeddings.")
         return 0
 
+    t0 = time.time()
     n_txt = 0
+    err_txt: list[tuple[int, str]] = []
     for i in range(0, len(updates), BATCH):
         lote = updates[i:i + BATCH]
         for cid, text in lote:
-            supa.table("chunks_tdr").update({"chunk_embed_text": text}).eq("id", cid).execute()
-            n_txt += 1
-        print(f"  embed_text {min(i + BATCH, len(updates))}/{len(updates)}", flush=True)
-
-    ids = [cid for cid, _ in updates]
-    n_reset = 0
-    for i in range(0, len(ids), BATCH):
-        lote = ids[i:i + BATCH]
-        res = (
-            supa.table("chunks_tdr")
-            .update({"embedding_v2": None})
-            .in_("id", lote)
-            .eq("fuente", "pdf")
-            .execute()
+            try:
+                supa.table("chunks_tdr").update({"chunk_embed_text": text}).eq("id", cid).execute()
+                n_txt += 1
+            except Exception as e:
+                err_txt.append((cid, str(e)[:200]))
+                print(f"  [error] chunk_embed_text id={cid}: {e}", flush=True)
+        print(
+            f"  embed_text {min(i + BATCH, len(updates))}/{len(updates)} "
+            f"ok={n_txt} err={len(err_txt)}",
+            flush=True,
         )
-        n_reset += len(res.data or [])
 
+    failed = {cid for cid, _ in err_txt}
+    ids_ok = [cid for cid, _ in updates if cid not in failed]
+    n_reset = 0
+    err_reset: list[str] = []
+    for i in range(0, len(ids_ok), BATCH):
+        lote = ids_ok[i:i + BATCH]
+        try:
+            res = (
+                supa.table("chunks_tdr")
+                .update({"embedding_v2": None})
+                .in_("id", lote)
+                .eq("fuente", "pdf")
+                .execute()
+            )
+            n_reset += len(res.data or [])
+        except Exception as e:
+            err_reset.append(str(e)[:200])
+            print(f"  [error] reset lote {lote[:3]}…: {e}", flush=True)
+
+    elapsed = time.time() - t0
     print(f"N chunks actualizados (chunk_embed_text): {n_txt}")
     print(f"N embeddings reseteados (embedding_v2=NULL): {n_reset}")
-    return 0
+    print(f"Tiempo total: {elapsed:.1f}s")
+    print(f"Errores chunk_embed_text: {len(err_txt)}")
+    if err_txt:
+        print("  ids:", [i for i, _ in err_txt[:40]])
+    print(f"Errores reset embedding_v2: {len(err_reset)}")
+    return 1 if err_txt or err_reset else 0
 
 
 if __name__ == "__main__":
