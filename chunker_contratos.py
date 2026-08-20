@@ -131,10 +131,51 @@ _MEMBRETE_LINE_RE = re.compile(
     r"|www\.gob\.pe/\S*"
     r"|facilita\.gob\.pe\S*"
     r"|mesadepartes@\S+"
-    r"|[“\"]decenio de la igualdad.*"
-    r"|[“\"]año de la esperanza.*"
+    r"|[“\"']decenio de la igualdad.*"
+    r"|[“\"']año de la esperanza.*"
+    r"|centro nacional de estimaci[oó]n,?"
+    r"|centro nacional de estimaci[oó]n,?\s*prevenci[oó]n y reducci[oó]n.*"
+    r"|prevenci[oó]n y reducci[oó]n del"
+    r"|riesgo de desastres\s*[-–]\s*cenepred"
+    r"|cenepred"
+    r"|subdirecci[oó]n de"
+    r"|gesti[oó]n de la"
+    r"|informaci[oó]n"
     r")$"
 )
+
+
+def _es_siglas_membrete(s: str) -> bool:
+    """Línea corta toda en mayúsculas (siglas / rótulos de membrete)."""
+    if not s or len(s) > 40:
+        return False
+    if re.match(r"^\d+", s):
+        return False
+    words = s.split()
+    if not (1 <= len(words) <= 4):
+        return False
+    if not any(ch.isalpha() for ch in s):
+        return False
+    if any(ch.islower() for ch in s):
+        return False
+    # Rótulos de sección del TDR ("OBJETO:", "AREA USUARIA:"), no siglas de membrete.
+    if s.endswith(":"):
+        return False
+    return True
+
+
+def _colapsar_vacias(lines: list[str]) -> list[str]:
+    out: list[str] = []
+    blank = False
+    for line in lines:
+        if not line.strip():
+            if not blank:
+                out.append("")
+            blank = True
+        else:
+            out.append(line)
+            blank = False
+    return out
 
 
 def cuerpo_sin_membrete(texto: str) -> str:
@@ -142,10 +183,10 @@ def cuerpo_sin_membrete(texto: str) -> str:
     out: list[str] = []
     for line in (texto or "").splitlines():
         s = line.strip()
-        if s and _MEMBRETE_LINE_RE.match(s):
+        if s and (_MEMBRETE_LINE_RE.match(s) or _es_siglas_membrete(s)):
             continue
         out.append(line)
-    return "\n".join(out).strip()
+    return "\n".join(_colapsar_vacias(out)).strip()
 
 
 def objeto_corto(c: dict) -> str:

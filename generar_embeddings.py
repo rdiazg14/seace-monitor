@@ -235,6 +235,33 @@ def chunks_sin_embedding_v2(
     return out[:limit] if limit else out
 
 
+def chunks_sin_v2_por_fuente(supa, fuente: str, limit: int) -> list[dict]:
+    """Pagina por fuente + embedding_v2 NULL. Evita timeout del IN (cientos de ids)."""
+    out: list[dict] = []
+    offset = 0
+    while True:
+        take = PAGE if not limit else min(PAGE, limit - len(out))
+        if take <= 0:
+            break
+        res = (
+            supa.table("chunks_tdr")
+            .select("id, contrato_id, chunk_index, tipo, texto, fuente, chunk_embed_text")
+            .eq("fuente", fuente)
+            .is_("embedding_v2", "null")
+            .order("id")
+            .range(offset, offset + take - 1)
+            .execute()
+        )
+        batch = res.data or []
+        out.extend(batch)
+        if len(batch) < take:
+            break
+        offset += take
+        if limit and len(out) >= limit:
+            break
+    return out[:limit] if limit else out
+
+
 def embed_lote_gemini(
     client: httpx.Client,
     texts: list[str],
@@ -480,7 +507,13 @@ def run_gemini(
 
     vigente_ids = ids if ids else paginar_ids_vigentes(supa)
     print(f"  contratos: {len(vigente_ids):,}", flush=True)
-    pendientes = chunks_sin_embedding_v2(supa, vigente_ids, limit, fuente=fuente)
+    if fuente:
+        pendientes = chunks_sin_v2_por_fuente(supa, fuente, limit)
+        if ids:
+            idset = set(ids)
+            pendientes = [p for p in pendientes if int(p["contrato_id"]) in idset]
+    else:
+        pendientes = chunks_sin_embedding_v2(supa, vigente_ids, limit, fuente=fuente)
     total = len(pendientes)
     print(f"  chunks vigentes sin embedding_v2: {total:,}", flush=True)
     if total == 0:
