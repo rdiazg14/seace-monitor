@@ -1,7 +1,11 @@
 # Arquitectura técnica — SEACE Monitor
 
 Documento de **cómo funciona hoy** cada pieza, con evidencia `archivo:línea`.
-No sustituye al PLAN: si código y PLAN divergen, se anota aquí. Estado de producto asesor (iter. 1–7): también `ESTADO_CIERRE_2026-08.md`.
+No sustituye al PLAN: si código y PLAN divergen, se anota aquí.
+
+- Foto de prod: [ESTADO_CIERRE_2026-08-20.md](./ESTADO_CIERRE_2026-08-20.md)
+- Historia de sprints: [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md)
+- Punto de entrada: [TRASPASO_MAESTRO_SEACE.md](./TRASPASO_MAESTRO_SEACE.md)
 
 ---
 
@@ -17,6 +21,7 @@ E. Análisis de contrato (#10)
 F. Cotización asistida (#11)  
 G. Rate-limiting y gasto  
 H. Frontend y datos  
+I. Capa semántica (SQL + Dashboard)  
 Cierre: tabla de decisiones · discrepancias vs PLAN · commits
 
 ---
@@ -25,13 +30,13 @@ Cierre: tabla de decisiones · discrepancias vs PLAN · commits
 
 | Pieza | Path | HEAD documentado |
 |---|---|---|
-| Pipeline / SQL / evals | `seace-monitor` | `e5c6343` (docs) + este commit (#9) |
-| Worker | `seace-ai-proxy` | `437c265` (`/cotizar` SSE + clasificador) · CF `49953466-a6dd-4878-b549-8ebb5567bbcc` |
-| Front | `seace-web` | `9426dc1` (UX conversacional iter. 7) · Pages `https://seace.rdiaz-lab.xyz` |
+| Pipeline / SQL / evals | `seace-monitor` | este commit de docs (padre `21921ef` capa semántica) |
+| Worker | `seace-ai-proxy` | `c8113ae` (iter. 8 + 502 `/analizar`) · CF **`075d03be-a84c-44eb-957f-7cca64bb6584`** |
+| Front | `seace-web` | `c0beff4` (banner 502) · Pages `https://seace.rdiaz-lab.xyz` (Actions `32441541562` success) |
 
 Worker vivo: `https://seace-ai-proxy.rdiazg14.workers.dev`. Front: `AI_PROXY` = esa URL (`seace-web/src/lib/supabase.ts` L7).
 
-Fecha de este corte: **20 ago 2026** (Perú). Asesor #10/#11 iteraciones 1–7 en prod. Auditoría #9 postulabilidad en §D (sin cambio de lógica).
+Fecha de este corte: **20 ago 2026** (Perú), noche. Asesor #9/#10/#11 **iteraciones 1–9 + fixes** en prod.
 
 Etiquetas de «por qué»:
 
@@ -44,14 +49,14 @@ Etiquetas de «por qué»:
 
 ## 0.5 Escala (ancla)
 
-Números de producto en este corte (los dio Rolando para el doc; no se re-contaron aquí):
+Números de producto en este corte:
 
 | Universo | Magnitud |
 |---|---|
-| Contratos en BD | ~76 000 (pipeline 18 ago: corpus=76 334) |
-| Vigentes | ~2 083 |
-| Chunks con `embedding_v2` | ~9 169 |
-| PDF | 679 nativo / 102 mixto / 1 398 imagen / 150 sin_pdf |
+| Contratos en BD | **76 509** (pipeline 20 ago, commit `dcf0a29`: nuevos=95, OCR=completo) |
+| Vigentes | ~2 083 (ancla 18 ago; no se re-contó en este cierre) |
+| Chunks con `embedding_v2` | ~9 169 (ancla; backfill PDF `e5f58d6`) |
+| PDF | 679 nativo / 102 mixto / 1 398 imagen / 150 sin_pdf (ancla 18 ago) |
 
 Las decisiones de esta arquitectura se consideran **adecuadas bajo esta escala**. Si el corpus o los chunks vigentes crecen **~10×**, hay que reabrir al menos: HNSW vs otro índice, threshold 0.20, tamaño de chunk, RRF k, tope OCR 2 h, FLASH_RPD=200, y si el reranker `-base` aguanta.
 
@@ -212,7 +217,7 @@ Encender `--gc` cuando se acepte borrar chunks de culminados. OCR más amplio si
 
 ### Qué hace
 
-`/ruta-dia` rankea oportunidades **sin IA**, 0–100, desde columnas de `contratos`. Es la pantalla de **acción diaria**. Criterio de producto (Rolando, 20 ago 2026): debería mostrar **solo postulables** (Vigente + ventana `fecha_fin >= hoy` Lima). El código **no** implementa esa definición de punta a punta: ver «Postulabilidad (auditoría 20 ago)».
+`/ruta-dia` rankea oportunidades **sin IA**, 0–100, desde columnas de `contratos`. Es la pantalla de **acción diaria**. Definición de producto (Rolando): **solo postulables** en el ranking default. Desde `cffcc2b` eso está en código: `esPostulable()` es la fuente única.
 
 ### Cómo
 
@@ -229,46 +234,40 @@ Fórmula (`rutaDia.ts` L4–12, L247–272):
 
 Mapeo `categoria_it` → nivel: L79–93. Overlay texto: telemetría/SCADA/OT/IoT → Núcleo; integración/automatización/digital twin → Adyacente; **nunca baja** (L215–216). Firma digital + ALTA **no** sube a Núcleo (`cat !== 'Firma digital'`, L218–219).
 
-**Universo SQL** (`RutaDia.tsx` `fetchUniverso` L28–46): `estado IN ('Vigente','En Evaluación')` **y** (`categoria_it` OR `relevancia_ia` no null). **No** pide `fecha_fin >= hoy`. Culminado (idEstado 4) **no entra**. No se filtra por `idEstadoContrato` numérico: se usa el texto `contratos.estado`.
+**Universo SQL** (`RutaDia.tsx` `fetchUniverso` ~L28–46): `estado IN ('Vigente','En Evaluación')` **y** (`categoria_it` OR `relevancia_ia` no null). Culminado no entra. El recorte a postulables es **en el cliente**, no en el SELECT.
 
-**`postulable`** (`puntuar` L249): `estado === 'Vigente'` **solo**. No mira `fecha_fin`.
+**`esPostulable`** (`rutaDia.ts` L276–285) — **única definición**:
 
-**`rankingActivo`** (L275–284): En Evaluación **siempre entra**; Vigente entra si `fecha_fin >= today` Lima **o sin fecha**. Vigente con ventana vencida **sale**.
+```
+estado === 'Vigente' && (fecha_fin es null || fecha_fin Lima >= hoy Lima)
+```
 
-### Postulabilidad (auditoría 20 ago 2026) — código gana
+`puntuar` L250 usa esa función. En Evaluación **nunca** es postulable.
 
-No hay una función única `esPostulable(fecha_fin, estado)`. Tres definiciones conviven:
+**`rankingActivo`** (L287–292): deja Vigente (incl. vencidos) + En Evaluación, ordenados por score. **No** recorta. El recorte lo hace `aplicarFiltros` con `estado` default `'postulable'` (`RutaDia.tsx` L55).
+
+### Postulabilidad (código 20 ago noche, `cffcc2b`) — una función
 
 | Definición | Dónde | Qué incluye |
 |---|---|---|
-| SQL universo | `fetchUniverso` L35–36 | Vigente **y** En Evaluación (IT/IA) |
-| Flag `postulable` | `puntuar` L249 | solo `estado === 'Vigente'` (ignorando fecha) |
-| Lista activa | `rankingActivo` L275–284 | En Evaluación todos + Vigente con `fecha_fin >= hoy` o null |
+| Flag / filtros / KPIs / brief | `esPostulable()` | solo Vigente con ventana abierta o sin fecha |
+| SQL universo | `fetchUniverso` | Vigente **y** En Evaluación (IT/IA) — materia prima |
+| Ranking puntuado | `rankingActivo` | mismo universo; el **chip** recorta |
 
 Por bloque de UI (`RutaDia.tsx`):
 
 | Bloque | Fuente | ¿Cuela no-postulables? |
 |---|---|---|
-| KPIs Cierran hoy / mañana / semana / Núcleo | `scored.filter(postulable)` L93 — `scored` ya pasó `rankingActivo` | **No** vencidos ni En Evaluación. Alineado con ventana abierta (Vigente + `fecha_fin >= hoy`). |
-| KPI **Nuevos hoy** | `raw` por `fecha_publica === today` L94 | **Sí puede**: cuenta el universo SQL, **sin** `rankingActivo` ni `postulable`. Hoy (20 ago) no había En Evaluación publicados en el día; el hueco existe en código. |
-| Brief «Top 15 vigentes» | `filtrado.filter(postulable).slice(0,15)` L87–89 | **No** En Evaluación (el copy L161 lo dice). **No** vigentes vencidos (`rankingActivo`). Alineado con el criterio de Rolando. |
-| Ranking completo | `filtrado` = `aplicarFiltros(scored)` L82–84, L120. Filtro estado default `'todos'` L55 | **Sí: En Evaluación.** Copy L186: «Nada se oculta». Chip «En evaluación (cerrado)» L231. En BD, **0** En Evaluación IT con `fecha_fin >= 2026-08-20`; los **577** que entran tienen ventana **cerrada**. |
+| KPIs (nuevos hoy, cierran, núcleo) | `scored.filter(o => o.postulable)` L93 | **No** |
+| Brief Top 15 | `aplicarFiltros(..., estado: 'postulable')` L87–89 | **No** |
+| Ranking default | `estado === 'postulable'` L55, L82–84 | **No** |
+| Chip «En evaluación / cerrados» | `estado === 'cerrados'` L233–235 | **Sí, a propósito**: En Evaluación + vigentes con ventana vencida |
 
-Ejemplos reales (consulta `contratos` 20 ago 2026, IT/IA):
+`aplicarFiltros` L311–312: `cerrados` = `!esPostulable`. Copy L186: «Por defecto solo postulables».
 
-- **En Ranking (no postulable):** `86824` Hardware, estado En Evaluación, `fecha_fin` 2026-08-18 — entra porque `rankingActivo` no mira la fecha si `estado === 'En Evaluación'`.
-- **Vigente vencido, NO en Ruta:** `87502` CENEPRED, estado Vigente, `fecha_fin` 2026-08-19 — **47** vigentes IT con `fecha_fin < hoy`; `rankingActivo` los saca. No aparecen en brief ni ranking ni KPIs de cierre.
-- Culminados IT: ~2517 en BD; el `.in(estado)` los deja fuera.
+### vs Dashboard (iter. 9)
 
-### vs Dashboard (definiciones distintas)
-
-| Concepto | Ruta del día | Dashboard |
-|---|---|---|
-| Universo | Vigente **+** En Evaluación, IT o IA (`RutaDia.tsx` L35–36) | Lista opp: solo **Vigente** + `categoria_it` not null, limit 800 (`Dashboard.tsx` L66–69). KPI «Vigentes IT»: vista `dashboard_resumen` estado Vigente (L130–132) — **no** recorta por `fecha_fin`. |
-| Cierran hoy (cards) | `dayOf(fecha_fin) === today` sobre vigentes ya pasados por `rankingActivo` (`RutaDia.tsx` L111–113) | igual `d === today` (`Dashboard.tsx` L111) sobre `itVig` **sin** recortar vencidos del query. Un vigente vencido **no** cae en esa card (el `=== today` los excluye). |
-| «Esta semana» / lista filtrada | KPI: `d <= weekEnd` pero el set ya es `fecha_fin >= today` | Card semana: `d <= weekEnd` **incluye fechas pasadas** (L113). Filtro lista `urg==='hoy'`: `tone === 'hoy' \|\| 'vencido' \|\| 'manana'` (L211). Filtro semana/mes: `days <= 7` / `<= 30` **incluye negativos** (L212–213). |
-
-Etiqueta: divergencia **HEREDADA** (cada página su query). El bug de Dashboard no es L111 (`=== today`); es L113 y L211–213. Ruta recorta vigentes vencidos; Dashboard no.
+Ambos usan la **misma** regla de postulable (SQL `es_postulable` ≡ `esPostulable()`). Dashboard ya no calcula «cierran hoy/semana» metiendo vencidos. Detalle: §I.
 
 ### Por qué
 
@@ -278,11 +277,11 @@ Etiqueta: divergencia **HEREDADA** (cada página su query). El bug de Dashboard 
 | 2–7 d &gt; hoy | **HEREDADA** | L11: «cierra hoy es bandera, no dominancia» |
 | Firma digital no sube | **HEREDADA** | L23: token cripto ≠ tokens de IA |
 | Modalidad/pago/margen = 0 aquí | **HEREDADA** | L14: eso vive en #10 |
-| En Evaluación en el ranking | **HEREDADA** (copy L161, L186, chip L231) / **choca** con el brief de acción de Rolando (20 ago) | Fix = iteración aparte; no se tocó lógica |
+| Default solo postulables | **HEREDADA** (criterio Rolando 20 ago) | `cffcc2b`; chip para ver cerrados |
 
 ### Alternativas
 
-Unificar `postulable` = `estado==='Vigente' && (fecha_fin==null \|\| fecha_fin>=today)` **o** (criterio estricto) exigir fecha. Sacar En Evaluación del ranking default. Meter señales de #10 al score cuando se quiera.
+Exigir fecha (hoy sin fecha cuenta postulable). Meter señales de #10 al score. Home = esta página (sigue siendo `/` Dashboard).
 
 ---
 
@@ -326,7 +325,15 @@ Orden bloqueado (`analizar.ts` `handleAnalizar` L690–821):
 
 Schema economía: `valor/costo/margen` estimados + `supuestos[]` + `lo_que_no_sabe[]`. Cifras de economía **no** están en `required` (L228: solo pistas/supuestos/lo_que_no_sabe). Techo **8 UIT = S/42 800** (L15).
 
-**UI (prod, iter. 1–7):** `AnalisisContrato.tsx` + `AnalisisV2.tsx` (infografía ratio, N alternativas dinámicas, economía por componente, contradicciones) + `TimelineFishbone.tsx` (thumbnail + fullscreen, eje con salto de `momento_dia`). Panel #11 380 px, `key={contratoId}`, abierto por defecto en desktop ≥1024 px. Análisis **congelado** respecto de #11.
+**UI:** `AnalisisContrato.tsx` + `AnalisisV2.tsx` (infografía ratio, N alternativas dinámicas, economía por componente, contradicciones) + `TimelineFishbone.tsx` (thumbnail + fullscreen, eje con salto de `momento_dia`). Panel #11 380 px, `key={contratoId}`, abierto por defecto en desktop ≥1024 px. Análisis **congelado** respecto de #11.
+
+502 (JSON Gemini inválido, p. ej. contrato **66461**): HTTP 502 con cuerpo estructurado (`analizar.ts` L823–831):
+
+```
+{ error: 'analisis_fallido', mensaje, reintentar: true, detalle_tecnico }
+```
+
+El front (`AnalisisContrato.tsx`) muestra banner amable + **Reintentar** (`fetchAnalisis`); **no** pinta `detalle_tecnico` ni el JSON crudo. El cupo ANALYZE **ya se gastó** (límites van antes de Gemini). No hay retry en el Worker.
 
 ### Por qué
 
@@ -349,40 +356,52 @@ TTL más largo si los TDR no rotan. No reabrir el schema 2º orden sin producto.
 
 ### Qué hace
 
-`POST /cotizar` `{ contrato_id, query, history? }`. Recalcula un **escenario** sobre el análisis **ya cacheado**. No RAG. No re-analiza TDR. **No cachea** la respuesta del chat (solo lee la caché #10).
+`POST /cotizar` `{ contrato_id, query, history? }`. Recalcula un **escenario** sobre el análisis **ya cacheado**. No RAG. No re-analiza TDR.
+
+Desde iter. 8: clasificador **híbrido** (reglas → Flash si hace falta) y caché **exacta** de respuestas factuales (`esCacheable`).
 
 ### Cómo
 
-Orden (`cotizar.ts` `handleCotizar` L541–617):
+Orden (`cotizar.ts` `handleCotizar` L737–895):
 
-1. Validar `contrato_id` + `query` (`parseQuery` = **solo trim**, L279–281).  
-2. `fetchFicha` + `cacheKey` (mismos helpers que #10).  
-3. Si no hay KV → **409** `sin_analisis` (L558–562). 0 Gemini.  
+1. Validar `contrato_id` + `query`.  
+2. `fetchFicha` + clave #10 `analyze:{id}:{pdf_hash}`.  
+3. Si no hay KV → **409** `sin_analisis` (L754–758). 0 Gemini.  
 4. `sanitizeHistory` (#3).  
-5. `checkCotizarLimits(..., geminiCalls=2)` (`limits.ts` L162–193): IP cuenta **1** pregunta; `cotizar:{day}` cuenta **2** Flash.  
-6. `generarEscenario` (L441–501):  
-   - **Clasificador** = 1 Flash JSON aparte (`clasificarIntent` L391–404, `maxOutputTokens: 200`, temp 0, **sin** thinking). Devuelve `{nivel, formato, necesita_internet, razon}`. Si Gemini falla → `heuristicIntent` (L236). Post-filtro: 1 sola vía + «comparar vías» → fuerza nivel 1 texto.  
-   - **Generate** = 1 Flash JSON (`COTIZAR_SCHEMA`, `maxOutputTokens: 8192`, thinking LOW, temp 0.2).  
-   - Post-proceso: `normalizeEscenario` → `completarEstructuras` (arma tabla/gráfica desde `alternativas[]` / componentes si Gemini las omite) → `aplicarFormatoSugerido` → `limpiarFormatoNatural` (nivel 1 sin montos: sin supuestos, sin nota ENERTRONIC).  
-7. Respuesta:  
-   - `Accept: text/event-stream` → SSE de **presentación**: eventos `phase` → `text` (chunks del campo `escenario` ya completo, ~5 palabras / 22 ms) → `data` `{escenario, clasificacion}` → `done`. Tablas/gráficas **solo** en `data`, nunca a medias.  
-   - Si no SSE → JSON `{ contrato_id, escenario, clasificacion }` 200.
+5. **Caché chat** (`chatCacheKey` L353–356): `chat:{contratoId}:{pdf_hash}:{sha256(normalizarPregunta(query))}`. `normalizarPregunta` L310–312 = trim + lowercase + colapsar espacios; **no** quita tildes. TTL **259200 s = 3 d** (`CHAT_CACHE_TTL` L238).  
+   - HIT → solo RPM (`checkCotizarRpm`); **0** Flash; **no** descuenta RPD/global; `kvIncr chat_cache:hit:{day}`. Headers `X-Cotizar-Cache: HIT`, `X-Cotizar-Intent` = el que se guardó. SSE o JSON. **Ignora `history[]`.**  
+   - MISS → `kvIncr chat_cache:miss:{day}`.  
+6. `clasificarPorReglas` (L264–308). Confianza **alta** solo si hay **exactamente una** señal (internet / gráfica / tabla / factual) y la query **no** es what-if económico. What-if (`y si`, margen, precio, techo…) → siempre **baja** (Flash).  
+7. `checkCotizarLimits(..., geminiCalls)` L823: **1** si reglas alta, **2** si Flash clasificador. IP cuenta 1 pregunta; `cotizar:{day}` cuenta Δ1 o Δ2.  
+8. Contador `chat_rules:{day}` o `chat_flash_clasif:{day}`.  
+9. `generarEscenario` (L581–646):  
+   - Si reglas alta: `intentPrevio` → **no** llama `clasificarIntentFlash`.  
+   - Si no: 1 Flash JSON clasificador (`maxOutputTokens: 200`, temp 0, sin thinking). Si Gemini falla → `heuristicIntent` (L245, nunca cuenta como alta).  
+   - Post-filtro: 1 sola vía + «comparar vías» → fuerza nivel 1 texto.  
+   - Generate = 1 Flash JSON (`COTIZAR_SCHEMA`, 8192, thinking LOW, temp 0.2).  
+   - Post-proceso: `normalizeEscenario` → `completarEstructuras` (tabla/gráfica desde análisis si Gemini las omite) → `aplicarFormatoSugerido` → `limpiarFormatoNatural`.  
+10. `saveChatCache` solo si `esCacheable` (L314–319): **false** si `supuestos_aplicados.length > 0` o hay monto (`valor`/`costo`/`margen` no null).  
+11. Respuesta: SSE de **presentación** (texto ya completo, ~5 palabras / 22 ms; tablas/gráficas solo en evento `data`) o JSON. Headers `X-Cotizar-Cache: MISS`, `X-Cotizar-Intent: reglas|flash`.
 
-Fail-closed (`escenario.ts` `normalizeEscenario`): si `supuestos_aplicados` no es lista no vacía, **montos = null**. Front: montos y marco «Escenario estimado» **solo** si `valor_estimado_soles != null`; nivel 1 factual = prosa limpia (`AnalisisContrato.tsx` `EscenarioCard`).
+Schema condicional (`formato`): `texto` | `tabla` | `grafica` | `tabla_grafica`. Nivel 1 fuerza texto; nivel 2 tabla; nivel 3 tabla_grafica.
 
-Cupos: `cotizar:ip:` RPM 8/60, `cotizar:ip:{day}` **COTIZAR_IP_RPD=20**, `cotizar:{day}` **COTIZAR_RPD=80 Δ2** (`wrangler.toml` L20–21). No toca `flash:` ni `analyze:`.
+Fail-closed (`escenario.ts` `normalizeEscenario`): si `supuestos_aplicados` no es lista no vacía, **montos = null**.
 
-**UI (prod):** panel fijo 380 px, `key={contratoId}`, persistencia `chat_escenarios_{id}` (mensaje **completo** al terminar el stream). Desktop ≥1024 px: panel **abierto** al cargar. &lt;1024 px: cerrado + FAB. Indicador «Analizando…» (fases clasificar / contexto / redactar) → colapsa a «Analizado ✓».
+Cupos: `cotizar:ip:` RPM 8/60, `cotizar:ip:{day}` **20**, `cotizar:{day}` **80**. No toca `flash:` ni `analyze:`.
+
+**UI:** panel fijo 380 px, `key={contratoId}`, persistencia `chat_escenarios_{id}`. Desktop ≥1024 px abierto. Indicador Analizando… → Analizado ✓.
 
 ### Por qué (endpoint nuevo, no el chat)
 
-El chat RAG busca **otros** contratos. Un what-if sobre **este** TDR debe leer la caché #10. Por eso `/cotizar` no hace retrieve.
+El chat RAG busca **otros** contratos. Un what-if sobre **este** TDR lee la caché #10.
 
-Dos Flash (clasificador + generate): **HEREDADA** de la iteración 4 (routing). El clasificador **no** es un pre-filtro de reglas: las heurísticas solo corren si Gemini tira. Streaming de presentación (no dos generaciones): **HEREDADA** de la iteración 7 — el JSON estructurado no se puede stremear a medias.
+Híbrido (iter. 8): las preguntas factuales obvias no pagan el Flash clasificador. Caché exacta: repetir «¿dónde se presta?» no paga generate. No cachear escenarios con supuestos: el número estimado no debe fosilizarse.
+
+Streaming de presentación (iter. 7): el JSON estructurado no se stremea a medias.
 
 ### Alternativas
 
-Caché exacta de `(contrato_id, query)`: no está (próxima eficiencia). Pre-filtro keyword antes del clasificador: el código `heuristicIntent` ya existe como fallback; no se llama primero. Reescribir query + RAG: otra Flash, fuera de este endpoint.
+Caché semántica (parafraseo): no está. Reescribir query + RAG: otra Flash, fuera de este endpoint. Incluir history en la clave de caché: hoy HIT ignora el hilo.
 
 ---
 
@@ -394,7 +413,7 @@ Caché exacta de `(contrato_id, query)`: no está (próxima eficiencia). Pre-fil
 |---|---|---|---|---|
 | Chat RAG | `ip:${ip}` 8/60 | `ip:${ip}:${day}` **CHAT_RPD=40** | `flash:${day}` **FLASH_RPD=200** **Δ2** | extract + generate (+ embed aparte, no en Δ2) |
 | `/analizar` | `analyze:ip:${ip}` 8/60 | `analyze:ip:${ip}:${day}` **15** | `analyze:${day}` **40** | 1 generate si MISS; HIT=0 |
-| `/cotizar` | `cotizar:ip:${ip}` 8/60 | `cotizar:ip:${ip}:${day}` **20** (1 pregunta) | `cotizar:${day}` **80** **Δ2** | clasificador + generate; 409=0 |
+| `/cotizar` | `cotizar:ip:${ip}` 8/60 | `cotizar:ip:${ip}:${day}` **20** (1 pregunta) | `cotizar:${day}` **80** **Δ1 o Δ2** | HIT caché: 0 Gemini (solo RPM). MISS reglas: 1 generate. MISS Flash: clasificador + generate. 409=0 |
 
 RPM: `CHAT_RPM.limit({ key })` atómico por colo (`limits.ts` L80–84, L127–131, L167–171).  
 RPD: `kvBump` get+put (`limits.ts` L60–71) — **no** es transacción; dos requests concurrentes pueden pasarse 1. Periodo UTC.
@@ -406,18 +425,23 @@ Valores wrangler: `wrangler.toml` L16–21. Defaults código: `limits.ts` L16–
 | Prefijo | Uso | TTL |
 |---|---|---|
 | `analyze:{id}:{hash}` | Caché JSON de `/analizar` | **259200 s** (3 d) |
+| `chat:{id}:{hash}:{sha256}` | Caché JSON de `/cotizar` si `esCacheable` | **259200 s** (3 d) |
 | `analyze:{YYYY-MM-DD}` | Contador global ANALYZE | hasta mañana UTC |
 | `analyze:ip:{ip}:{day}` | RPD IP analizar | hasta mañana UTC |
 | `ip:{ip}:{day}` | RPD IP chat RAG | hasta mañana UTC |
 | `flash:{day}` | Global Flash del chat (Δ2) | hasta mañana UTC |
-| `cotizar:{day}` | Global Flash de `/cotizar` (Δ2) | hasta mañana UTC |
+| `cotizar:{day}` | Global Flash de `/cotizar` (Δ1/Δ2) | hasta mañana UTC |
 | `cotizar:ip:{ip}:{day}` | RPD IP cotizar (1 por pregunta) | hasta mañana UTC |
+| `chat_cache:hit:{day}` / `miss:{day}` | Instrumentación HIT/MISS chat | hasta mañana UTC |
+| `chat_rules:{day}` / `chat_flash_clasif:{day}` | Instrumentación origen del intent | hasta mañana UTC |
 
-`/cotizar` **ya tiene** `env.CHAT_LIMITS` (lee `analyze:{id}:{hash}`). Un caché de chat cabría en el **mismo** namespace con otro prefijo (p. ej. `cotizar:q:{id}:{hash}`); no hace falta crear KV nuevo. Límite de valor KV Cloudflare: **25 MiB** por key — un JSON de escenario con tabla/gráfica (unos KB) cabe. RPM **no** vive en KV: binding `CHAT_RPM` namespace_id `8701`.
+`/cotizar` lee `analyze:{id}:{hash}` **y** escribe `chat:…` en el mismo namespace. Límite de valor KV Cloudflare: **25 MiB** por key. RPM **no** vive en KV: binding `CHAT_RPM` namespace_id `8701`.
+
+CORS expone `X-Analisis-Cache`, `X-Cotizar-Cache`, `X-Cotizar-Intent` (`index.ts` ~L106).
 
 ### Por qué aislados
 
-**HEREDADA:** un usuario de Ruta no debe vaciar el chat (FLASH 200 / CHAT 40), y los what-if no deben comer el cupo caro de análisis 60k TDR (ANALYZE 40). `/cotizar` sube `cotizar:{day}` **Δ2** (clasificador+generate) y **no** `flash:` ni `analyze:`.
+**HEREDADA:** un usuario de Ruta no debe vaciar el chat (FLASH 200 / CHAT 40), y los what-if no deben comer el cupo caro de análisis 60k TDR (ANALYZE 40). `/cotizar` sube `cotizar:{day}` **Δ1 o Δ2** y **no** `flash:` ni `analyze:`. HIT de caché chat no toca esos contadores (sí RPM).
 
 Backstop de facturación Gemini (~S/10/mes AI Studio): **[por confirmar con Rolando]** — no está en el código.
 
@@ -427,7 +451,7 @@ Comportamiento **real**:
 
 | Endpoint | Si Gemini devuelve JSON roto / HTTP no OK |
 |---|---|
-| `/analizar` | `parseAnalisisJson` tira; catch → **HTTP 502** `{ error: msg }` (`analizar.ts` L217–221, L374–376). El 66461 fue exactamente eso. **No** hay retry. El cupo ANALYZE **sí** se gastó (límites van **antes** de Gemini). |
+| `/analizar` | `parseAnalisisJson` tira; catch → **HTTP 502** `{ error: 'analisis_fallido', mensaje, reintentar: true, detalle_tecnico }` (`analizar.ts` L823–831). El 66461 fue el JSON crudo `{ error: msg }`; eso **ya no** se sirve. **No** hay retry. El cupo ANALYZE **sí** se gastó. Front: banner + Reintentar (`AnalisisContrato.tsx`). |
 | `/cotizar` | Generate/parse tira; catch → **HTTP 502** JSON si aún no abrió SSE; si ya stremea → evento `{type:'error'}` con HTTP 200. Cupo cotizar (Δ2) **ya descontado**. |
 | Chat JSON | catch de `handleRagJson` → **HTTP 200** con `error` + texto «No pude completar…» (`index.ts` L671–679). El front puede pintarlo como fallo blando. |
 | Chat SSE | `stage: 'error'` dentro del stream HTTP 200 (`index.ts` L772–775). Front lanza y muestra error. |
@@ -437,7 +461,7 @@ No hay cola de reintento ni circuit breaker aparte del tope `flash:` / `analyze:
 
 ### Alternativas
 
-Retry 1× en `/analizar` ante parse error (cuesta otra Flash). Idempotencia: no cobrar ANALYZE si Gemini falla — hoy **no**. Revisar FLASH_RPD si el chat Δ2 se come el día.
+Retry 1× en `/analizar` ante parse error (cuesta otra Flash). Idempotencia: no cobrar ANALYZE si Gemini falla — hoy **no**. Revisar FLASH_RPD si el chat Δ2 se come el día. Aligerar `v_kpis_dashboard` si el timeout 57014 se vuelve frecuente.
 
 ---
 
@@ -457,9 +481,9 @@ SPA autenticada que lee Supabase (anon + RLS) y pega al Worker.
 |---|---|
 | `/login` | `signInWithPassword` (`Login.tsx` L27). No hay `signUp` en el front |
 | `/ruta-dia` | #9 |
-| `/analisis/:id` | #10 (página) + panel #11 (380 px, `key={contratoId}`) |
-| `/` | Dashboard |
-| `/buscar` | Buscador |
+| `/analisis/:id` | #10 (página completa) + panel #11 (380 px, `key={contratoId}`, streaming) |
+| `/` | Dashboard (capa semántica, §I) |
+| `/buscar` | Buscador (`CatItIaPill`, un badge) |
 | `/chat` | RAG + history[] |
 | `/docs` | API |
 | `/usuarios` | admin |
@@ -474,6 +498,7 @@ SPA autenticada que lee Supabase (anon + RLS) y pega al Worker.
 | `chunks_tdr` | texto + `embedding` 768 + `embedding_v2` 1536 + `fuente` |
 | `perfiles` | `rol` admin\|normal, RLS (`seace-web/supabase/perfiles.sql`) |
 | `ingesta_rechazados` | G2 dead-letter (`ingesta_rechazados.sql`) |
+| `v_contratos_estado` / `v_kpis_*` | Capa semántica (iter. 9, §I). No son tablas base. |
 
 RLS contratos: SELECT `anon` y `authenticated` (`supabase_schema.sql` L178–185). Escritura: service_role del pipeline. `chunks_tdr` SELECT abierto (`schema_rag.sql` L42–47, `USING (true)`).
 
@@ -485,11 +510,52 @@ Worker usa `SUPABASE_ANON_KEY` (secret CF). Pipeline usa `SUPABASE_SERVICE_KEY`.
 
 SPA + RLS lectura pública de datos SEACE: **HEREDADA** (comentario schema L175–176). Worker como proxy de Gemini: no exponer la key al browser.
 
-**#11 en la UI (prod, iter. 5–7):** `AnalisisContrato.tsx` — `CHAT_PANEL_W=380`, breakpoint panel/margen `min-width: 1024px`, `chatOpen` inicial = ese matchMedia. Persistencia `localStorage['chat_escenarios_'+id]` (sin flags de streaming). Render condicional: `ChatTable` / `ChatChart`; factual sin marco de montos. El front **no** llama a Gemini.
+**#10+#11 en la UI (`/analisis/:id`):** infografía de ratio, N alternativas dinámicas, economía por componente, contradicciones TDR, timeline fishbone (`TimelineFishbone.tsx`). Chat panel lateral 380 px atado al contrato (`key={contratoId}`), abierto default desktop ≥1024 px, SSE de presentación, persistencia `localStorage['chat_escenarios_'+id]`. 502 de `/analizar`: banner ámbar + Reintentar (no JSON crudo). El front **no** llama a Gemini.
+
+**Buscador `/buscar`:** un solo badge `CatItIaPill` (`Pills.tsx` L42–53): si hay `categoria_it` se pinta IT; si no, IA. Nunca ambos (`6ba2eeb`). Misma pill en `ContratoCard`, `OportunidadCard`, análisis.
 
 ### Alternativas
 
-Jubilar Dashboard/Buscador si Ruta cubre el día (bugs de fecha/badge, otra decisión). No es arquitectura de retrieval.
+Jubilar Dashboard/Buscador si Ruta cubre el día. Home = Ruta (sigue pendiente). No es arquitectura de retrieval.
+
+---
+
+## I. Capa semántica (SQL + Dashboard)
+
+### Qué hace
+
+Una sola definición de «postulable / cierra hoy / rubro ENERTRONIC» en Postgres, para que Dashboard y Ruta no diverjan. Iteración 9. SQL: `seace-monitor/capa_semantica.sql` (repo raíz, no `docs/`). Front: `seace-web/src/lib/capaSemantica.ts`.
+
+**Aplicado** en Supabase `wusywwhcyqngnpvpzxyr` (vistas existen; GRANT a `anon`+`authenticated`; `NOTIFY pgrst`).
+
+### Cómo
+
+Día = `timezone('America/Lima', now())::date` (`seace_hoy_lima`). Misma regla que `limaDateISO()` / `esPostulable()`.
+
+| Objeto | Rol |
+|---|---|
+| `fn_rubro_energetic(...)` | Gemelo de `clasificarNivel()`: línea `categoria_it` + overlay texto (telemetría→núcleo, integración→adyacente, nunca degrada) + ALTA con IA real salvo Firma digital |
+| `v_contratos_estado` | Universo IT/IA + flags `es_postulable`, `es_vigente_ventana_vencida`, `es_en_evaluacion`, `cierra_hoy` / `cierra_manana` / `cierra_semana` (días **2–7**) / `cierra_7d` / `es_nuevo_hoy`. `rubro` aquí = **solo** mapeo de línea (barato, sin regex) |
+| `v_kpis_dashboard` | Agregados del tablero sobre postulables + conteos de vencidos/en evaluación/culminados + `por_linea` / `por_rubro` (rubro = `fn_rubro_energetic`, solo sobre postulables) |
+| `v_kpis_negocio` | Núcleo/adyacente/oportunista/marginal + IA/cloud/dev/tel sobre postulables |
+
+Dashboard (`Dashboard.tsx`): `cargarCapaSemantica()` prefiere SQL; si `v_kpis_dashboard` falla o timeout → **fallback TS** (`fuente: 'sql' \| 'ts'`) con `esPostulable` + `clasificarNivel`. Lista default `vista=postulable`. Filtro urgencia: `cierra_hoy \|\| cierra_manana` (hoy); `cierra_7d` (semana); mes = `days >= 0 && days <= 30`. Chip «En evaluación / vencidos» = `cerrados`.
+
+**Ruta del día no lee estas vistas** (sigue puntuando en el browser). Las reglas coinciden por diseño.
+
+### Matiz de prod (20 ago noche)
+
+`v_contratos_estado` y `v_kpis_negocio` responden. Un `SELECT *` de `v_kpis_dashboard` puede **timeout** (Postgres 57014). En ese caso el Dashboard usa TS y **no** se rompe. Backlog: aligerar esa vista.
+
+No hay valor referencial ni flag «cotizado/analizado» en `contratos` (no se inventan).
+
+### Por qué
+
+**HEREDADA** (iter. 9): el leak de Dashboard (vencidos en «esta semana» / filtro hoy) venía de calcular fechas en TS distinto a Ruta. SQL + `esPostulable` unifican.
+
+### Alternativas
+
+Materializar KPIs (tabla+cron) si el timeout molesta. Que Ruta también lea `v_contratos_estado`. Chat que responda KPIs: no está.
 
 ---
 
@@ -509,11 +575,12 @@ Jubilar Dashboard/Buscador si Ruta cubre el día (bugs de fecha/badge, otra deci
 | Embed PDF | cuerpo sin header | **MEDIDA** A/B 87164 | — | Headers API largos si molestan |
 | OCR | vigentes+ventana+TI, 2 h, por página | **HEREDADA** cupo | Más cola imagen | Si 1398 no baja |
 | G1 GC | flag existe, cron **no** lo usa | **POR-CONFIRMAR** | `--gc` | Chunks de culminados hinchan HNSW |
-| Ruta 0–100 | sin IA; 2–7d&gt;hoy. Ranking incluye En Evaluación (ventana cerrada). Brief y KPIs de cierre = vigentes con `fecha_fin>=hoy` | **HEREDADA** (ranking «nada se oculta») / **choca** con brief de acción 20 ago | Solo postulables en toda la página | Cuando Rolando fije el filtro |
+| Ruta 0–100 | sin IA; 2–7d&gt;hoy. Default **solo postulables** (`esPostulable`). Chip para En evaluación / cerrados | **HEREDADA** `cffcc2b` | Exigir fecha; home = Ruta | Si el chip no se usa |
 | #10 caché | `analyze:id:hash` 3 d | **HEREDADA** (clave) / **POR-DEFECTO** (TTL) | TTL | PDF que cambia seguido |
-| #11 | `/cotizar` clasificador+generate Δ2, SSE presentación, sin caché de chat | **HEREDADA** iter. 4–7 | Pre-filtro reglas; caché exacta query | Eficiencia de tokens |
-| Cupos | 3 **prefijos** en el mismo KV `CHAT_LIMITS` | **HEREDADA** | KV aparte para chat | Si un cupo queda muerto y otro explota |
-| 502 Gemini | analizar/cotizar 502; chat 200+texto | **POR-DEFECTO** (catch) | Retry 1× | Si 66461-like se repite |
+| #11 | `/cotizar` híbrido reglas+Flash, SSE, caché exacta si `esCacheable` | **HEREDADA** iter. 4–8 | Caché semántica; history en la clave | Tokens / parafraseo |
+| Cupos | 3 **prefijos** + caché `analyze:`/`chat:` en el mismo KV `CHAT_LIMITS` | **HEREDADA** | KV aparte | Si un cupo queda muerto y otro explota |
+| 502 Gemini | `/analizar` 502 **estructurado** + banner; `/cotizar` 502; chat 200+texto. Cupo ANALYZE se cobra igual | **HEREDADA** (catch + iter. 502) | Retry 1×; no cobrar si falla | Si 66461-like se repite |
+| Métricas Dashboard | Vistas SQL + fallback TS | **HEREDADA** iter. 9 | Materializar KPIs | Timeout `v_kpis_dashboard` |
 
 ### Discrepancias código vs PLAN
 
@@ -521,19 +588,19 @@ Jubilar Dashboard/Buscador si Ruta cubre el día (bugs de fecha/badge, otra deci
 2. Chunks: PLAN 200–400 **con solape** · código 800/500 **sin** overlap.  
 3. G1 GC: PLAN borra chunks al cerrar · cron **sin** `--gc`.  
 4. Eval 63%: PLAN habla del Worker completo · G4 **sin** reranker.  
-5. Caché semántico / exacta de queries (PLAN Fase 7 opcional): **no** está. Hay caché de `/analizar` por contrato (`analyze:{id}:{hash}`), **cero** `KV.put` de respuestas `/cotizar`. La query de #11 solo se `trim()`.  
+5. Caché de `/cotizar`: PLAN Fase 7 opcional pedía caché semántico. Hay caché **exacta** `chat:{id}:{pdf_hash}:{sha256}` solo si `esCacheable` (iter. 8). No hay embeddings de query ni parafraseo.  
 6. Drop `embedding(768)` + ivfflat (PLAN Fase 7): **no** hecho; v1 sigue en BD, chat no lo usa.  
 7. Header contextual en **todos** los chunks (PLAN Fase 4): PDF embebe **cuerpo**; API sigue con header largo.  
-8. **#9 postulabilidad:** el criterio de acción diaria (solo Vigente + ventana abierta) **no** está aplicado al Ranking completo ni al universo SQL. Ver §D auditoría 20 ago.
+8. **#9 postulabilidad:** criterio de acción diaria **sí** está en el ranking default (`esPostulable` + chip). El universo SQL sigue trayendo En Evaluación; el chip los muestra.
 
-### Commits de referencia (corte 20 ago 2026)
+### Commits de referencia (corte 20 ago 2026 noche)
 
 | Repo | HEAD | Qué fija |
 |---|---|---|
-| monitor | `e5c6343` + este commit | Docs iter. 1–7; auditoría postulabilidad #9 |
-| worker | `437c265` | `/cotizar` SSE + prompt formato natural; clasificador Δ2 desde `28eaf4b` |
-| web | `9426dc1` | Panel default desktop + streaming + Analizando + andamiaje vacío |
+| monitor | este commit de docs (padre `21921ef`) | SQL capa semántica + docs 1–9 |
+| worker | `c8113ae` · CF `075d03be-a84c-44eb-957f-7cca64bb6584` | Iter. 8 (`ecc186a`) + 502 estructurado `/analizar` |
+| web | `c0beff4` · Pages run `32441541562` | Iter. 9 + postulabilidad + badge + banner 502 |
 
-Iteraciones 1–7 (detalle en `ESTADO_CIERRE_2026-08.md`): worker `75e84af` → `437c265`; web `4a6742f` → `9426dc1`.
+Iteraciones 1–9: ver [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md). Worker ancla histórico: `75e84af` → `c8113ae`; web `4a6742f` → `c0beff4`.
 
-Snapshot: 20 ago 2026.
+Snapshot: 20 ago 2026 (Perú).

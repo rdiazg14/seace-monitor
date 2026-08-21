@@ -1,8 +1,12 @@
 # SEACE Monitor — Documentación Técnica y Funcional
 
-> Plataforma de monitoreo automático de contrataciones públicas del Estado peruano (SEACE).
-> Versión de producción activa en **https://seace.rdiaz-lab.xyz**
-> Última actualización: 2026-08-15
+> **No es el punto de entrada.** Este archivo describe el prototipo histórico (scrape 06:00, Llama 70B, CSV). El producto vivo (asesor #9/#10/#11, RAG v2, pipeline 09:00, iteraciones 1–9) está en:
+>
+> **[docs/TRASPASO_MAESTRO_SEACE.md](./docs/TRASPASO_MAESTRO_SEACE.md)**
+>
+> Plataforma de monitoreo de contrataciones públicas del Estado peruano (SEACE).
+> Producción: **https://seace.rdiaz-lab.xyz**
+> Última actualización de *este* archivo: 2026-08-15 (histórico). Snapshot de producto: **20 ago 2026**.
 
 ---
 

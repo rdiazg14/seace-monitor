@@ -1,4 +1,4 @@
-> **Estado de producto (20 ago 2026):** el asesor #9/#10/#11 con iteraciones 1–7 está documentado en [ESTADO_CIERRE_2026-08.md](./ESTADO_CIERRE_2026-08.md) y [ARQUITECTURA_TECNICA.md](./ARQUITECTURA_TECNICA.md) §§E–H. Este PLAN sigue siendo el de **retrieval v2 + pipeline**; varias filas (reranker v2-m3, chunks 200–400, costo $0/mes, checklist Gemini) están **desactualizadas**. Si código y PLAN divergen, gana el código.
+> **Estado de producto (20 ago 2026 noche):** el asesor #9/#10/#11 con iteraciones **1–9 + fixes** está en prod. Punto de entrada: [TRASPASO_MAESTRO_SEACE.md](./TRASPASO_MAESTRO_SEACE.md). Foto: [ESTADO_CIERRE_2026-08-20.md](./ESTADO_CIERRE_2026-08-20.md). Changelog: [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md). Este PLAN sigue siendo el de **retrieval v2 + pipeline**; varias filas (reranker v2-m3, chunks 200–400, costo $0/mes, checklist Gemini, «sin caché de chat») están **desactualizadas**. Si código y PLAN divergen, gana el código.
 
 # PLAN DE TRABAJO — SEACE Monitor v2
 
