@@ -1,3 +1,5 @@
+> **Estado de producto (20 ago 2026):** el asesor #9/#10/#11 con iteraciones 1–7 está documentado en [ESTADO_CIERRE_2026-08.md](./ESTADO_CIERRE_2026-08.md) y [ARQUITECTURA_TECNICA.md](./ARQUITECTURA_TECNICA.md) §§E–H. Este PLAN sigue siendo el de **retrieval v2 + pipeline**; varias filas (reranker v2-m3, chunks 200–400, costo $0/mes, checklist Gemini) están **desactualizadas**. Si código y PLAN divergen, gana el código.
+
 # PLAN DE TRABAJO — SEACE Monitor v2
 
 > Consolidación completa de mejoras acordadas. Objetivo: convertir el prototipo funcional

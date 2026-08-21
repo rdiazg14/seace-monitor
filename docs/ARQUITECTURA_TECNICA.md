@@ -1,9 +1,7 @@
 # Arquitectura técnica — SEACE Monitor
 
 Documento de **cómo funciona hoy** cada pieza, con evidencia `archivo:línea`.
-No sustituye al PLAN: si código y PLAN divergen, se anota aquí.
-
-**No commitear** hasta revisión de Rolando (los «por qué» no deben tener relleno).
+No sustituye al PLAN: si código y PLAN divergen, se anota aquí. Estado de producto asesor (iter. 1–7): también `ESTADO_CIERRE_2026-08.md`.
 
 ---
 
@@ -27,13 +25,13 @@ Cierre: tabla de decisiones · discrepancias vs PLAN · commits
 
 | Pieza | Path | HEAD documentado |
 |---|---|---|
-| Pipeline / SQL / evals | `seace-monitor` | `26b85ac` (sync-meta; remoto también tiene `6b59d14` corpus 76 334) |
-| Worker | `seace-ai-proxy` | `8e23992` (`/cotizar`) |
-| Front | `seace-web` | `d42b40f` (chat escenarios) · Pages `https://seace.rdiaz-lab.xyz` |
+| Pipeline / SQL / evals | `seace-monitor` | `e5f58d6` (backfill `chunk_embed_text` PDF) |
+| Worker | `seace-ai-proxy` | `437c265` (`/cotizar` SSE + clasificador) · CF `49953466-a6dd-4878-b549-8ebb5567bbcc` |
+| Front | `seace-web` | `9426dc1` (UX conversacional iter. 7) · Pages `https://seace.rdiaz-lab.xyz` |
 
 Worker vivo: `https://seace-ai-proxy.rdiazg14.workers.dev`. Front: `AI_PROXY` = esa URL (`seace-web/src/lib/supabase.ts` L7).
 
-Fecha de este corte: **18 ago 2026** (Perú).
+Fecha de este corte: **20 ago 2026** (Perú). Asesor #10/#11 en prod con iteraciones 1–7; retrieval/pipeline sin cambio de diseño desde el corte del 18 ago.
 
 Etiquetas de «por qué»:
 
@@ -252,38 +250,55 @@ Meter señales de #10 al ranking cuando se quiera (costo + sesgo del LLM). No ha
 
 ### Qué hace
 
-`POST /analizar` `{ contrato_id }` → JSON de 5 secciones (+ `resumen`) para ENERTRONIC. UI: `/analisis/:id`.
+`POST /analizar` `{ contrato_id }` → JSON estructurado para ENERTRONIC. UI: `/analisis/:id`. Una llamada Flash **solo en MISS** de caché.
+
+El schema **required** sigue siendo las 5 secciones + `resumen` + `optimizacion` (`analizar.ts` L423). Encima, el system prompt exige razonamiento de 2º orden (campos opcionales en el schema JSON, obligatorios en instrucciones):
+
+| Campo | Contenido |
+|---|---|
+| `timeline.hitos[]` | Secuencia variable: `orden`, `nombre`, `tipo`, `momento_texto`, `momento_dia` (siempre estimado), `tiene_pago`, `es_critico` |
+| `viabilidad.ratio_alcance` | `valor_mercado_min/max`, `techo_contrato`, `ratio_texto`, `lectura` |
+| `viabilidad.cotizacion_por_componente[]` | `componente`, `mercado_min/max` |
+| `viabilidad.contradicciones_tdr[]` | inconsistencias internas; array vacío válido |
+| `alternativas[]` | N variable (1 si la directa es viable; 2–3 si no). Exactamente una `recomendada=true`. Cada una con `economia.{valor,costo,margen}` |
+| `requisitos_proveedor.admite_consorcio` | `true` solo si el TDR lo dice; **`null` si no consta** (no se infiere) |
+| `chips_sugeridos` | 3–4, máx 40 chars, orden factual → comparativa → visual |
+| `optimizacion[]` | tácticas de **ejecución** dentro de la vía recomendada; no repetir las vías |
+
+Post-proceso **antes** de cachear (`handleAnalizar` L794–797): `completarMomentoDia` (L571) · `asegurarRecomendada` (L608) · `alinearEconomiaConAlternativa` (L630) — el resumen `economia` se pisa con la vía recomendada.
 
 ### Cómo
 
-Orden bloqueado (`analizar.ts` `handleAnalizar` L258–377):
+Orden bloqueado (`analizar.ts` `handleAnalizar` L690–821):
 
 1. Validar `contrato_id`.  
 2. Ficha (incluye `tdr_texto`, `pdf_hash`).  
-3. TDR: columna `tdr_texto`, si no chunks (`limit=80`, L191–193), si no ficha.  
-4. Si chars &lt; **200** → **422** `sin_tdr` (L19, L284–289). **No** descuenta cupo.  
-5. KV `analyze:${id}:${pdf_hash\|\|'na'}` TTL **259200 s = 3 d** (L20, L224–226, L292–305). HIT → 200, sin Gemini ni cupo.  
+3. TDR: columna `tdr_texto`, si no chunks (`limit=80`), si no ficha.  
+4. Si chars &lt; **200** → **422** `sin_tdr` (L19, L716–721). **No** descuenta cupo.  
+5. KV `analyze:{id}:{pdf_hash\|\|'na'}` (`cacheKey` L648–650) TTL **259200 s = 3 d** (L20, L813). HIT → 200, header `X-Analisis-Cache: HIT`, 0 Gemini, 0 cupo. En HIT se re-aplica `completarMomentoDia` (L731).  
 6. `checkAnalyzeLimits` (no `flash:`).  
-7. Techo TDR **60 000** chars (L18, L320).  
-8. 1× Flash JSON (`ANALISIS_SCHEMA`: `resumen` + 5 secciones required L106).  
-9. `KV.put` del resultado. No pisa HIT anteriores salvo TTL/hash nuevo.
+7. Techo TDR **60 000** chars (L18).  
+8. 1× Flash JSON (`maxOutputTokens: 65536`, thinking LOW, temp 0.15, L665–670).  
+9. Post-proceso + `KV.put`. No pisa HIT anteriores salvo TTL/hash nuevo.
 
-Schema economía: `valor/costo/margen` estimados + `supuestos[]` + `lo_que_no_sabe[]` (L83–93). Cifras de economía **no** están en `required` (L93: solo pistas/supuestos/lo_que_no_sabe). Techo **8 UIT = S/42 800** (L15). System: el humano pone el número final (L25, L35–41).
+Schema economía: `valor/costo/margen` estimados + `supuestos[]` + `lo_que_no_sabe[]`. Cifras de economía **no** están en `required` (L228: solo pistas/supuestos/lo_que_no_sabe). Techo **8 UIT = S/42 800** (L15).
 
-UI: bloques encaje / condiciones / economía / veredicto / optimización; análisis **congelado** respecto de #11.
+**UI (prod):** `AnalisisContrato.tsx` + `AnalisisV2.tsx` (infografía ratio, N alternativas, economía por componente, contradicciones) + `TimelineFishbone.tsx` (thumbnail + fullscreen, eje con salto de plazo). Análisis **congelado** respecto de #11.
 
 ### Por qué
 
 | Elección | Etiqueta |
 |---|---|
 | Caché id+hash 3 d | **HEREDADA** (id+hash) / **POR-DEFECTO** (TTL 259200) — el hash está en la clave; el 3 d no tiene eval |
-| Estimación vs techo, nunca cifra seca | **HEREDADA** — criterios ENERTRONIC + system L35 |
+| Estimación vs techo, nunca cifra seca | **HEREDADA** — criterios ENERTRONIC |
+| `economia` = vía recomendada | **HEREDADA** — iter. 2.5; el chat y la página deben contar la misma historia |
+| Consorcio no inferido | **HEREDADA** — ausencia ≠ permiso |
 | 422 sin TDR corto | **HEREDADA** — no alucinar sobre ficha vacía |
 | Cupos distintos del chat | ver G |
 
 ### Alternativas
 
-TTL más largo si los TDR no rotan. No reabrir el schema 5 secciones sin producto.
+TTL más largo si los TDR no rotan. No reabrir el schema 2º orden sin producto. La próxima palanca de costo de #10 es el MISS (1 Flash grande), no el HIT.
 
 ---
 
@@ -291,27 +306,40 @@ TTL más largo si los TDR no rotan. No reabrir el schema 5 secciones sin product
 
 ### Qué hace
 
-`POST /cotizar` `{ contrato_id, query, history? }`. Recalcula un **escenario** sobre el análisis **ya cacheado**. No RAG. No re-analiza TDR.
+`POST /cotizar` `{ contrato_id, query, history? }`. Recalcula un **escenario** sobre el análisis **ya cacheado**. No RAG. No re-analiza TDR. **No cachea** la respuesta del chat (solo lee la caché #10).
 
 ### Cómo
 
-Orden (`cotizar.ts`): validar → `fetchFicha` + `cacheKey` (mismos helpers que #10) → si no hay KV **409** `sin_analisis` (L163–167) → `sanitizeHistory` (#3) → `checkCotizarLimits` → 1× Flash JSON → `normalizeEscenario` → 200. **No** `KV.put` sobre `analyze:`.
+Orden (`cotizar.ts` `handleCotizar` L541–617):
 
-Fail-closed (`escenario.ts` L21–43): si `supuestos_aplicados` no es lista no vacía, **montos = null**. Front: `escenarioMuestraCifras` (`analisis.ts` L79–81) — sin supuestos no pinta S/.
+1. Validar `contrato_id` + `query` (`parseQuery` = **solo trim**, L279–281).  
+2. `fetchFicha` + `cacheKey` (mismos helpers que #10).  
+3. Si no hay KV → **409** `sin_analisis` (L558–562). 0 Gemini.  
+4. `sanitizeHistory` (#3).  
+5. `checkCotizarLimits(..., geminiCalls=2)` (`limits.ts` L162–193): IP cuenta **1** pregunta; `cotizar:{day}` cuenta **2** Flash.  
+6. `generarEscenario` (L441–501):  
+   - **Clasificador** = 1 Flash JSON aparte (`clasificarIntent` L391–404, `maxOutputTokens: 200`, temp 0, **sin** thinking). Devuelve `{nivel, formato, necesita_internet, razon}`. Si Gemini falla → `heuristicIntent` (L236). Post-filtro: 1 sola vía + «comparar vías» → fuerza nivel 1 texto.  
+   - **Generate** = 1 Flash JSON (`COTIZAR_SCHEMA`, `maxOutputTokens: 8192`, thinking LOW, temp 0.2).  
+   - Post-proceso: `normalizeEscenario` → `completarEstructuras` (arma tabla/gráfica desde `alternativas[]` / componentes si Gemini las omite) → `aplicarFormatoSugerido` → `limpiarFormatoNatural` (nivel 1 sin montos: sin supuestos, sin nota ENERTRONIC).  
+7. Respuesta:  
+   - `Accept: text/event-stream` → SSE de **presentación**: eventos `phase` → `text` (chunks del campo `escenario` ya completo, ~5 palabras / 22 ms) → `data` `{escenario, clasificacion}` → `done`. Tablas/gráficas **solo** en `data`, nunca a medias.  
+   - Si no SSE → JSON `{ contrato_id, escenario, clasificacion }` 200.
 
-Cupos: `cotizar:ip:` RPM 8/60, `cotizar:ip:${day}` **COTIZAR_IP_RPD=20**, `cotizar:${day}` **COTIZAR_RPD=80**, delta **1** (`limits.ts` L157–191; `wrangler.toml` L20–21). No toca `flash:` ni `analyze:`.
+Fail-closed (`escenario.ts` `normalizeEscenario`): si `supuestos_aplicados` no es lista no vacía, **montos = null**. Front: montos y marco «Escenario estimado» **solo** si `valor_estimado_soles != null`; nivel 1 factual = prosa limpia (`AnalisisContrato.tsx` `EscenarioCard`).
 
-UI: chat bajo el análisis congelado; card «Escenario estimado» + «Asumiendo» en el mismo bloque.
+Cupos: `cotizar:ip:` RPM 8/60, `cotizar:ip:{day}` **COTIZAR_IP_RPD=20**, `cotizar:{day}` **COTIZAR_RPD=80 Δ2** (`wrangler.toml` L20–21). No toca `flash:` ni `analyze:`.
+
+**UI (prod):** panel fijo 380 px, `key={contratoId}`, persistencia `chat_escenarios_{id}` (mensaje **completo** al terminar el stream). Desktop ≥1024 px: panel **abierto** al cargar. &lt;1024 px: cerrado + FAB. Indicador «Analizando…» (fases clasificar / contexto / redactar) → colapsa a «Analizado ✓».
 
 ### Por qué (endpoint nuevo, no el chat)
 
-El chat hace retrieve+embed+RRF+rerank y el system manda «solo fragmentos TDR» (`index.ts` SYSTEM_PROMPT + `retrieveContextV2`). Un what-if («¿y si instancias chicas?») **no** debe buscar otros contratos. Reusar `POST /` rompería contexto y gastaría Δ2 Flash. Por eso `/cotizar` lee la caché #10 y genera **1** Flash.
+El chat RAG busca **otros** contratos. Un what-if sobre **este** TDR debe leer la caché #10. Por eso `/cotizar` no hace retrieve.
 
-Etiqueta: **HEREDADA** del diseño aprobado #11 (no hay A-B vs chat-con-análisis-en-history).
+Dos Flash (clasificador + generate): **HEREDADA** de la iteración 4 (routing). El clasificador **no** es un pre-filtro de reglas: las heurísticas solo corren si Gemini tira. Streaming de presentación (no dos generaciones): **HEREDADA** de la iteración 7 — el JSON estructurado no se puede stremear a medias.
 
 ### Alternativas
 
-Reescribir query + RAG: otra Flash, fuera de v1. Persistir escenarios: no está.
+Caché exacta de `(contrato_id, query)`: no está (próxima eficiencia). Pre-filtro keyword antes del clasificador: el código `heuristicIntent` ya existe como fallback; no se llama primero. Reescribir query + RAG: otra Flash, fuera de este endpoint.
 
 ---
 
@@ -323,16 +351,30 @@ Reescribir query + RAG: otra Flash, fuera de v1. Persistir escenarios: no está.
 |---|---|---|---|---|
 | Chat RAG | `ip:${ip}` 8/60 | `ip:${ip}:${day}` **CHAT_RPD=40** | `flash:${day}` **FLASH_RPD=200** **Δ2** | extract + generate (+ embed aparte, no en Δ2) |
 | `/analizar` | `analyze:ip:${ip}` 8/60 | `analyze:ip:${ip}:${day}` **15** | `analyze:${day}` **40** | 1 generate si MISS; HIT=0 |
-| `/cotizar` | `cotizar:ip:${ip}` 8/60 | `cotizar:ip:${ip}:${day}` **20** | `cotizar:${day}` **80** | 1 generate; 409=0 |
+| `/cotizar` | `cotizar:ip:${ip}` 8/60 | `cotizar:ip:${ip}:${day}` **20** (1 pregunta) | `cotizar:${day}` **80** **Δ2** | clasificador + generate; 409=0 |
 
 RPM: `CHAT_RPM.limit({ key })` atómico por colo (`limits.ts` L80–84, L127–131, L167–171).  
 RPD: `kvBump` get+put (`limits.ts` L60–71) — **no** es transacción; dos requests concurrentes pueden pasarse 1. Periodo UTC.
 
 Valores wrangler: `wrangler.toml` L16–21. Defaults código: `limits.ts` L16–21.
 
+**Un solo KV namespace en el Worker:** binding `CHAT_LIMITS`, id `c63cfd497041477f91dafdde5935f37d` (`wrangler.toml` L31–33). No hay un segundo KV. Claves que conviven:
+
+| Prefijo | Uso | TTL |
+|---|---|---|
+| `analyze:{id}:{hash}` | Caché JSON de `/analizar` | **259200 s** (3 d) |
+| `analyze:{YYYY-MM-DD}` | Contador global ANALYZE | hasta mañana UTC |
+| `analyze:ip:{ip}:{day}` | RPD IP analizar | hasta mañana UTC |
+| `ip:{ip}:{day}` | RPD IP chat RAG | hasta mañana UTC |
+| `flash:{day}` | Global Flash del chat (Δ2) | hasta mañana UTC |
+| `cotizar:{day}` | Global Flash de `/cotizar` (Δ2) | hasta mañana UTC |
+| `cotizar:ip:{ip}:{day}` | RPD IP cotizar (1 por pregunta) | hasta mañana UTC |
+
+`/cotizar` **ya tiene** `env.CHAT_LIMITS` (lee `analyze:{id}:{hash}`). Un caché de chat cabría en el **mismo** namespace con otro prefijo (p. ej. `cotizar:q:{id}:{hash}`); no hace falta crear KV nuevo. Límite de valor KV Cloudflare: **25 MiB** por key — un JSON de escenario con tabla/gráfica (unos KB) cabe. RPM **no** vive en KV: binding `CHAT_RPM` namespace_id `8701`.
+
 ### Por qué aislados
 
-**HEREDADA:** un usuario de Ruta no debe vaciar el chat (FLASH 200 / CHAT 40), y los what-if no deben comer el cupo caro de análisis 60k TDR (ANALYZE 40). Medido en prod 18 ago: un `/cotizar` subió `cotizar:${day}` y **no** `flash:` ni `analyze:`.
+**HEREDADA:** un usuario de Ruta no debe vaciar el chat (FLASH 200 / CHAT 40), y los what-if no deben comer el cupo caro de análisis 60k TDR (ANALYZE 40). `/cotizar` sube `cotizar:{day}` **Δ2** (clasificador+generate) y **no** `flash:` ni `analyze:`.
 
 Backstop de facturación Gemini (~S/10/mes AI Studio): **[por confirmar con Rolando]** — no está en el código.
 
@@ -343,7 +385,7 @@ Comportamiento **real**:
 | Endpoint | Si Gemini devuelve JSON roto / HTTP no OK |
 |---|---|
 | `/analizar` | `parseAnalisisJson` tira; catch → **HTTP 502** `{ error: msg }` (`analizar.ts` L217–221, L374–376). El 66461 fue exactamente eso. **No** hay retry. El cupo ANALYZE **sí** se gastó (límites van **antes** de Gemini). |
-| `/cotizar` | `JSON.parse` del generate tira; catch → **HTTP 502** (`cotizar.ts` L204–206). Fail-closed de supuestos **no aplica** (no hay body de escenario). Cupo cotizar ya descontado. |
+| `/cotizar` | Generate/parse tira; catch → **HTTP 502** JSON si aún no abrió SSE; si ya stremea → evento `{type:'error'}` con HTTP 200. Cupo cotizar (Δ2) **ya descontado**. |
 | Chat JSON | catch de `handleRagJson` → **HTTP 200** con `error` + texto «No pude completar…» (`index.ts` L671–679). El front puede pintarlo como fallo blando. |
 | Chat SSE | `stage: 'error'` dentro del stream HTTP 200 (`index.ts` L772–775). Front lanza y muestra error. |
 | Filtros v2 | HTTP/parse malos → regex, **no** 502 (`index.ts` L401–421). |
@@ -372,7 +414,7 @@ SPA autenticada que lee Supabase (anon + RLS) y pega al Worker.
 |---|---|
 | `/login` | `signInWithPassword` (`Login.tsx` L27). No hay `signUp` en el front |
 | `/ruta-dia` | #9 |
-| `/analisis/:id` | #10 + chat #11 |
+| `/analisis/:id` | #10 (página) + panel #11 (380 px, `key={contratoId}`) |
 | `/` | Dashboard |
 | `/buscar` | Buscador |
 | `/chat` | RAG + history[] |
@@ -400,6 +442,8 @@ Worker usa `SUPABASE_ANON_KEY` (secret CF). Pipeline usa `SUPABASE_SERVICE_KEY`.
 
 SPA + RLS lectura pública de datos SEACE: **HEREDADA** (comentario schema L175–176). Worker como proxy de Gemini: no exponer la key al browser.
 
+**#11 en la UI (prod, iter. 5–7):** `AnalisisContrato.tsx` — `CHAT_PANEL_W=380`, breakpoint panel/margen `min-width: 1024px`, `chatOpen` inicial = ese matchMedia. Persistencia `localStorage['chat_escenarios_'+id]` (sin flags de streaming). Render condicional: `ChatTable` / `ChatChart`; factual sin marco de montos. El front **no** llama a Gemini.
+
 ### Alternativas
 
 Jubilar Dashboard/Buscador si Ruta cubre el día (bugs de fecha/badge, otra decisión). No es arquitectura de retrieval.
@@ -424,8 +468,8 @@ Jubilar Dashboard/Buscador si Ruta cubre el día (bugs de fecha/badge, otra deci
 | G1 GC | flag existe, cron **no** lo usa | **POR-CONFIRMAR** | `--gc` | Chunks de culminados hinchan HNSW |
 | Ruta 0–100 | sin IA; 2–7d&gt;hoy | **HEREDADA** criterios | Señales #10 | Si el ranking miente vs margen |
 | #10 caché | `analyze:id:hash` 3 d | **HEREDADA** (clave) / **POR-DEFECTO** (TTL) | TTL | PDF que cambia seguido |
-| #11 | `/cotizar` + fail-closed | **HEREDADA** diseño | Query-rewrite+RAG | Si «ese contrato» es el caso de uso |
-| Cupos | 3 namespaces | **HEREDADA** | Unificar | Si un cupo queda muerto y otro explota |
+| #11 | `/cotizar` clasificador+generate Δ2, SSE presentación, sin caché de chat | **HEREDADA** iter. 4–7 | Pre-filtro reglas; caché exacta query | Eficiencia de tokens |
+| Cupos | 3 **prefijos** en el mismo KV `CHAT_LIMITS` | **HEREDADA** | KV aparte para chat | Si un cupo queda muerto y otro explota |
 | 502 Gemini | analizar/cotizar 502; chat 200+texto | **POR-DEFECTO** (catch) | Retry 1× | Si 66461-like se repite |
 
 ### Discrepancias código vs PLAN
@@ -434,14 +478,18 @@ Jubilar Dashboard/Buscador si Ruta cubre el día (bugs de fecha/badge, otra deci
 2. Chunks: PLAN 200–400 **con solape** · código 800/500 **sin** overlap.  
 3. G1 GC: PLAN borra chunks al cerrar · cron **sin** `--gc`.  
 4. Eval 63%: PLAN habla del Worker completo · G4 **sin** reranker.  
-5. Caché semántico de queries (PLAN Fase 7 opcional): **no** está; hay caché de `/analizar` por contrato, no de chat.  
+5. Caché semántico / exacta de queries (PLAN Fase 7 opcional): **no** está. Hay caché de `/analizar` por contrato (`analyze:{id}:{hash}`), **cero** `KV.put` de respuestas `/cotizar`. La query de #11 solo se `trim()`.  
 6. Drop `embedding(768)` + ivfflat (PLAN Fase 7): **no** hecho; v1 sigue en BD, chat no lo usa.  
 7. Header contextual en **todos** los chunks (PLAN Fase 4): PDF embebe **cuerpo**; API sigue con header largo.
 
-### Commits de referencia
+### Commits de referencia (corte 20 ago 2026)
 
-- monitor: `26b85ac` `feat(pipeline): robustez de --sync-meta…`  
-- web: `d42b40f` `feat(web): chat de escenarios en /analisis/:id…`  
-- worker: `8e23992` `feat(worker): endpoint /cotizar…`  
+| Repo | HEAD | Qué fija |
+|---|---|---|
+| monitor | `e5f58d6` | Pipeline + docs (este corte) |
+| worker | `437c265` | `/cotizar` SSE + prompt formato natural; clasificador Δ2 desde `28eaf4b` |
+| web | `9426dc1` | Panel default desktop + streaming + Analizando + andamiaje vacío |
 
-Snapshot: 18 ago 2026.
+Iteraciones 1–7 (detalle en `ESTADO_CIERRE_2026-08.md`): worker `75e84af` → `437c265`; web `4a6742f` → `9426dc1`.
+
+Snapshot: 20 ago 2026.

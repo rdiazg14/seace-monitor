@@ -1,7 +1,7 @@
 # Traspaso maestro — SEACE Monitor
 
 Contexto completo para retomar el proyecto **sin chat previo**.
-Snapshot: **18–19 ago 2026** (Perú). Un solo archivo nuevo; el detalle técnico y de cierre viven en los docs enlazados.
+Snapshot: **20 ago 2026** (Perú). Un solo archivo nuevo; el detalle técnico y de cierre viven en los docs enlazados.
 
 | Doc | Para qué |
 |---|---|
@@ -18,7 +18,7 @@ Snapshot: **18–19 ago 2026** (Perú). Un solo archivo nuevo; el detalle técni
 
 ### Qué es SEACE Monitor (3 frases)
 
-Sistema que deja de ser un buscador del SEACE y pasa a ser **asesor de licitaciones menores (≤ 8 UIT, techo S/42 800 en 2026)** para **ENERTRONIC** (TI peruana: IA, cloud, desarrollo, telemetría). Ingesta diaria el corpus público, rankea oportunidades sin IA (#9), analiza un TDR con Gemini (#10) y recálcula escenarios de cotización sobre ese análisis congelado (#11). El humano pone el número final; la IA no oculta contratos ni cifra seca.
+Sistema que deja de ser un buscador del SEACE y pasa a ser **asesor de licitaciones menores (≤ 8 UIT, techo S/42 800 en 2026)** para **ENERTRONIC** (TI peruana: IA, cloud, desarrollo, telemetría). Ingesta diaria el corpus público, rankea oportunidades sin IA (#9), analiza un TDR con Gemini incluyendo razonamiento de 2º orden (#10) y recálcula escenarios sobre ese análisis congelado (#11, panel + streaming). El humano pone el número final; la IA no oculta contratos ni cifra seca.
 
 ### Los 3 subrepos
 
@@ -50,9 +50,9 @@ Hashes de este corte (HEAD `origin/main`):
 
 | Repo | GitHub | Visibilidad | Rama | HEAD |
 |---|---|---|---|---|
-| seace-monitor | https://github.com/rdiazg14/seace-monitor | **público** | `main` | `8104707` (cierre) · arquitectura `e1c5881` |
-| seace-web | https://github.com/rdiazg14/seace-web | **público** | `main` | `d42b40f` |
-| seace-ai-proxy | https://github.com/rdiazg14/seace-ai-proxy | **privado** | `main` | `8e23992` · Worker vivo `ccb3a082` |
+| seace-monitor | https://github.com/rdiazg14/seace-monitor | **público** | `main` | `e5f58d6` (pipeline) · este doc se commitea encima |
+| seace-web | https://github.com/rdiazg14/seace-web | **público** | `main` | `9426dc1` (iteración 7) |
+| seace-ai-proxy | https://github.com/rdiazg14/seace-ai-proxy | **privado** | `main` | `437c265` · Worker CF `49953466-a6dd-4878-b549-8ebb5567bbcc` |
 
 ### 1.1 seace-monitor
 
@@ -92,7 +92,7 @@ Workflows: `pipeline.yml` (activo, cron + manual) · `embed_v2.yml` / `pdf.yml` 
 
 **Stack:** React 19 + Vite 8 + TypeScript + Tailwind 3 + react-router 7 + supabase-js. Host: **GitHub Pages** (no Cloudflare Pages), dominio `seace.rdiaz-lab.xyz`.
 
-**`src/` clave:** `App.tsx` rutas · `lib/supabase.ts` URL + `AI_PROXY` · `lib/rutaDia.ts` score #9 · `lib/analisis.ts` tipos #10/#11 · `pages/RutaDia.tsx` · `AnalisisContrato.tsx` · `Chat.tsx` · `Login.tsx` · `RequireAuth.tsx` · `supabase/perfiles.sql` + Edge Functions `crear-usuario` / `desactivar-usuario`.
+**`src/` clave:** `App.tsx` rutas · `lib/supabase.ts` URL + `AI_PROXY` · `lib/rutaDia.ts` score #9 · `lib/analisis.ts` tipos #10/#11 · `pages/RutaDia.tsx` · `AnalisisContrato.tsx` (página #10 + panel #11) · `components/AnalisisV2.tsx` · `TimelineFishbone.tsx` · `ChatTable.tsx` / `ChatChart.tsx` · `Chat.tsx` (RAG) · `Login.tsx` · `RequireAuth.tsx` · `supabase/perfiles.sql` + Edge Functions `crear-usuario` / `desactivar-usuario`.
 
 **Local:**
 
@@ -103,7 +103,7 @@ npm run dev          # Vite, puerto 5173 (CORS del Worker lo permite)
 
 `npm run build` → `tsc -b && vite build`. El workflow copia `dist/index.html` a `dist/404.html` (SPA en Pages).
 
-**Deploy:** push a `main` → `.github/workflows/deploy.yml` (`Deploy seace-web → GitHub Pages`). Último: deploy `5975444317`, SHA `d42b40f`.
+**Deploy:** push a `main` → `.github/workflows/deploy.yml` (`Deploy seace-web → GitHub Pages`). HEAD de este corte: `9426dc1`.
 
 ### 1.3 seace-ai-proxy
 
@@ -124,9 +124,9 @@ npx wrangler dev     # secrets desde .dev.vars
 npx wrangler deploy
 ```
 
-No hay Action de deploy del Worker: es manual (`npx wrangler deploy` desde esta carpeta). Versión viva se confirma con `npx wrangler deployments list` (100% debe ser `ccb3a082…` = commit `8e23992`).
+No hay Action de deploy del Worker: es manual (`npx wrangler deploy` desde esta carpeta). Versión viva se confirma con `npx wrangler deployments list` (este corte: `49953466…` = commit `437c265`).
 
-Router (`index.ts` L791–845): solo **POST**. `/embed` → 410 · `/analizar` · `/cotizar` · resto = chat RAG (`query` + `history?`). SSE si `Accept: text/event-stream`.
+Router (`index.ts`): solo **POST**. `/embed` → 410 · `/analizar` · `/cotizar` (JSON o SSE) · resto = chat RAG (`query` + `history?`). SSE si `Accept: text/event-stream`.
 
 ### Orden obligatorio: Worker **antes** que Pages
 
@@ -164,8 +164,8 @@ El front **hardcodea** `AI_PROXY = https://seace-ai-proxy.rdiazg14.workers.dev` 
 
 | Uso | Modelo | Dónde |
 |---|---|---|
-| Embeddings | `gemini-embedding-001` @ **1536**, L2, QUERY vs DOCUMENT | Worker query; pipeline documentos |
-| Generación | `gemini-3.7-flash`, thinking `LOW` | Chat, filtros, `/analizar`, `/cotizar`, OCR visión |
+| Embeddings | `gemini-embedding-001` @ **1536**, L2, QUERY vs DOCUMENT | Worker query RAG (1 por pregunta, **sin caché**); pipeline documentos (`batchEmbedContents`, lote 16) |
+| Generación | `gemini-3.7-flash`, thinking `LOW` salvo clasificador `/cotizar` (temp 0, sin thinking) | Chat RAG (filtros + generate), `/analizar` (1× MISS), `/cotizar` (**2×**: clasificar + generate), OCR visión (cron) |
 
 Secret: `GEMINI_API_KEY` — Cloudflare Worker **y** GitHub Actions (mismo nombre). No en `wrangler.toml`.
 
@@ -178,7 +178,7 @@ Tier exacto de billing: **[por confirmar con Rolando]** (en sprints se habló de
 - Account id (toml): `5a2b884f36bd62011960b879c3737546`
 - Worker name: `seace-ai-proxy`
 - Workers AI: **solo** reranker `@cf/baai/bge-reranker-base` (no embed BGE; `/embed` = 410)
-- KV `CHAT_LIMITS` id `c63cfd497041477f91dafdde5935f37d` — cupos **y** caché `analyze:{id}:{hash}`
+- KV `CHAT_LIMITS` id `c63cfd497041477f91dafdde5935f37d` — **único** KV: cupos **y** caché `analyze:{id}:{hash}`. `/cotizar` lee esa caché; **no** escribe respuestas de chat.
 - Rate limiter `CHAT_RPM` namespace `8701`, **8 / 60 s**, keys distintas por flujo (`ip:`, `analyze:ip:`, `cotizar:ip:`)
 
 **Vars no secretas** (`wrangler.toml`):
@@ -235,15 +235,16 @@ Criterios (resumen; detalle en [CRITERIOS_DECISION_ENERTRONIC.md](./CRITERIOS_DE
 
 - **UI:** `/analisis/:id`  
 - **Worker:** `POST /analizar` `{ contrato_id }`  
-- **Flujo:** ficha (`tdr_texto` / `pdf_hash`) → TDR columna o chunks (máx 80) → si chars &lt; **200** → **422** `sin_tdr` (sin cupo) → KV `analyze:{id}:{hash}` TTL 3 d (HIT = 0 Gemini) → cupos ANALYZE → 1 Flash JSON (5 secciones + resumen) → KV.put. Techo S/42 800.  
-- Front muestra encaje / condiciones / economía / veredicto / optimización **congelados**.
+- **Flujo:** ficha (`tdr_texto` / `pdf_hash`) → TDR columna o chunks (máx 80) → si chars &lt; **200** → **422** `sin_tdr` (sin cupo) → KV `analyze:{id}:{hash}` TTL 3 d (HIT = 0 Gemini) → cupos ANALYZE → 1 Flash JSON → post-proceso (`completarMomentoDia`, `asegurarRecomendada`, `alinearEconomiaConAlternativa`) → KV.put. Techo S/42 800.  
+- Schema en prod (además de las 5 secciones): `timeline.hitos`, `viabilidad.ratio_alcance` + `cotizacion_por_componente` + `contradicciones_tdr`, `alternativas[]`, `chips_sugeridos`, `admite_consorcio` tri-estado.  
+- Front: infografía, N alternativas, economía por componente, contradicciones, fishbone (`TimelineFishbone.tsx`). Análisis **congelado**.
 
 ### #11 Cotización asistida
 
-- **UI:** chat debajo del análisis en la misma página.  
-- **Worker:** `POST /cotizar` `{ contrato_id, query, history? }`  
-- **Flujo:** misma clave KV #10 → si no hay caché **409** `sin_analisis` (sin cupo) → cupos COTIZAR → 1 Flash → `normalizeEscenario`: sin `supuestos_aplicados[]` las cifras salen `null` (fail-closed). **No** reescribe el análisis. **No** RAG.  
-- Por qué no reusar el chat: el RAG buscaría **otros** contratos y gastaría Δ2 Flash. Ver arquitectura §F.
+- **UI:** panel lateral 380 px en `/analisis/:id` (`ChatEscenarios`, `key={contratoId}`). Desktop ≥1024 px **abierto** al cargar; móvil cerrado + FAB. Persistencia `localStorage chat_escenarios_{id}`.  
+- **Worker:** `POST /cotizar` `{ contrato_id, query, history? }` (SSE si `Accept: text/event-stream`)  
+- **Flujo:** misma clave KV #10 → si no hay caché **409** `sin_analisis` (sin cupo) → cupos COTIZAR **Δ2** → 1 Flash clasificador `{nivel, formato, necesita_internet}` → 1 Flash generate JSON → post-proceso (`normalizeEscenario`, `completarEstructuras`, formato natural nivel 1) → SSE de presentación del texto (tablas/gráficas enteras al final) o JSON. Fail-closed: sin `supuestos_aplicados[]` las cifras salen `null`. **No** reescribe el análisis. **No** RAG. **No** cachea la respuesta del chat.  
+- Por qué no reusar el chat RAG: buscaría **otros** contratos y gastaría Δ2 Flash de `flash:`. Ver arquitectura §F.
 
 ### Chat RAG + memoria #3
 
@@ -283,13 +284,13 @@ Tres sistemas **aislados** (un flujo no descuenta al otro). Periodo RPD = **UTC*
 |---|---|---|---|---|
 | Chat | `ip:{ip}` 8/60 | `ip:{ip}:{day}` 40 | `flash:{day}` **200 Δ2** (extract+generate; embed **no** cuenta en Δ2) | |
 | `/analizar` | `analyze:ip:{ip}` | `analyze:ip:{ip}:{day}` **15** | `analyze:{day}` **40** | 1 generate si MISS; HIT/422 = 0 |
-| `/cotizar` | `cotizar:ip:{ip}` | `cotizar:ip:{ip}:{day}` **20** | `cotizar:{day}` **80** | 1 generate; 409 = 0 |
+| `/cotizar` | `cotizar:ip:{ip}` | `cotizar:ip:{ip}:{day}` **20** (1 pregunta) | `cotizar:{day}` **80 Δ2** | clasificador + generate; 409 = 0 |
 
 **Qué gasta Gemini además:** OCR del cron (rpm 6, tope 2 h, `--max-ocr-dia 6000`); embeddings del pipeline (no pasan por `flash:`).
 
 **Backstop:** S/10/mes AI Studio. Si el Worker no corta, la consola sí.
 
-**502:** `/analizar` y `/cotizar` devuelven HTTP 502 con `{error}` crudo si Gemini manda JSON inválido (visto contrato **66461**). Chat JSON: HTTP **200** con texto amable. Filtros v2: fallback regex, no 502. Cupo se cobra **antes** de Gemini. Detalle: arquitectura §G.
+**502:** `/analizar` HTTP 502 `{error}` si Gemini manda JSON inválido (visto contrato **66461**). `/cotizar`: 502 JSON si falla antes del stream; si ya stremea, evento `error` (HTTP 200). Chat JSON: HTTP **200** con texto amable. Filtros v2: fallback regex, no 502. Cupo se cobra **antes** de Gemini. Detalle: arquitectura §G.
 
 ---
 
@@ -297,22 +298,22 @@ Tres sistemas **aislados** (un flujo no descuenta al otro). Periodo RPD = **UTC*
 
 ### En producción y estable
 
-Asesor #9 + #10 + #11 · RAG v2 · memoria #3 · login · pipeline 09:00 · arquitectura + este traspaso. Smoke 18/19 ago: chat 200 `backend=v2` chunks>0; history inyecta `Conversación reciente`; #10 HIT/422; #11 200 fail-closed / 409; KV `flash:` / `analyze:` / `cotizar:` separados.
+Asesor #9 + #10 (2º orden) + #11 (panel, routing texto/tabla/gráfica, streaming de presentación) · RAG v2 · memoria #3 · login · pipeline 09:00. Iteraciones 1–7 **en prod** (tabla en `ESTADO_CIERRE_2026-08.md`). Contratos de calibración: **87880** SEDAPAR, **87502** CENEPRED.
 
-No reabrir salvo pedido: cutover embed 768, Auth, cron horario, `RAG_BACKEND=v2`.
+No reabrir salvo pedido: cutover embed 768, Auth, cron horario, `RAG_BACKEND=v2`, schema 2º orden de #10.
 
 ### Backlog (todo opcional)
 
 | Ítem | Esfuerzo | Valor | Notas |
 |---|---|---|---|
-| **#4 chunking** | Bajo–medio (eval offline, **no** prod de entrada) | Alto: fruta baja POR-DEFECTO | Overlap + tamaño vs baseline **63%**. Experimento ya diseñado. |
-| **Fase 7** drop BGE 768 + ivfflat | Bajo (SQL) + smoke | Limpieza; menos confusión | Chat v2 no los usa. Expand-contract: dropear **después** de validar. |
+| **Eficiencia de IA** | Medio | Alto (tokens `/cotizar`) | Siguiente iteración. Clasificador = Flash extra; no hay caché de chat ni normalización de query. |
+| **#4 chunking** | Bajo–medio (eval offline, **no** prod de entrada) | Alto: fruta baja POR-DEFECTO | Overlap + tamaño vs baseline **63%**. |
+| **Fase 7** drop BGE 768 + ivfflat | Bajo (SQL) + smoke | Limpieza | Chat v2 no los usa. |
 | **#12 brief diario** | Medio | Producto (criterios §5) | Mail/resumen top-N; no existe. |
-| 502 → mensaje amable en `/analizar` `/cotizar` | Bajo | UX | Hoy JSON crudo. |
 | Dashboard `d <= today` | Mínimo | KPI honesto | `Dashboard.tsx` L111. |
 | Buscador doble badge | Mínimo | Menos ruido | `ItPill`+`IaPill` juntos. |
 | Home = Ruta del día | Bajo | Enfoque | Jubilar Dashboard/Buscador cuando Rolando quiera. |
-| Reranker v2-m3 / umbral / RRF k | Medio (hace falta eval **post-rerank**) | Precisión | Lista POR-DEFECTO. |
+| Reranker v2-m3 / umbral / RRF k | Medio (eval **post-rerank**) | Precisión | Lista POR-DEFECTO. |
 
 **Punto de entrada para optimizar** (arquitectura, cierre): reranker `-base` · threshold **0.20** · RRF **k=60** · chunk **800/500 sin overlap** → #4 vs 63%.
 
@@ -328,13 +329,15 @@ No reabrir salvo pedido: cutover embed 768, Auth, cron horario, `RAG_BACKEND=v2`
 6. **Eval 63% no incluye reranker** (`eval_retrieval.py` L334–335). No citar 63% como calidad post-rerank.
 7. **PLAN vs realidad:** reranker v2-m3, chunks 200–400+overlap, GC al cerrar, costo $0/mes, checklist Gemini vacío, Fase 2 PDF «blocker» — **desactualizado**. Lista en arquitectura «Discrepancias». El PLAN §8 checklist no refleja que Gemini ya está en Actions y CF.
 8. **README de seace-monitor** describe scrape 06:00 y CSV token como el producto. El diario es `pipeline.yml` 09:00.
-9. **README del Worker** dice que `/analizar` comparte cupos con el chat — **falso** desde el aislamiento ANALYZE/COTIZAR.
-10. **Home ≠ Ruta del día.** `/` es Dashboard. Navbar pone Ruta primero, pero el default de `App.tsx` es Dashboard.
-11. **RPD en UTC, ranking en día Lima.** Un cupo «diario» cambia a las 19:00 Perú (UTC-5).
-12. **Caché #10 vive en el mismo KV que los cupos** (`CHAT_LIMITS`), claves `analyze:{id}:{hash}` vs `analyze:{day}`. No borrar el namespace a ciegas.
-13. **`--gc` apagado:** chunks de culminados siguen en HNSW. Encenderlo borra vectores; no es un no-op.
-14. **Anon key en el JS público** es a propósito (RLS lectura). Service role **nunca** al browser ni al Worker.
-15. **No commitear** `.env`, `.dev.vars`, evals JSON, HTML Penpot (ya en `.gitignore` del monitor).
+9. **README del Worker** sigue corto (habla de `/analizar` con «mismos cupos»): **falso**. Cupos ANALYZE/COTIZAR/FLASH están aislados. El código gana.  
+10. **Home ≠ Ruta del día.** `/` es Dashboard. Navbar pone Ruta primero, pero el default de `App.tsx` es Dashboard.  
+11. **RPD en UTC, ranking en día Lima.** Un cupo «diario» cambia a las 19:00 Perú (UTC-5).  
+12. **Caché #10 vive en el mismo KV que los cupos** (`CHAT_LIMITS`), claves `analyze:{id}:{hash}` vs `analyze:{day}`. No borrar el namespace a ciegas. `/cotizar` **no** escribe ahí respuestas de chat.  
+13. **`--gc` apagado:** chunks de culminados siguen en HNSW. Encenderlo borra vectores; no es un no-op.  
+14. **Anon key en el JS público** es a propósito (RLS lectura). Service role **nunca** al browser ni al Worker.  
+15. **No commitear** `.env`, `.dev.vars`, evals JSON, HTML Penpot (ya en `.gitignore` del monitor).  
+16. **`/cotizar` gasta 2 Flash** (clasificador + generate), no 1. El streaming de la iteración 7 **no** es token-a-token del modelo: el JSON se genera entero y el texto se emite por chunks.  
+17. **Query de #11:** solo `trim()`. No hay lowercase, ni quitar tildes, ni hash de pregunta.
 
 ---
 
@@ -349,22 +352,23 @@ No reabrir salvo pedido: cutover embed 768, Auth, cron horario, `RAG_BACKEND=v2`
 | Monitor local | `d:\ROLANDO\DEV_APPS\seace8uit\seace-monitor` |
 | Web local | `d:\ROLANDO\DEV_APPS\seace8uit\seace-web` |
 | Worker local | `d:\ROLANDO\DEV_APPS\seace8uit\seace-ai-proxy` |
-| HEAD monitor | `8104707ab03abe279269736788302ee2dc0b6012` |
-| HEAD web | `d42b40f45f857b77a9a843919730091d6aeab989` |
-| HEAD worker | `8e239926a42bec87bced248875d8200682f103c0` |
-| Worker CF | `ccb3a082-1ec5-4589-a889-4add062af2df` (100%) |
-| Pages deploy | `5975444317` @ `d42b40f` |
+| HEAD monitor | `e5f58d6` (+ docs de este corte) |
+| HEAD web | `9426dc1` |
+| HEAD worker | `437c265` |
+| Worker CF | `49953466-a6dd-4878-b549-8ebb5567bbcc` |
+| Pages | push `main` → Actions GitHub Pages |
 | Cron | `0 14 * * *` = 09:00 América/Lima |
 | Chat local | `npm run dev` (5173) |
 | Worker local | `npx wrangler dev` |
 | Deploy Worker | `npx wrangler deploy` **antes** de Pages |
 | Deploy web | push `main` (Actions Pages) |
 | Pipeline | espera al cron o `workflow_dispatch` |
-| KV cupos | namespace `c63cfd497041477f91dafdde5935f37d` |
+| KV cupos + caché #10 | namespace `c63cfd497041477f91dafdde5935f37d` (único) |
 | RPM | `CHAT_RPM` 8/60, namespace_id `8701` |
 | Flash chat | `flash:{UTC-day}` cap 200 Δ2 |
+| Flash cotizar | `cotizar:{UTC-day}` cap 80 Δ2 |
 | Docs | `docs/ARQUITECTURA_TECNICA.md` · `ESTADO_CIERRE_2026-08.md` · `CRITERIOS_DECISION_ENERTRONIC.md` |
 
 Endpoints Worker: `POST /` · `POST /analizar` · `POST /cotizar` · `POST /embed` → 410.
 
-Fecha snapshot: **19 ago 2026** (tras cierre + este traspaso).
+Fecha snapshot: **20 ago 2026**.
