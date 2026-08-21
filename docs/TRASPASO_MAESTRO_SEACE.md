@@ -50,7 +50,7 @@ Hashes de este corte (HEAD `origin/main`):
 
 | Repo | GitHub | Visibilidad | Rama | HEAD |
 |---|---|---|---|---|
-| seace-monitor | https://github.com/rdiazg14/seace-monitor | **público** | `main` | `e5f58d6` (pipeline) · este doc se commitea encima |
+| seace-monitor | https://github.com/rdiazg14/seace-monitor | **público** | `main` | `e5c6343` (docs iter. 1–7) + este commit (#9) |
 | seace-web | https://github.com/rdiazg14/seace-web | **público** | `main` | `9426dc1` (iteración 7) |
 | seace-ai-proxy | https://github.com/rdiazg14/seace-ai-proxy | **privado** | `main` | `437c265` · Worker CF `49953466-a6dd-4878-b549-8ebb5567bbcc` |
 
@@ -227,9 +227,15 @@ Criterios (resumen; detalle en [CRITERIOS_DECISION_ENERTRONIC.md](./CRITERIOS_DE
 
 - **UI:** https://seace.rdiaz-lab.xyz/ruta-dia  
 - **Worker:** ninguno. Score 100% en el browser (`rutaDia.ts`).  
-- **Datos:** `supabase.from('contratos')` vigentes + en evaluación, con `categoria_it` o `relevancia_ia` (`RutaDia.tsx` L32–36) → `puntuar` + `rankingActivo` (vigente solo si `fecha_fin >= today` Lima o sin fecha).  
+- **Datos:** `estado IN (Vigente, En Evaluación)` + IT/IA (`RutaDia.tsx` L35–36). Culminado no entra.  
 - **Fórmula:** rubro 50 + vigencia 25 + urgencia 15 + señales 10. Urgencia **2–7 d = 15 > hoy = 10**. Overlay OT/telemetría → núcleo; nunca degrada.  
-- Click → `/analisis/:id`.
+- **Postulabilidad (auditoría 20 ago, sin cambio de lógica):** no hay una sola función. `puntuar.postulable` = `estado==='Vigente'` (sin fecha). `rankingActivo` saca vigentes con `fecha_fin < hoy` y **deja todos** los En Evaluación.  
+  - Brief Top 15 y KPIs de cierre: solo vigentes con ventana abierta → **OK** vs criterio Rolando.  
+  - Ranking completo (filtro estado default «todos»): **cuela En Evaluación**. En BD 20 ago: **577** IT/IA en evaluación, **0** con `fecha_fin >= hoy` (ej. `86824` Hardware, fin 2026-08-18).  
+  - Vigentes vencidos (**47** IT/IA, ej. `87502` CENEPRED fin 2026-08-19) **no** salen en Ruta (sí existen en BD; Dashboard sí los puede listar).  
+  - KPI «Nuevos hoy» cuenta `raw` por `fecha_publica`, sin `postulable`.  
+- Click → `/analisis/:id`.  
+- Fix de filtro = **iteración aparte** (Rolando decide). No se tocó código.
 
 ### #10 Análisis de contrato
 
@@ -257,7 +263,7 @@ Criterios (resumen; detalle en [CRITERIOS_DECISION_ENERTRONIC.md](./CRITERIOS_DE
 
 | Ruta | Estado |
 |---|---|
-| `/` Dashboard | Recharts + KPIs. Bug conocido: `d <= today` mete vencidos en «cierran hoy» (`Dashboard.tsx` L111). |
+| `/` Dashboard | Recharts + KPIs. Universo opp: Vigente+IT limit 800 **sin** recortar `fecha_fin`. Filtro lista «hoy» incluye `tone==='vencido'` (`Dashboard.tsx` L211). Card «esta semana» usa `d <= weekEnd` e **incluye fechas pasadas** (L113). La card «Cierran hoy» sí es `d === today` (L111) — no es ese el leak. |
 | `/buscar` | FTS + chips. Doble badge `ItPill` + `IaPill` (`ContratoCard.tsx` L28–29). |
 | `/docs` | Notas de API. |
 | `/usuarios` | Solo admin. |
@@ -306,13 +312,14 @@ No reabrir salvo pedido: cutover embed 768, Auth, cron horario, `RAG_BACKEND=v2`
 
 | Ítem | Esfuerzo | Valor | Notas |
 |---|---|---|---|
-| **Eficiencia de IA** | Medio | Alto (tokens `/cotizar`) | Siguiente iteración. Clasificador = Flash extra; no hay caché de chat ni normalización de query. |
+| **Postulabilidad #9** | Bajo | Alto (brief de acción) | Ranking cuela En Evaluación (ventana cerrada). Brief/KPIs de cierre ya filtran bien. Esperando decisión de Rolando; **no** se cambió código. |
+| **Eficiencia de IA** | Medio | Alto (tokens `/cotizar`) | Clasificador = Flash extra; no hay caché de chat ni normalización de query. |
 | **#4 chunking** | Bajo–medio (eval offline, **no** prod de entrada) | Alto: fruta baja POR-DEFECTO | Overlap + tamaño vs baseline **63%**. |
 | **Fase 7** drop BGE 768 + ivfflat | Bajo (SQL) + smoke | Limpieza | Chat v2 no los usa. |
 | **#12 brief diario** | Medio | Producto (criterios §5) | Mail/resumen top-N; no existe. |
-| Dashboard `d <= today` | Mínimo | KPI honesto | `Dashboard.tsx` L111. |
+| Dashboard filtros de urgencia | Mínimo | KPI honesto | `Dashboard.tsx` L113 y L211–213 (vencidos en semana/lista), **no** L111. |
 | Buscador doble badge | Mínimo | Menos ruido | `ItPill`+`IaPill` juntos. |
-| Home = Ruta del día | Bajo | Enfoque | Jubilar Dashboard/Buscador cuando Rolando quiera. |
+| Home = Ruta del día | Bajo | Enfoque | Sigue vigente: `/` = Dashboard (`App.tsx` L23). |
 | Reranker v2-m3 / umbral / RRF k | Medio (eval **post-rerank**) | Precisión | Lista POR-DEFECTO. |
 
 **Punto de entrada para optimizar** (arquitectura, cierre): reranker `-base` · threshold **0.20** · RRF **k=60** · chunk **800/500 sin overlap** → #4 vs 63%.
@@ -321,7 +328,7 @@ No reabrir salvo pedido: cutover embed 768, Auth, cron horario, `RAG_BACKEND=v2`
 
 ## 7. Gotchas (un chat nuevo no debe malinterpretar)
 
-1. **«Vigente» ≠ ventana de cotización abierta.** G1 copia `idEstadoContrato` del SEACE (2 Vigente / 3 En Evaluación / 4 Culminado). Ranking #9 filtra `fecha_fin >= today` aparte. No «arreglar» G1 para cerrar por `fecha_fin`.
+1. **«Vigente» ≠ ventana de cotización abierta.** G1 copia `idEstadoContrato` del SEACE (2 Vigente / 3 En Evaluación / 4 Culminado). En Ruta, `rankingActivo` recorta **Vigente** con `fecha_fin < today`; **no** recorta En Evaluación. No «arreglar» G1 para cerrar por `fecha_fin`.
 2. **422 `/analizar` = TDR &lt; 200 chars**, no `req_url=sin_pdf`. Un sin_pdf **con chunks API** se analiza (p. ej. 83729 → 200). 422 real: ficha sin texto y sin chunks (p. ej. id 42).
 3. **Solo un Supabase en código:** `wusywwhcyqngnpvpzxyr`. Otro proyecto inactivo: no tocar. Ref: [por confirmar con Rolando].
 4. **Restos v1 en el Worker:** constante Llama `@cf/meta/llama-3.3-70b-instruct-fp8-fast`, `retrieveContext` 768, `RAG_BACKEND` default **v1 si falta env** (`index.ts` L129–130). Prod fija `v2` en toml. No usar `wrangler rollback` a v1 sin pedido. Fase 7 limpia BD; el bundle v1 se puede borrar después.
@@ -330,14 +337,15 @@ No reabrir salvo pedido: cutover embed 768, Auth, cron horario, `RAG_BACKEND=v2`
 7. **PLAN vs realidad:** reranker v2-m3, chunks 200–400+overlap, GC al cerrar, costo $0/mes, checklist Gemini vacío, Fase 2 PDF «blocker» — **desactualizado**. Lista en arquitectura «Discrepancias». El PLAN §8 checklist no refleja que Gemini ya está en Actions y CF.
 8. **README de seace-monitor** describe scrape 06:00 y CSV token como el producto. El diario es `pipeline.yml` 09:00.
 9. **README del Worker** sigue corto (habla de `/analizar` con «mismos cupos»): **falso**. Cupos ANALYZE/COTIZAR/FLASH están aislados. El código gana.  
-10. **Home ≠ Ruta del día.** `/` es Dashboard. Navbar pone Ruta primero, pero el default de `App.tsx` es Dashboard.  
+10. **Home ≠ Ruta del día — sigue vigente.** `/` es Dashboard (`App.tsx` L23). Navbar pone «Ruta del día» primero (`Navbar.tsx` L7); el logo SEACE apunta a `/`. `path="*"` redirige a `/`.  
 11. **RPD en UTC, ranking en día Lima.** Un cupo «diario» cambia a las 19:00 Perú (UTC-5).  
 12. **Caché #10 vive en el mismo KV que los cupos** (`CHAT_LIMITS`), claves `analyze:{id}:{hash}` vs `analyze:{day}`. No borrar el namespace a ciegas. `/cotizar` **no** escribe ahí respuestas de chat.  
 13. **`--gc` apagado:** chunks de culminados siguen en HNSW. Encenderlo borra vectores; no es un no-op.  
 14. **Anon key en el JS público** es a propósito (RLS lectura). Service role **nunca** al browser ni al Worker.  
 15. **No commitear** `.env`, `.dev.vars`, evals JSON, HTML Penpot (ya en `.gitignore` del monitor).  
 16. **`/cotizar` gasta 2 Flash** (clasificador + generate), no 1. El streaming de la iteración 7 **no** es token-a-token del modelo: el JSON se genera entero y el texto se emite por chunks.  
-17. **Query de #11:** solo `trim()`. No hay lowercase, ni quitar tildes, ni hash de pregunta.
+17. **Query de #11:** solo `trim()`. No hay lowercase, ni quitar tildes, ni hash de pregunta.  
+18. **Ruta del día cuela En Evaluación en el ranking** (auditoría 20 ago). Brief y KPIs de cierre no. Ejemplo: contrato `86824`. Los vigentes vencidos (ej. `87502`) **no** salen en Ruta. Dashboard usa otra definición (sí puede listar vencidos).
 
 ---
 
@@ -352,7 +360,7 @@ No reabrir salvo pedido: cutover embed 768, Auth, cron horario, `RAG_BACKEND=v2`
 | Monitor local | `d:\ROLANDO\DEV_APPS\seace8uit\seace-monitor` |
 | Web local | `d:\ROLANDO\DEV_APPS\seace8uit\seace-web` |
 | Worker local | `d:\ROLANDO\DEV_APPS\seace8uit\seace-ai-proxy` |
-| HEAD monitor | `e5f58d6` (+ docs de este corte) |
+| HEAD monitor | `e5c6343` + este commit de auditoría #9 |
 | HEAD web | `9426dc1` |
 | HEAD worker | `437c265` |
 | Worker CF | `49953466-a6dd-4878-b549-8ebb5567bbcc` |

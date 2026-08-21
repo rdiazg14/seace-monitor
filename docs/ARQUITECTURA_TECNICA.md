@@ -25,13 +25,13 @@ Cierre: tabla de decisiones · discrepancias vs PLAN · commits
 
 | Pieza | Path | HEAD documentado |
 |---|---|---|
-| Pipeline / SQL / evals | `seace-monitor` | `e5f58d6` (backfill `chunk_embed_text` PDF) |
+| Pipeline / SQL / evals | `seace-monitor` | `e5c6343` (docs) + este commit (#9) |
 | Worker | `seace-ai-proxy` | `437c265` (`/cotizar` SSE + clasificador) · CF `49953466-a6dd-4878-b549-8ebb5567bbcc` |
 | Front | `seace-web` | `9426dc1` (UX conversacional iter. 7) · Pages `https://seace.rdiaz-lab.xyz` |
 
 Worker vivo: `https://seace-ai-proxy.rdiazg14.workers.dev`. Front: `AI_PROXY` = esa URL (`seace-web/src/lib/supabase.ts` L7).
 
-Fecha de este corte: **20 ago 2026** (Perú). Asesor #10/#11 en prod con iteraciones 1–7; retrieval/pipeline sin cambio de diseño desde el corte del 18 ago.
+Fecha de este corte: **20 ago 2026** (Perú). Asesor #10/#11 iteraciones 1–7 en prod. Auditoría #9 postulabilidad en §D (sin cambio de lógica).
 
 Etiquetas de «por qué»:
 
@@ -212,11 +212,11 @@ Encender `--gc` cuando se acepte borrar chunks de culminados. OCR más amplio si
 
 ### Qué hace
 
-`/ruta-dia` rankea oportunidades **sin IA**, 0–100, desde columnas de `contratos`.
+`/ruta-dia` rankea oportunidades **sin IA**, 0–100, desde columnas de `contratos`. Es la pantalla de **acción diaria**. Criterio de producto (Rolando, 20 ago 2026): debería mostrar **solo postulables** (Vigente + ventana `fecha_fin >= hoy` Lima). El código **no** implementa esa definición de punta a punta: ver «Postulabilidad (auditoría 20 ago)».
 
 ### Cómo
 
-Fórmula (`rutaDia.ts` L4–12, L247–258):
+Fórmula (`rutaDia.ts` L4–12, L247–272):
 
 `score = rubro(50) + vigencia(25) + urgencia(15) + señales(10)` (tope 100).
 
@@ -229,7 +229,46 @@ Fórmula (`rutaDia.ts` L4–12, L247–258):
 
 Mapeo `categoria_it` → nivel: L79–93. Overlay texto: telemetría/SCADA/OT/IoT → Núcleo; integración/automatización/digital twin → Adyacente; **nunca baja** (L215–216). Firma digital + ALTA **no** sube a Núcleo (`cat !== 'Firma digital'`, L218–219).
 
-Ranking activo: En Evaluación entra; Vigente solo si `fecha_fin >= today` o sin fecha (`rankingActivo` L275–284).
+**Universo SQL** (`RutaDia.tsx` `fetchUniverso` L28–46): `estado IN ('Vigente','En Evaluación')` **y** (`categoria_it` OR `relevancia_ia` no null). **No** pide `fecha_fin >= hoy`. Culminado (idEstado 4) **no entra**. No se filtra por `idEstadoContrato` numérico: se usa el texto `contratos.estado`.
+
+**`postulable`** (`puntuar` L249): `estado === 'Vigente'` **solo**. No mira `fecha_fin`.
+
+**`rankingActivo`** (L275–284): En Evaluación **siempre entra**; Vigente entra si `fecha_fin >= today` Lima **o sin fecha**. Vigente con ventana vencida **sale**.
+
+### Postulabilidad (auditoría 20 ago 2026) — código gana
+
+No hay una función única `esPostulable(fecha_fin, estado)`. Tres definiciones conviven:
+
+| Definición | Dónde | Qué incluye |
+|---|---|---|
+| SQL universo | `fetchUniverso` L35–36 | Vigente **y** En Evaluación (IT/IA) |
+| Flag `postulable` | `puntuar` L249 | solo `estado === 'Vigente'` (ignorando fecha) |
+| Lista activa | `rankingActivo` L275–284 | En Evaluación todos + Vigente con `fecha_fin >= hoy` o null |
+
+Por bloque de UI (`RutaDia.tsx`):
+
+| Bloque | Fuente | ¿Cuela no-postulables? |
+|---|---|---|
+| KPIs Cierran hoy / mañana / semana / Núcleo | `scored.filter(postulable)` L93 — `scored` ya pasó `rankingActivo` | **No** vencidos ni En Evaluación. Alineado con ventana abierta (Vigente + `fecha_fin >= hoy`). |
+| KPI **Nuevos hoy** | `raw` por `fecha_publica === today` L94 | **Sí puede**: cuenta el universo SQL, **sin** `rankingActivo` ni `postulable`. Hoy (20 ago) no había En Evaluación publicados en el día; el hueco existe en código. |
+| Brief «Top 15 vigentes» | `filtrado.filter(postulable).slice(0,15)` L87–89 | **No** En Evaluación (el copy L161 lo dice). **No** vigentes vencidos (`rankingActivo`). Alineado con el criterio de Rolando. |
+| Ranking completo | `filtrado` = `aplicarFiltros(scored)` L82–84, L120. Filtro estado default `'todos'` L55 | **Sí: En Evaluación.** Copy L186: «Nada se oculta». Chip «En evaluación (cerrado)» L231. En BD, **0** En Evaluación IT con `fecha_fin >= 2026-08-20`; los **577** que entran tienen ventana **cerrada**. |
+
+Ejemplos reales (consulta `contratos` 20 ago 2026, IT/IA):
+
+- **En Ranking (no postulable):** `86824` Hardware, estado En Evaluación, `fecha_fin` 2026-08-18 — entra porque `rankingActivo` no mira la fecha si `estado === 'En Evaluación'`.
+- **Vigente vencido, NO en Ruta:** `87502` CENEPRED, estado Vigente, `fecha_fin` 2026-08-19 — **47** vigentes IT con `fecha_fin < hoy`; `rankingActivo` los saca. No aparecen en brief ni ranking ni KPIs de cierre.
+- Culminados IT: ~2517 en BD; el `.in(estado)` los deja fuera.
+
+### vs Dashboard (definiciones distintas)
+
+| Concepto | Ruta del día | Dashboard |
+|---|---|---|
+| Universo | Vigente **+** En Evaluación, IT o IA (`RutaDia.tsx` L35–36) | Lista opp: solo **Vigente** + `categoria_it` not null, limit 800 (`Dashboard.tsx` L66–69). KPI «Vigentes IT»: vista `dashboard_resumen` estado Vigente (L130–132) — **no** recorta por `fecha_fin`. |
+| Cierran hoy (cards) | `dayOf(fecha_fin) === today` sobre vigentes ya pasados por `rankingActivo` (`RutaDia.tsx` L111–113) | igual `d === today` (`Dashboard.tsx` L111) sobre `itVig` **sin** recortar vencidos del query. Un vigente vencido **no** cae en esa card (el `=== today` los excluye). |
+| «Esta semana» / lista filtrada | KPI: `d <= weekEnd` pero el set ya es `fecha_fin >= today` | Card semana: `d <= weekEnd` **incluye fechas pasadas** (L113). Filtro lista `urg==='hoy'`: `tone === 'hoy' \|\| 'vencido' \|\| 'manana'` (L211). Filtro semana/mes: `days <= 7` / `<= 30` **incluye negativos** (L212–213). |
+
+Etiqueta: divergencia **HEREDADA** (cada página su query). El bug de Dashboard no es L111 (`=== today`); es L113 y L211–213. Ruta recorta vigentes vencidos; Dashboard no.
 
 ### Por qué
 
@@ -239,10 +278,11 @@ Ranking activo: En Evaluación entra; Vigente solo si `fecha_fin >= today` o sin
 | 2–7 d &gt; hoy | **HEREDADA** | L11: «cierra hoy es bandera, no dominancia» |
 | Firma digital no sube | **HEREDADA** | L23: token cripto ≠ tokens de IA |
 | Modalidad/pago/margen = 0 aquí | **HEREDADA** | L14: eso vive en #10 |
+| En Evaluación en el ranking | **HEREDADA** (copy L161, L186, chip L231) / **choca** con el brief de acción de Rolando (20 ago) | Fix = iteración aparte; no se tocó lógica |
 
 ### Alternativas
 
-Meter señales de #10 al ranking cuando se quiera (costo + sesgo del LLM). No hace falta para el flujo diario actual.
+Unificar `postulable` = `estado==='Vigente' && (fecha_fin==null \|\| fecha_fin>=today)` **o** (criterio estricto) exigir fecha. Sacar En Evaluación del ranking default. Meter señales de #10 al score cuando se quiera.
 
 ---
 
@@ -256,12 +296,15 @@ El schema **required** sigue siendo las 5 secciones + `resumen` + `optimizacion`
 
 | Campo | Contenido |
 |---|---|
-| `timeline.hitos[]` | Secuencia variable: `orden`, `nombre`, `tipo`, `momento_texto`, `momento_dia` (siempre estimado), `tiene_pago`, `es_critico` |
+| `estructura_contractual.entregables[]` | plazos y `riesgo_penalidad` |
+| `componentes_servicio[]` | cursos/lotes/ítems del TDR |
+| `requisitos_proveedor` | habilitaciones, experiencia, certs; `admite_consorcio` true solo si el TDR lo dice; **`null` si no consta** |
+| `riesgos_contractuales` | fórmula F, IP, plataforma, `clausulas_criticas[]` |
+| `timeline.hitos[]` | Secuencia variable: `orden`, `nombre`, `tipo`, `momento_texto`, `momento_dia` (**siempre estimado**, prompt + `completarMomentoDia` L571), `tiene_pago`, `es_critico` |
 | `viabilidad.ratio_alcance` | `valor_mercado_min/max`, `techo_contrato`, `ratio_texto`, `lectura` |
 | `viabilidad.cotizacion_por_componente[]` | `componente`, `mercado_min/max` |
 | `viabilidad.contradicciones_tdr[]` | inconsistencias internas; array vacío válido |
 | `alternativas[]` | N variable (1 si la directa es viable; 2–3 si no). Exactamente una `recomendada=true`. Cada una con `economia.{valor,costo,margen}` |
-| `requisitos_proveedor.admite_consorcio` | `true` solo si el TDR lo dice; **`null` si no consta** (no se infiere) |
 | `chips_sugeridos` | 3–4, máx 40 chars, orden factual → comparativa → visual |
 | `optimizacion[]` | tácticas de **ejecución** dentro de la vía recomendada; no repetir las vías |
 
@@ -283,7 +326,7 @@ Orden bloqueado (`analizar.ts` `handleAnalizar` L690–821):
 
 Schema economía: `valor/costo/margen` estimados + `supuestos[]` + `lo_que_no_sabe[]`. Cifras de economía **no** están en `required` (L228: solo pistas/supuestos/lo_que_no_sabe). Techo **8 UIT = S/42 800** (L15).
 
-**UI (prod):** `AnalisisContrato.tsx` + `AnalisisV2.tsx` (infografía ratio, N alternativas, economía por componente, contradicciones) + `TimelineFishbone.tsx` (thumbnail + fullscreen, eje con salto de plazo). Análisis **congelado** respecto de #11.
+**UI (prod, iter. 1–7):** `AnalisisContrato.tsx` + `AnalisisV2.tsx` (infografía ratio, N alternativas dinámicas, economía por componente, contradicciones) + `TimelineFishbone.tsx` (thumbnail + fullscreen, eje con salto de `momento_dia`). Panel #11 380 px, `key={contratoId}`, abierto por defecto en desktop ≥1024 px. Análisis **congelado** respecto de #11.
 
 ### Por qué
 
@@ -406,9 +449,9 @@ SPA autenticada que lee Supabase (anon + RLS) y pega al Worker.
 
 ### Cómo
 
-**Stack:** React 19 + Vite + Tailwind + react-router + supabase-js (`seace-web/package.json`). Host: Cloudflare Pages.
+**Stack:** React 19 + Vite + Tailwind + react-router + supabase-js (`seace-web/package.json`). Host: **GitHub Pages** (no Cloudflare Pages), dominio `seace.rdiaz-lab.xyz`.
 
-**Rutas** (`App.tsx` L21–30), todas salvo login con `RequireAuth`:
+**Rutas** (`App.tsx` L21–30), todas salvo login con `RequireAuth`. **Home `/` = Dashboard** (L23). Navbar lista Ruta del día primero (`Navbar.tsx` L7) pero el logo y `Navigate` fallback van a `/`. Gotcha vigente.
 
 | Ruta | Página |
 |---|---|
@@ -466,7 +509,7 @@ Jubilar Dashboard/Buscador si Ruta cubre el día (bugs de fecha/badge, otra deci
 | Embed PDF | cuerpo sin header | **MEDIDA** A/B 87164 | — | Headers API largos si molestan |
 | OCR | vigentes+ventana+TI, 2 h, por página | **HEREDADA** cupo | Más cola imagen | Si 1398 no baja |
 | G1 GC | flag existe, cron **no** lo usa | **POR-CONFIRMAR** | `--gc` | Chunks de culminados hinchan HNSW |
-| Ruta 0–100 | sin IA; 2–7d&gt;hoy | **HEREDADA** criterios | Señales #10 | Si el ranking miente vs margen |
+| Ruta 0–100 | sin IA; 2–7d&gt;hoy. Ranking incluye En Evaluación (ventana cerrada). Brief y KPIs de cierre = vigentes con `fecha_fin>=hoy` | **HEREDADA** (ranking «nada se oculta») / **choca** con brief de acción 20 ago | Solo postulables en toda la página | Cuando Rolando fije el filtro |
 | #10 caché | `analyze:id:hash` 3 d | **HEREDADA** (clave) / **POR-DEFECTO** (TTL) | TTL | PDF que cambia seguido |
 | #11 | `/cotizar` clasificador+generate Δ2, SSE presentación, sin caché de chat | **HEREDADA** iter. 4–7 | Pre-filtro reglas; caché exacta query | Eficiencia de tokens |
 | Cupos | 3 **prefijos** en el mismo KV `CHAT_LIMITS` | **HEREDADA** | KV aparte para chat | Si un cupo queda muerto y otro explota |
@@ -480,13 +523,14 @@ Jubilar Dashboard/Buscador si Ruta cubre el día (bugs de fecha/badge, otra deci
 4. Eval 63%: PLAN habla del Worker completo · G4 **sin** reranker.  
 5. Caché semántico / exacta de queries (PLAN Fase 7 opcional): **no** está. Hay caché de `/analizar` por contrato (`analyze:{id}:{hash}`), **cero** `KV.put` de respuestas `/cotizar`. La query de #11 solo se `trim()`.  
 6. Drop `embedding(768)` + ivfflat (PLAN Fase 7): **no** hecho; v1 sigue en BD, chat no lo usa.  
-7. Header contextual en **todos** los chunks (PLAN Fase 4): PDF embebe **cuerpo**; API sigue con header largo.
+7. Header contextual en **todos** los chunks (PLAN Fase 4): PDF embebe **cuerpo**; API sigue con header largo.  
+8. **#9 postulabilidad:** el criterio de acción diaria (solo Vigente + ventana abierta) **no** está aplicado al Ranking completo ni al universo SQL. Ver §D auditoría 20 ago.
 
 ### Commits de referencia (corte 20 ago 2026)
 
 | Repo | HEAD | Qué fija |
 |---|---|---|
-| monitor | `e5f58d6` | Pipeline + docs (este corte) |
+| monitor | `e5c6343` + este commit | Docs iter. 1–7; auditoría postulabilidad #9 |
 | worker | `437c265` | `/cotizar` SSE + prompt formato natural; clasificador Δ2 desde `28eaf4b` |
 | web | `9426dc1` | Panel default desktop + streaming + Analizando + andamiaje vacío |
 
