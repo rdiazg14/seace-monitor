@@ -48,6 +48,7 @@ jobs:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      FUNNEL_TOKEN: ${{ secrets.FUNNEL_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -155,6 +156,18 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python alerta_g3.py --paso embed_v2 --job-status failure
+
+      - name: Reconciliar funnel
+        id: funnel
+        if: ${{ success() && github.event.inputs.solo_ocr != 'true' }}
+        continue-on-error: true
+        run: python reconciliar_funnel.py
+
+      - name: G3 funnel
+        if: ${{ always() && !cancelled() && github.event.inputs.solo_ocr != 'true' && steps.funnel.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python alerta_g3.py --paso funnel --job-status failure
 
       - name: Marcar fecha de corrida
         if: ${{ success() }}
