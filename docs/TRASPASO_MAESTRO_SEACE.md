@@ -1,13 +1,14 @@
 # Traspaso maestro — SEACE Monitor
 
 Contexto completo para retomar el proyecto **sin chat previo**.
-Snapshot: **20 ago 2026** (Perú), noche. Un solo punto de entrada; el detalle vive en los docs enlazados.
+Snapshot: **29 ago 2026** (Perú). Un solo punto de entrada; el detalle vive en los docs enlazados.
 
 | Doc | Para qué |
 |---|---|
 | [ARQUITECTURA_TECNICA.md](./ARQUITECTURA_TECNICA.md) | Cómo/por qué de cada pieza, con `archivo:línea` y etiquetas MEDIDA / HEREDADA / POR-DEFECTO |
-| [ESTADO_CIERRE_2026-08-20.md](./ESTADO_CIERRE_2026-08-20.md) | Foto de cierre: qué está en prod, cupos, backlog vivo |
-| [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md) | Iteraciones 1–9 + fixes: qué, archivos, commit, estado |
+| [ESTADO_CIERRE_2026-08-29.md](./ESTADO_CIERRE_2026-08-29.md) | Foto vigente: self-routing, funnel, conversión 30d + HEADs |
+| [ESTADO_CIERRE_2026-08-20.md](./ESTADO_CIERRE_2026-08-20.md) | Foto histórica de iteraciones 1–9 + fixes |
+| [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md) | Iteraciones 1–11 + fixes: qué, archivos, commit, estado |
 | [CRITERIOS_DECISION_ENERTRONIC.md](./CRITERIOS_DECISION_ENERTRONIC.md) | Inteligencia de negocio (fuente de verdad del scoring) |
 | [PLAN_DE_TRABAJO.md](./PLAN_DE_TRABAJO.md) | Plan v2 **parcialmente desactualizado** — ver §0 y §7 |
 
@@ -31,7 +32,7 @@ Ruta local base: `d:\ROLANDO\DEV_APPS\seace8uit\`
 |---|---|---|
 | `seace-monitor` | Pipeline Python: ingesta SEACE → G1 estados → PDF/OCR → chunk → embed Gemini. SQL, evals, docs. | Cron GitHub Actions 09:00 Perú |
 | `seace-web` | SPA autenticada (Ruta del día, análisis, chat, login) | https://seace.rdiaz-lab.xyz |
-| `seace-ai-proxy` | Worker: RAG v2, `/analizar`, `/cotizar`, cupos | https://seace-ai-proxy.rdiazg14.workers.dev |
+| `seace-ai-proxy` | Worker: RAG v2, `/analizar`, `/cotizar`, funnel KV, cupos | https://seace-ai-proxy.rdiazg14.workers.dev |
 
 El front **no** llama a Gemini. Lee Supabase (anon + RLS) y pega al Worker. El pipeline **escribe** con service role. El Worker **lee** con anon.
 
@@ -53,9 +54,9 @@ Hashes de este corte (HEAD `origin/main`):
 
 | Repo | GitHub | Visibilidad | Rama | HEAD |
 |---|---|---|---|---|
-| seace-monitor | https://github.com/rdiazg14/seace-monitor | **público** | `main` | este commit de docs (padre `21921ef` capa SQL) |
-| seace-web | https://github.com/rdiazg14/seace-web | **público** | `main` | `c0beff4` (Pages del mismo SHA) |
-| seace-ai-proxy | https://github.com/rdiazg14/seace-ai-proxy | **privado** | `main` | `c8113ae` · Worker CF `075d03be-a84c-44eb-957f-7cca64bb6584` |
+| seace-monitor | https://github.com/rdiazg14/seace-monitor | **público** | `main` | `a060d2a` (funnel SQL) + este paquete de docs |
+| seace-web | https://github.com/rdiazg14/seace-web | **público** | `main` | `6f1a2f9` (Dashboard conversión 30d) |
+| seace-ai-proxy | https://github.com/rdiazg14/seace-ai-proxy | **privado** | `main` | `fdcc7fd` · Worker CF `fcefa7a0-e623-432b-8479-71b576927cda` |
 
 ### 1.1 seace-monitor
 
@@ -71,12 +72,15 @@ Hashes de este corte (HEAD `origin/main`):
 | `descargar_requerimiento.py` | PDF nativo + OCR selectivo |
 | `chunker_contratos.py` | Chunks 800/500, sin overlap |
 | `generar_embeddings.py` | Solo `embedding_v2`, `RETRIEVAL_DOCUMENT` + L2 |
-| `alerta_g3.py` | Issue si un paso del job falla |
+| `alerta_g3.py` | Issue si un paso del job falla (`--paso funnel` incluido) |
+| `reconciliar_funnel.py` | GET Worker → upsert marcas `analizado`/`cotizado` (ISO del KV, no `now()`) |
 | `eval_retrieval.py` | G4 híbrido **pre-rerank** |
 | `buscar_tdr_v2.sql` | RPC vector 1536 |
-| `.github/workflows/pipeline.yml` | Cron diario **activo** |
-| `docs/` | Traspaso, arquitectura, cierre 20-ago, changelog iteraciones, criterios, PLAN |
-| `capa_semantica.sql` | Vistas Dashboard (iter. 9). Ya aplicado en Supabase. |
+| `.github/workflows/pipeline.yml` | Cron diario **activo** (incluye funnel best-effort) |
+| `docs/` | Traspaso, arquitectura, cierres 20/29-ago, changelog, criterios, PLAN, SQL funnel/conversión |
+| `capa_semantica.sql` | Vistas Dashboard (iter. 9). Ya aplicado. **No** incluye `v_kpis_conversion` |
+| `docs/migracion_funnel_conversion.sql` | Columnas `analizado`/`cotizado`/`fecha_*`. Ya aplicado |
+| `docs/vista_kpis_conversion.sql` | `v_kpis_conversion` + `_rubro`. Ya aplicado (GRANT anon) |
 
 **Correr local (ejemplos reales de los scripts):**
 
@@ -96,7 +100,7 @@ Workflows: `pipeline.yml` (activo, cron + manual) · `embed_v2.yml` / `pdf.yml` 
 
 **Stack:** React 19 + Vite 8 + TypeScript + Tailwind 3 + react-router 7 + supabase-js. Host: **GitHub Pages** (no Cloudflare Pages), dominio `seace.rdiaz-lab.xyz`.
 
-**`src/` clave:** `App.tsx` rutas · `lib/supabase.ts` URL + `AI_PROXY` · `lib/rutaDia.ts` score #9 + `esPostulable` · `lib/capaSemantica.ts` Dashboard · `lib/analisis.ts` tipos #10/#11 · `pages/RutaDia.tsx` · `AnalisisContrato.tsx` (página #10 + panel #11) · `Dashboard.tsx` · `components/AnalisisV2.tsx` · `TimelineFishbone.tsx` · `ChatTable.tsx` / `ChatChart.tsx` · `Pills.tsx` (`CatItIaPill`) · `Chat.tsx` (RAG) · `Login.tsx` · `RequireAuth.tsx` · `supabase/perfiles.sql` + Edge Functions `crear-usuario` / `desactivar-usuario`.
+**`src/` clave:** `App.tsx` rutas · `lib/supabase.ts` URL + `AI_PROXY` · `lib/rutaDia.ts` score #9 + `esPostulable` · `lib/capaSemantica.ts` Dashboard + `cargarKpisConversion` · `lib/analisis.ts` tipos #10/#11 · `pages/RutaDia.tsx` · `AnalisisContrato.tsx` (página #10 + panel #11) · `Dashboard.tsx` (capa + conversión 30d) · `components/AnalisisV2.tsx` · `TimelineFishbone.tsx` · `ChatTable.tsx` / `ChatChart.tsx` · `Pills.tsx` (`CatItIaPill`) · `Chat.tsx` (RAG) · `Login.tsx` · `RequireAuth.tsx` · `supabase/perfiles.sql` + Edge Functions `crear-usuario` / `desactivar-usuario`.
 
 **Local:**
 
@@ -107,13 +111,13 @@ npm run dev          # Vite, puerto 5173 (CORS del Worker lo permite)
 
 `npm run build` → `tsc -b && vite build`. El workflow copia `dist/index.html` a `dist/404.html` (SPA en Pages).
 
-**Deploy:** push a `main` → `.github/workflows/deploy.yml` (`Deploy seace-web → GitHub Pages`). HEAD de este corte: `c0beff4` (run `32441541562` success).
+**Deploy:** push a `main` → `.github/workflows/deploy.yml` (`Deploy seace-web → GitHub Pages`). HEAD de este corte: `6f1a2f9`.
 
 ### 1.3 seace-ai-proxy
 
 **Stack:** Cloudflare Workers, TypeScript, Wrangler 4. Bindings: `AI`, KV `CHAT_LIMITS`, rate limit `CHAT_RPM`.
 
-**`src/`:** `index.ts` (router + RAG) · `analizar.ts` · `cotizar.ts` · `escenario.ts` · `history.ts` · `limits.ts`. Config: `wrangler.toml`. Secrets en CF, no en git: `.dev.vars` local (gitignored).
+**`src/`:** `index.ts` (router + RAG) · `analizar.ts` · `cotizar.ts` · `escenario.ts` · `funnel.ts` · `history.ts` · `limits.ts`. Config: `wrangler.toml`. Secrets en CF, no en git: `.dev.vars` local (gitignored).
 
 **Local:**
 
@@ -128,9 +132,9 @@ npx wrangler dev     # secrets desde .dev.vars
 npx wrangler deploy
 ```
 
-No hay Action de deploy del Worker: es manual (`npx wrangler deploy` desde esta carpeta). Versión viva: `npx wrangler deployments list` → este corte **`075d03be-a84c-44eb-957f-7cca64bb6584`** = git `c8113ae`.
+No hay Action de deploy del Worker: es manual (`npx wrangler deploy` desde esta carpeta). Versión viva: `npx wrangler deployments list` → este corte **`fcefa7a0-e623-432b-8479-71b576927cda`** = git `fdcc7fd`.
 
-Router (`index.ts`): solo **POST**. `/embed` → 410 · `/analizar` · `/cotizar` (JSON o SSE) · resto = chat RAG (`query` + `history?`). SSE si `Accept: text/event-stream`.
+Router (`index.ts`): **GET** solo `/funnel-pendientes` (Bearer `FUNNEL_TOKEN`; no es para el front). El resto es **POST**. `/embed` → 410 · `/analizar` · `/cotizar` (JSON o SSE) · resto = chat RAG (`query` + `history?`). SSE si `Accept: text/event-stream`.
 
 ### Orden obligatorio: Worker **antes** que Pages
 
@@ -151,7 +155,7 @@ El front **hardcodea** `AI_PROXY = https://seace-ai-proxy.rdiazg14.workers.dev` 
 
 | Tabla | Uso |
 |---|---|
-| `contratos` | Ficha SEACE. PK = `id` SEACE. IT: `categoria_it`, `relevancia_ia`. Fechas de cotización. Extra: `tdr_texto`, `pdf_hash`, `pdf_descargado`, `req_url` (`sin_pdf` = sin anexo PDF), `tdr_tipo_extraccion`, `paginas_ocr_*`, `estado_verificado_at`, `nom_area_usuaria`, `items_json` |
+| `contratos` | Ficha SEACE. PK = `id` SEACE. IT: `categoria_it`, `relevancia_ia`. Funnel: `analizado`, `cotizado`, `fecha_analisis`, `fecha_cotizacion` (permanentes; FALSE = nunca marcado desde que existe la columna). Extra: `tdr_texto`, `pdf_hash`, `pdf_descargado`, `req_url` (`sin_pdf` = sin anexo PDF), `tdr_tipo_extraccion`, `paginas_ocr_*`, `estado_verificado_at`, `nom_area_usuaria`, `items_json` |
 | `chunks_tdr` | `texto`, `embedding vector(768)` **v1**, `embedding_v2 vector(1536)`, `fuente` api\|pdf, `meta_entidad` / `meta_nro` |
 | `perfiles` | `rol` admin\|normal, FK `auth.users` (`seace-web/supabase/perfiles.sql`) |
 | `ingesta_rechazados` | G2 dead-letter |
@@ -169,7 +173,7 @@ El front **hardcodea** `AI_PROXY = https://seace-ai-proxy.rdiazg14.workers.dev` 
 | Uso | Modelo | Dónde |
 |---|---|---|
 | Embeddings | `gemini-embedding-001` @ **1536**, L2, QUERY vs DOCUMENT | Worker query RAG (1 por pregunta, **sin caché**); pipeline documentos (`batchEmbedContents`, lote 16) |
-| Generación | `gemini-3.7-flash`, thinking `LOW` salvo clasificador `/cotizar` (temp 0, sin thinking) | Chat RAG (filtros + generate), `/analizar` (1× MISS), `/cotizar` (**1× o 2×**: reglas alta → solo generate; si no, clasificar + generate), OCR visión (cron) |
+| Generación | `gemini-3.7-flash`, thinking `LOW` | Chat RAG (filtros + generate), `/analizar` (1× MISS), `/cotizar` (**1×** generate en MISS; HIT = 0), OCR visión (cron) |
 
 Secret: `GEMINI_API_KEY` — Cloudflare Worker **y** GitHub Actions (mismo nombre). No en `wrangler.toml`.
 
@@ -182,7 +186,7 @@ Tier exacto de billing: **[por confirmar con Rolando]** (en sprints se habló de
 - Account id (toml): `5a2b884f36bd62011960b879c3737546`
 - Worker name: `seace-ai-proxy`
 - Workers AI: **solo** reranker `@cf/baai/bge-reranker-base` (no embed BGE; `/embed` = 410)
-- KV `CHAT_LIMITS` id `c63cfd497041477f91dafdde5935f37d` — **único** KV: cupos, caché `analyze:{id}:{hash}` **y** caché `chat:{id}:{hash}:{sha256}`.
+- KV `CHAT_LIMITS` id `c63cfd497041477f91dafdde5935f37d` — **único** KV: cupos, caché `analyze:{id}:{hash}`, caché `chat:{id}:{hash}:{sha256}` **y** marcas permanentes `funnel:analizado:{id}` / `funnel:cotizado:{id}` (sin TTL).
 - Rate limiter `CHAT_RPM` namespace `8701`, **8 / 60 s**, keys distintas por flujo (`ip:`, `analyze:ip:`, `cotizar:ip:`)
 
 **Vars no secretas** (`wrangler.toml`):
@@ -201,15 +205,15 @@ Tier exacto de billing: **[por confirmar con Rolando]** (en sprints se habló de
 | `COTIZAR_IP_RPD` | `20` |
 | `COTIZAR_RPD` | `80` |
 
-**Secrets (solo nombre):** `GEMINI_API_KEY`, `SUPABASE_ANON_KEY`.
+**Secrets (solo nombre):** `GEMINI_API_KEY`, `SUPABASE_ANON_KEY`, `FUNNEL_TOKEN` (pipeline + `GET /funnel-pendientes`; el front **no** lo usa).
 
-CORS orígenes: `https://seace.rdiaz-lab.xyz`, `https://rdiazg14.github.io`, `http://localhost:5173` (`index.ts` L87–91).
+CORS orígenes: `https://seace.rdiaz-lab.xyz`, `https://rdiazg14.github.io`, `http://localhost:5173` (`index.ts` L89–93). Métodos: GET, POST, OPTIONS. Headers extra: `Authorization`, `X-Funnel-Token`.
 
 ### 2.4 GitHub Actions
 
 | Workflow | Cuándo | Secrets (nombre) |
 |---|---|---|
-| `pipeline.yml` | cron `0 14 * * *` + dispatch | `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `GEMINI_API_KEY` (+ `GITHUB_TOKEN` G3) |
+| `pipeline.yml` | cron `0 14 * * *` + dispatch | `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `GEMINI_API_KEY`, `FUNNEL_TOKEN` (+ `GITHUB_TOKEN` G3) |
 | `embed_v2.yml` | manual | mismos Gemini/Supabase |
 | `pdf.yml` | manual (histórico; PDF ya está en el cron) | idem |
 | `scrape.yml` | solo dispatch, deprecado | `GITHUB_TOKEN` |
@@ -240,15 +244,15 @@ Criterios (resumen; detalle en [CRITERIOS_DECISION_ENERTRONIC.md](./CRITERIOS_DE
 
 - **UI:** `/analisis/:id` — infografía, N alternativas, economía por componente, contradicciones, fishbone, panel #11.  
 - **Worker:** `POST /analizar` `{ contrato_id }`  
-- **Flujo:** ficha (`tdr_texto` / `pdf_hash`) → TDR columna o chunks (máx 80) → si chars &lt; **200** → **422** `sin_tdr` (sin cupo) → KV `analyze:{id}:{hash}` TTL 3 d (HIT = 0 Gemini) → cupos ANALYZE → 1 Flash JSON → post-proceso (`completarMomentoDia`, `asegurarRecomendada`, `alinearEconomiaConAlternativa`) → KV.put. Techo S/42 800.  
+- **Flujo:** ficha (`tdr_texto` / `pdf_hash`) → TDR columna o chunks (máx 80) → si chars &lt; **200** → **422** `sin_tdr` (sin cupo, **no** marca funnel) → KV `analyze:{id}:{hash}` TTL 3 d (HIT = 0 Gemini, **sí** marca `funnel:analizado`) → cupos ANALYZE → 1 Flash JSON → post-proceso (`completarMomentoDia`, `asegurarRecomendada`, `alinearEconomiaConAlternativa`) → KV.put + marca funnel. Techo S/42 800.  
 - Schema: 5 secciones base + `timeline.hitos`, `viabilidad.{ratio_alcance, cotizacion_por_componente, contradicciones_tdr}`, `alternativas[]`, `estructura_contractual`, `componentes_servicio`, `requisitos_proveedor`, `riesgos_contractuales`, `chips_sugeridos`, consorcio tri-estado.  
-- 502: cuerpo `analisis_fallido` + banner amable + Reintentar. Cupo **sí** se gastó. Análisis **congelado**.
+- 502: cuerpo `analisis_fallido` + banner amable + Reintentar. Cupo **sí** se gastó. Funnel **no** se marca. Análisis **congelado**.
 
 ### #11 Cotización asistida
 
 - **UI:** panel lateral 380 px en `/analisis/:id` (`ChatEscenarios`, `key={contratoId}`). Desktop ≥1024 px **abierto** al cargar; móvil cerrado + FAB. Persistencia `localStorage chat_escenarios_{id}`.  
 - **Worker:** `POST /cotizar` `{ contrato_id, query, history? }` (SSE si `Accept: text/event-stream`)  
-- **Flujo:** misma clave KV #10 → si no hay caché **409** `sin_analisis` (sin cupo) → caché exacta `chat:{id}:{pdf_hash}:{sha256}` (HIT = 0 Gemini, solo RPM; ignora history) → si MISS: reglas confianza alta (1 Flash) o clasificador Flash + generate (Δ2) → post-proceso → `KV.put` solo si `esCacheable` (sin supuestos ni montos) → SSE de presentación o JSON. Headers `X-Cotizar-Cache`, `X-Cotizar-Intent`. Fail-closed: sin `supuestos_aplicados[]` las cifras salen `null`. **No** reescribe el análisis. **No** RAG.  
+- **Flujo:** misma clave KV #10 → si no hay caché **409** `sin_analisis` (sin cupo, **no** marca funnel) → caché exacta `chat:{id}:{pdf_hash}:{sha256}` (HIT = 0 Gemini, solo RPM; ignora history; **sí** marca `funnel:cotizado`) → si MISS: **1** Flash generate (self-routing por `tipo_respuesta`; ya no hay clasificador aparte) → post-proceso (`completarEstructuras` gateado por el tipo que pidió el modelo, `limpiarFormatoNatural`) → `KV.put` chat solo si `esCacheable` (sin supuestos ni montos) → marca funnel **independiente** de `esCacheable` → SSE de presentación o JSON. Headers `X-Cotizar-Cache`, `X-Cotizar-Intent` (MISS = `flash`; HIT puede ser `reglas` de caché vieja). Fail-closed: sin `supuestos_aplicados[]` las cifras salen `null`. **No** reescribe el análisis. **No** RAG.  
 - Por qué no reusar el chat RAG: buscaría **otros** contratos y gastaría Δ2 Flash de `flash:`. Ver arquitectura §F.
 
 ### Chat RAG + memoria #3
@@ -262,7 +266,7 @@ Criterios (resumen; detalle en [CRITERIOS_DECISION_ENERTRONIC.md](./CRITERIOS_DE
 
 | Ruta | Estado |
 |---|---|
-| `/` Dashboard | Iter. 9: lee `v_kpis_*` / `v_contratos_estado` (fallback TS). Filtros de urgencia **sin** leak de vencidos. Sigue siendo el **home**. |
+| `/` Dashboard | Iter. 9: lee `v_kpis_*` / `v_contratos_estado` (fallback TS). Iter. 11: bloque conversión 30d (`v_kpis_conversion`, falla suave → "Sin datos"). Filtros de urgencia **sin** leak de vencidos. Sigue siendo el **home**. |
 | `/buscar` | FTS + chips. Un badge `CatItIaPill` (IT o IA, no ambos). |
 | `/docs` | Notas de API. |
 | `/usuarios` | Solo admin. |
@@ -277,7 +281,7 @@ Detalle, números y «por qué»: [ARQUITECTURA_TECNICA.md](./ARQUITECTURA_TECNI
 
 **RAG v2 (prod `RAG_BACKEND=v2`):** extraer filtros (1 Flash) → embed query 1536 L2 → paralelo `buscar_tdr_v2` (20, umbral 0.20) + FTS (20) → RRF k=60 a **nivel contrato** → ≤2 chunks/contrato → rerank `-base` top 5 → Flash. Eval G4: **27% → 63% success@10 sin reranker**.
 
-**Pipeline diario (09:00 Perú):** ingesta → G1 **sin `--gc`** → detalle → PDF `--solo-nativo` → OCR `--solo-ti` 2 h / rpm 6 → chunk api + pdf `--solo-nuevos` → embed Gemini `WHERE embedding_v2 IS NULL` → G3. Escala ancla (~76k contratos, ~2 083 vigentes, ~9 169 chunks v2): si crece 10×, reabrir índice/umbral/chunk/OCR/FLASH_RPD.
+**Pipeline diario (09:00 Perú):** ingesta → G1 **sin `--gc`** → detalle → PDF `--solo-nativo` → OCR `--solo-ti` 2 h / rpm 6 → chunk api + pdf `--solo-nuevos` → embed Gemini `WHERE embedding_v2 IS NULL` → **reconciliar funnel** (`continue-on-error`) → G3. Escala ancla (~76k contratos, ~2 083 vigentes, ~9 169 chunks v2): si crece 10×, reabrir índice/umbral/chunk/OCR/FLASH_RPD.
 
 ---
 
@@ -289,7 +293,7 @@ Tres sistemas **aislados** (un flujo no descuenta al otro). Periodo RPD = **UTC*
 |---|---|---|---|---|
 | Chat | `ip:{ip}` 8/60 | `ip:{ip}:{day}` 40 | `flash:{day}` **200 Δ2** (extract+generate; embed **no** cuenta en Δ2) | |
 | `/analizar` | `analyze:ip:{ip}` | `analyze:ip:{ip}:{day}` **15** | `analyze:{day}` **40** | 1 generate si MISS; HIT/422 = 0 |
-| `/cotizar` | `cotizar:ip:{ip}` | `cotizar:ip:{ip}:{day}` **20** (1 pregunta) | `cotizar:{day}` **80 Δ1 o Δ2** | HIT=0 Gemini; reglas=1; Flash clasif=2; 409=0 |
+| `/cotizar` | `cotizar:ip:{ip}` | `cotizar:ip:{ip}:{day}` **20** (1 pregunta) | `cotizar:{day}` **80 Δ1** | HIT=0 Gemini; MISS=1 generate; 409=0 |
 
 **Qué gasta Gemini además:** OCR del cron (rpm 6, tope 2 h, `--max-ocr-dia 6000`); embeddings del pipeline (no pasan por `flash:`).
 
@@ -303,9 +307,9 @@ Tres sistemas **aislados** (un flujo no descuenta al otro). Periodo RPD = **UTC*
 
 ### En producción y estable
 
-Asesor #9 (postulables default) + #10 (2º orden) + #11 (panel, routing, streaming, **híbrido + caché exacta**) · capa semántica Dashboard · RAG v2 · memoria #3 · login · pipeline 09:00. Iteraciones **1–9 + fixes** en prod (tabla en `ESTADO_CIERRE_2026-08-20.md` y `CHANGELOG_ITERACIONES.md`). Calibración: **87880** SEDAPAR, **87502** CENEPRED.
+Asesor #9 (postulables default) + #10 (2º orden) + #11 (panel, **self-routing**, streaming, caché exacta) · funnel KV→PG · Dashboard conversión 30d · capa semántica · RAG v2 · memoria #3 · login · pipeline 09:00. Iteraciones **1–11** en prod (tabla en `ESTADO_CIERRE_2026-08-29.md` y `CHANGELOG_ITERACIONES.md`). Calibración: **87880** SEDAPAR, **87502** CENEPRED.
 
-No reabrir salvo pedido: cutover embed 768, Auth, cron horario, `RAG_BACKEND=v2`, schema 2º orden de #10, orden del cupo ANALYZE.
+No reabrir salvo pedido: cutover embed 768, Auth, cron horario, `RAG_BACKEND=v2`, schema 2º orden de #10, orden del cupo ANALYZE, clasificador Flash de `/cotizar` (borrado a propósito).
 
 ### Backlog (todo opcional)
 
@@ -330,23 +334,27 @@ No reabrir salvo pedido: cutover embed 768, Auth, cron horario, `RAG_BACKEND=v2`
 1. **«Vigente» ≠ ventana de cotización abierta.** G1 copia `idEstadoContrato` del SEACE (2 Vigente / 3 En Evaluación / 4 Culminado). `esPostulable()` exige Vigente **y** ventana Lima. `rankingActivo` **no** recorta (deja vencidos y En Evaluación); el **chip** default sí. No «arreglar» G1 para cerrar por `fecha_fin`.
 2. **422 `/analizar` = TDR &lt; 200 chars**, no `req_url=sin_pdf`. Un sin_pdf **con chunks API** se analiza (p. ej. 83729 → 200). 422 real: ficha sin texto y sin chunks (p. ej. id 42).
 3. **Solo un Supabase en código:** `wusywwhcyqngnpvpzxyr`. Otro proyecto inactivo: no tocar. Ref: [por confirmar con Rolando].
-4. **Restos v1 en el Worker:** constante Llama `@cf/meta/llama-3.3-70b-instruct-fp8-fast`, `retrieveContext` 768, `RAG_BACKEND` default **v1 si falta env** (`index.ts` L129–130). Prod fija `v2` en toml. No usar `wrangler rollback` a v1 sin pedido. Fase 7 limpia BD; el bundle v1 se puede borrar después.
+4. **Restos v1 en el Worker:** constante Llama `@cf/meta/llama-3.3-70b-instruct-fp8-fast`, `retrieveContext` 768, `RAG_BACKEND` default **v1 si falta env** (`index.ts` L131–132). Prod fija `v2` en toml. No usar `wrangler rollback` a v1 sin pedido. Fase 7 limpia BD; el bundle v1 se puede borrar después.
 5. **`POST /embed` = 410.** El pipeline **no** embebe por el Worker.
 6. **Eval 63% no incluye reranker** (`eval_retrieval.py` L334–335). No citar 63% como calidad post-rerank.
 7. **PLAN vs realidad:** reranker v2-m3, chunks 200–400+overlap, GC al cerrar, costo $0/mes, checklist Gemini vacío, Fase 2 PDF «blocker» — **desactualizado**. Lista en arquitectura «Discrepancias». El PLAN §8 checklist no refleja que Gemini ya está en Actions y CF.
 8. **README de seace-monitor** describe scrape 06:00 y CSV token como el producto. El diario es `pipeline.yml` 09:00. Empezá por este traspaso, no por el README.
-9. **README del Worker** sigue corto (habla de `/analizar` con «mismos cupos»): **falso**. Cupos ANALYZE/COTIZAR/FLASH están aislados. El código gana.
+9. **README del Worker** describe RAG + `/analizar` + `/cotizar` + funnel. Si el README y el código divergen, gana el código. Cupos ANALYZE/COTIZAR/FLASH están **aislados**.
 10. **Home ≠ Ruta del día.** `/` es Dashboard (`App.tsx`). Navbar pone «Ruta del día» primero; el logo SEACE apunta a `/`. `path="*"` redirige a `/`.
 11. **RPD en UTC, ranking en día Lima.** Un cupo «diario» cambia a las 19:00 Perú (UTC-5).
-12. **Caché #10 y #11 viven en el mismo KV** (`CHAT_LIMITS`): `analyze:{id}:{hash}` vs `chat:{id}:{hash}:{sha256}` vs contadores `analyze:{day}`. No borrar el namespace a ciegas. HIT de chat **ignora** `history[]` y **no** descuenta RPD (sí RPM).
+12. **Caché #10/#11 y funnel viven en el mismo KV** (`CHAT_LIMITS`): `analyze:{id}:{hash}` vs `chat:{id}:{hash}:{sha256}` vs `funnel:{marca}:{id}` vs contadores `analyze:{day}`. No borrar el namespace a ciegas. HIT de chat **ignora** `history[]` y **no** descuenta RPD (sí RPM). Las claves `funnel:` **no tienen TTL**.
 13. **`--gc` apagado:** chunks de culminados siguen en HNSW. Encenderlo borra vectores; no es un no-op.
 14. **Anon key en el JS público** es a propósito (RLS lectura). Service role **nunca** al browser ni al Worker.
 15. **No commitear** `.env`, `.dev.vars`, evals JSON, HTML Penpot (ya en `.gitignore` del monitor).
-16. **`/cotizar` gasta 0, 1 o 2 Flash:** HIT=0; reglas alta=1 generate; si no, clasificador+generate. El streaming de la iteración 7 **no** es token-a-token del modelo: el JSON se genera entero y el texto se emite por chunks.
+16. **`/cotizar` gasta 0 o 1 Flash:** HIT=0; MISS=1 generate (self-routing). Ya no hay clasificador Flash ni Δ2. El streaming de la iteración 7 **no** es token-a-token del modelo: el JSON se genera entero y el texto se emite por chunks. No reintroducir `clasificarPorReglas` / `clasificarIntentFlash`.
 17. **Query de #11:** `trim` + lowercase + colapsar espacios. **No** se quitan tildes (`dónde` ≠ `donde`). Hash SHA-256 de esa forma.
 18. **Ruta default = postulables** (`esPostulable`). El chip «En evaluación / cerrados» muestra el resto. Dashboard usa la misma regla (SQL o fallback TS). No reabrir el ranking «nada se oculta» del corte de la mañana del 20 ago.
 19. **`v_kpis_dashboard` puede timeout** (57014). El Dashboard no se cae: `cargarCapaSemantica` usa TS. No «arreglar» dropeando las vistas.
-20. **502 `/analizar` ya no es JSON crudo**, pero el cupo ANALYZE se cobra igual. No reordenar el cupo sin pedido (es deliberado).
+20. **502 `/analizar` ya no es JSON crudo**, pero el cupo ANALYZE se cobra igual. Funnel **no** se marca en 502. No reordenar el cupo sin pedido (es deliberado).
+21. **`GET /funnel-pendientes` no es del front.** Auth `Authorization: Bearer ${FUNNEL_TOKEN}` (o `X-Funnel-Token`). El mismo secret vive en Cloudflare y en GitHub Actions. Sin token o mismatch → 401. El cron es best-effort (`continue-on-error`).
+22. **Flags `analizado`/`cotizado` son acumulativos.** TRUE no vuelve a FALSE. `FALSE` = nunca marcado **desde que existe la columna**, no “nunca se analizó antes”. Marca cotizado **independiente** de `esCacheable`. HIT también marca. 409/502 no marcan cotizado.
+23. **Vistas de conversión no están en `capa_semantica.sql`.** Viven en `docs/vista_kpis_conversion.sql` para no re-ejecutar `DROP … CASCADE` de las vistas 1–9. JOIN a `v_contratos_estado.es_postulable` (no reimplementar). `fmtTasa(null)` → "—", nunca 0%.
+24. **Router:** GET existe **solo** para `/funnel-pendientes`. El resto sigue POST. CORS ya permite GET.
 
 ---
 
@@ -361,23 +369,23 @@ No reabrir salvo pedido: cutover embed 768, Auth, cron horario, `RAG_BACKEND=v2`
 | Monitor local | `d:\ROLANDO\DEV_APPS\seace8uit\seace-monitor` |
 | Web local | `d:\ROLANDO\DEV_APPS\seace8uit\seace-web` |
 | Worker local | `d:\ROLANDO\DEV_APPS\seace8uit\seace-ai-proxy` |
-| HEAD monitor | este commit de docs (padre `21921ef`) |
-| HEAD web | `c0beff4` |
-| HEAD worker | `c8113ae` |
-| Worker CF | `075d03be-a84c-44eb-957f-7cca64bb6584` |
-| Pages | push `main` → Actions GitHub Pages (último success: `c0beff4` / run `32441541562`) |
+| HEAD monitor | `a060d2a` + este paquete de docs |
+| HEAD web | `6f1a2f9` |
+| HEAD worker | `fdcc7fd` |
+| Worker CF | `fcefa7a0-e623-432b-8479-71b576927cda` |
+| Pages | push `main` → Actions GitHub Pages (HEAD `6f1a2f9`) |
 | Cron | `0 14 * * *` = 09:00 América/Lima |
 | Chat local | `npm run dev` (5173) |
 | Worker local | `npx wrangler dev` |
 | Deploy Worker | `npx wrangler deploy` **antes** de Pages |
 | Deploy web | push `main` (Actions Pages) |
 | Pipeline | espera al cron o `workflow_dispatch` |
-| KV cupos + caché #10 + #11 | namespace `c63cfd497041477f91dafdde5935f37d` (único) |
+| KV cupos + caché #10 + #11 + funnel | namespace `c63cfd497041477f91dafdde5935f37d` (único) |
 | RPM | `CHAT_RPM` 8/60, namespace_id `8701` |
 | Flash chat | `flash:{UTC-day}` cap 200 Δ2 |
-| Flash cotizar | `cotizar:{UTC-day}` cap 80 Δ1 o Δ2 |
-| Docs | `TRASPASO_MAESTRO_SEACE.md` · `ARQUITECTURA_TECNICA.md` · `ESTADO_CIERRE_2026-08-20.md` · `CHANGELOG_ITERACIONES.md` · `CRITERIOS_DECISION_ENERTRONIC.md` |
+| Flash cotizar | `cotizar:{UTC-day}` cap 80 **Δ1** |
+| Docs | `TRASPASO_MAESTRO_SEACE.md` · `ARQUITECTURA_TECNICA.md` · `ESTADO_CIERRE_2026-08-29.md` · `CHANGELOG_ITERACIONES.md` · `CRITERIOS_DECISION_ENERTRONIC.md` |
 
-Endpoints Worker: `POST /` · `POST /analizar` · `POST /cotizar` · `POST /embed` → 410.
+Endpoints Worker: `POST /` · `POST /analizar` · `POST /cotizar` · `GET /funnel-pendientes` (auth) · `POST /embed` → 410.
 
-Fecha snapshot: **20 ago 2026** (Perú).
+Fecha snapshot: **29 ago 2026** (Perú).

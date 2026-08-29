@@ -1,5 +1,7 @@
 # Estado de cierre — 20 ago 2026
 
+> **Foto histórica** de iteraciones 1–9 + fixes. El corte vigente es [ESTADO_CIERRE_2026-08-29.md](./ESTADO_CIERRE_2026-08-29.md) (self-routing, funnel, conversión 30d). No uses los HEADs de este archivo.
+
 Foto para retomar **sin chat previo**. Cómo/por qué: [ARQUITECTURA_TECNICA.md](./ARQUITECTURA_TECNICA.md). Historia de sprints: [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md). Punto de entrada: [TRASPASO_MAESTRO_SEACE.md](./TRASPASO_MAESTRO_SEACE.md).
 
 Corte: **20 ago 2026** (Perú), noche (~21:55). Iteraciones **1–9 + fixes** están en producción. Nada de eso quedó a medias en git.

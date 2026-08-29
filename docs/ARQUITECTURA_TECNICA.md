@@ -3,7 +3,7 @@
 Documento de **cómo funciona hoy** cada pieza, con evidencia `archivo:línea`.
 No sustituye al PLAN: si código y PLAN divergen, se anota aquí.
 
-- Foto de prod: [ESTADO_CIERRE_2026-08-20.md](./ESTADO_CIERRE_2026-08-20.md)
+- Foto de prod: [ESTADO_CIERRE_2026-08-29.md](./ESTADO_CIERRE_2026-08-29.md) (histórico 1–9: [ESTADO_CIERRE_2026-08-20.md](./ESTADO_CIERRE_2026-08-20.md))
 - Historia de sprints: [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md)
 - Punto de entrada: [TRASPASO_MAESTRO_SEACE.md](./TRASPASO_MAESTRO_SEACE.md)
 
@@ -22,6 +22,7 @@ F. Cotización asistida (#11)
 G. Rate-limiting y gasto  
 H. Frontend y datos  
 I. Capa semántica (SQL + Dashboard)  
+J. Funnel de conversión (#10/#11 → PG → Dashboard)  
 Cierre: tabla de decisiones · discrepancias vs PLAN · commits
 
 ---
@@ -30,13 +31,13 @@ Cierre: tabla de decisiones · discrepancias vs PLAN · commits
 
 | Pieza | Path | HEAD documentado |
 |---|---|---|
-| Pipeline / SQL / evals | `seace-monitor` | este commit de docs (padre `21921ef` capa semántica) |
-| Worker | `seace-ai-proxy` | `c8113ae` (iter. 8 + 502 `/analizar`) · CF **`075d03be-a84c-44eb-957f-7cca64bb6584`** |
-| Front | `seace-web` | `c0beff4` (banner 502) · Pages `https://seace.rdiaz-lab.xyz` (Actions `32441541562` success) |
+| Pipeline / SQL / evals | `seace-monitor` | `a060d2a` + este paquete de docs |
+| Worker | `seace-ai-proxy` | `fdcc7fd` (self-routing + funnel + cleanup) · CF **`fcefa7a0-e623-432b-8479-71b576927cda`** |
+| Front | `seace-web` | `6f1a2f9` (Dashboard conversión 30d) · Pages `https://seace.rdiaz-lab.xyz` |
 
 Worker vivo: `https://seace-ai-proxy.rdiazg14.workers.dev`. Front: `AI_PROXY` = esa URL (`seace-web/src/lib/supabase.ts` L7).
 
-Fecha de este corte: **20 ago 2026** (Perú), noche. Asesor #9/#10/#11 **iteraciones 1–9 + fixes** en prod.
+Fecha de este corte: **29 ago 2026** (Perú). Asesor #9/#10/#11 **iteraciones 1–11** en prod.
 
 Etiquetas de «por qué»:
 
@@ -68,41 +69,41 @@ Las decisiones de esta arquitectura se consideran **adecuadas bajo esta escala**
 
 El chat `POST /` (no `/analizar` ni `/cotizar`) arma contexto TDR y genera con Gemini Flash. Backend de prod: `RAG_BACKEND=v2` (`seace-ai-proxy/wrangler.toml` L13).
 
-Pipeline v2, en orden (`retrieveContextV2`, `index.ts` L537–589):
+Pipeline v2, en orden (`retrieveContextV2`, `index.ts` L546–589):
 
 1. `extraerFiltrosV2` — 1× Flash JSON (estado / término / entidad).  
-2. `embedQueryGemini` — Gemini embed `RETRIEVAL_QUERY` 1536 + L2 del **término extraído** (`filtros.termino || query`, L540), no del hilo.  
+2. `embedQueryGemini` — Gemini embed `RETRIEVAL_QUERY` 1536 + L2 del **término extraído** (`filtros.termino || query`, L549), no del hilo.  
 3. En paralelo: RPC `buscar_tdr_v2` (20 chunks, umbral) + RPC `buscar_contratos` FTS (20).  
 4. RRF a **nivel contrato** (no chunk), top 20.  
 5. Hasta 2 chunks vectoriales por contrato (o el hit FTS si no hay vector).  
 6. `rerankTop` Workers AI → 5 ítems.  
 7. `geminiGenerate` — 1× Flash (SSE o JSON) con fragmentos + query (+ `history[]` opcional).
 
-`reserveFlash(env, 2)` cuenta extract+generate (`index.ts` L839–841). El embed **no** entra en ese delta 2.
+`reserveFlash(env, 2)` cuenta extract+generate (`index.ts` L896–897). El embed **no** entra en ese delta 2.
 
 ### Cómo (valores reales)
 
 | Paso | Valor | Evidencia |
 |---|---|---|
-| Embed modelo | `gemini-embedding-001` | `index.ts` L95, L429–436 |
-| Dims | 1536, recorte si viene de más | `GEMINI_DIM` L98, L444–445 |
-| Query task | `RETRIEVAL_QUERY` | L436 |
+| Embed modelo | `gemini-embedding-001` | `index.ts` L97, L434–436 |
+| Dims | 1536, recorte si viene de más | `GEMINI_DIM` L100 |
+| Query task | `RETRIEVAL_QUERY` | `embedQueryGemini` L434 |
 | Documento (pipeline) | `RETRIEVAL_DOCUMENT` | `generar_embeddings.py` L244, L468 |
-| Norma | L2 en query y en documentos | `index.ts` L152–158, L446; `generar_embeddings.py` `l2_normalize` |
+| Norma | L2 en query y en documentos | `index.ts` L154–160; `generar_embeddings.py` `l2_normalize` |
 | Índice vector | HNSW coseno sobre `embedding_v2` | `docs/schema_rag_v2.sql` L53–55; RPC `buscar_tdr_v2.sql` L4–5, L31–38 |
 | Índice v1 (aún en BD) | ivfflat `embedding(768)` lists=100 | `schema_rag.sql` L33–36. **No** lo usa el chat con `RAG_BACKEND=v2` |
-| Default código si falta env | `ragBackend` cae a **v1** | `index.ts` L129–130. Prod fija `RAG_BACKEND=v2` en wrangler L13 |
+| Default código si falta env | `ragBackend` cae a **v1** | `index.ts` L131–132. Prod fija `RAG_BACKEND=v2` en wrangler L13 |
 | Distancia RPC | `<=>` pgvector; similarity = `1 - dist` | `buscar_tdr_v2.sql` L31 |
-| Umbral v2 | `0.20` (`SIMILARITY_THRESHOLD_V2`) | `wrangler.toml` L12; default código L143–146; SQL default L13 |
-| Umbral v1 (apagado) | `0.70` | `wrangler.toml` L11 |
-| RRF k | **60** | `RRF_K` `index.ts` L97, L478: `1/(RRF_K + i + 1)` con `i` 0-based |
-| Reranker | `@cf/baai/bge-reranker-base`, top_k=5, texto ≤1500 | L94, L486–511 |
-| Fallback rerank | si CF falla → primeros 5 del RRF | L509–510 |
-| LLM | `GEMINI_FLASH_MODEL=gemini-3.7-flash`, thinking `LOW`, temp 0.2, max 2048 | `wrangler.toml` L14; `index.ts` L624–627 |
-| Filtros | Flash JSON; si falla HTTP/parse → regex `extraerTermino` / `extraerEntidad`, estado default Vigente | L373–422 |
-| History #3 | sanitizado máx 8×500; **después** del retrieve; embed/filtros ven la query actual (término), no el hilo | `history.ts` L9–13; `userPromptFrom` L592–597 |
+| Umbral v2 | `0.20` (`SIMILARITY_THRESHOLD_V2`) | `wrangler.toml` L12; default código L144–146; SQL default L13 |
+| Umbral v1 (apagado) | `0.70` toml / default código **0.80** | `wrangler.toml` L11; `index.ts` L139–141 |
+| RRF k | **60** | `RRF_K` `index.ts` L99, L480 |
+| Reranker | `@cf/baai/bge-reranker-base`, top_k=5, texto ≤1500 | L96, L495 |
+| Fallback rerank | si CF falla → primeros 5 del RRF | `rerankTop` |
+| LLM | `GEMINI_FLASH_MODEL=gemini-3.7-flash`, thinking `LOW`, temp 0.2, max 2048 | `wrangler.toml` L14; `index.ts` L657 |
+| Filtros | Flash JSON; si falla HTTP/parse → regex `extraerTermino` / `extraerEntidad`, estado default Vigente | L382–431 |
+| History #3 | sanitizado máx 8×500; **después** del retrieve; embed/filtros ven la query actual (término), no el hilo | `history.ts` L9–13; `userPromptFrom` L627–637 |
 
-`POST /embed` (BGE 768) responde **410** (`index.ts` L160–165).
+`POST /embed` (BGE 768) responde **410** (`index.ts` L162–167).
 
 Eval G4 **no incluye reranker**:
 
@@ -119,7 +120,7 @@ eval_v2.json: success@10 = 0.633… (Gemini 1536 + buscar_tdr_v2+RRF, min_sim 0.
 | Gemini 1536 vs BGE 768 | **MEDIDA** | 26.7% → 63.3% success@10 en los JSON de `data/eval_*.json` (híbrido **pre-rerank**) |
 | HNSW vs ivfflat v2 | **HEREDADA** | PLAN D3 (`PLAN_DE_TRABAJO.md` L43): ivfflat lists=100 mal para ~9k. **No** hay A-B HNSW vs ivfflat en `eval_v2.json` |
 | 1536 dims | **HEREDADA** | PLAN D2 (tope pgvector ~2000). No hay eval 768-Gemini vs 1536 |
-| RRF siempre (no fallback «si &lt;3 chunks») | **HEREDADA** | PLAN D6; código L541–572 siempre fusiona |
+| RRF siempre (no fallback «si &lt;3 chunks») | **HEREDADA** | PLAN D6; código L550–581 siempre fusiona |
 | RRF k=60 | **POR-DEFECTO** | Constante en código; no hay barrido de k |
 | Threshold 0.20 | **POR-DEFECTO** | Default SQL + wrangler. G4 usó 0.20. No hay curva umbral |
 | `bge-reranker-base` | **POR-DEFECTO** / discrepancia PLAN | PLAN pide `bge-reranker-v2-m3`. El Worker usa `-base`. G4 no lo midió |
@@ -188,7 +189,8 @@ Orden (`pipeline.yml`):
 | 5 | OCR | `--solo-ocr --solo-ti --max-segundos 7200 --rpm 6 --max-ocr-dia 6000` | step `timeout-minutes: 125` (L103); job entero 240 min (L42) |
 | 6–7 | Chunk api + pdf delta | `chunker_contratos.py` / `--solo-pdf --solo-nuevos` | L123–139 |
 | 8 | Embed | `generar_embeddings.py --backend gemini` | `WHERE embedding_v2 IS NULL` |
-| 9 | G3 | `alerta_g3.py` por paso si falla + alerta final `always()` | L183–187 |
+| 9 | Funnel | `reconciliar_funnel.py` | `continue-on-error`; GET `/funnel-pendientes`; upsert ISO del KV |
+| 10 | G3 | `alerta_g3.py` por paso si falla + alerta final `always()` | incluye `--paso funnel` |
 
 **G1** (`refresh_estados.py`): relee SEACE; UPSERT `{id, estado, estado_verificado_at}`. Vigentes todos cada corrida; En Evaluación por lotes. Terminal = `idEstadoContrato` **4** Culminado (L45–48). `--gc` borra chunks de cierres &gt;60 días (L12, L219) — **el cron no lo pasa**.
 
@@ -317,17 +319,17 @@ Orden bloqueado (`analizar.ts` `handleAnalizar` L690–821):
 2. Ficha (incluye `tdr_texto`, `pdf_hash`).  
 3. TDR: columna `tdr_texto`, si no chunks (`limit=80`), si no ficha.  
 4. Si chars &lt; **200** → **422** `sin_tdr` (L19, L716–721). **No** descuenta cupo.  
-5. KV `analyze:{id}:{pdf_hash\|\|'na'}` (`cacheKey` L648–650) TTL **259200 s = 3 d** (L20, L813). HIT → 200, header `X-Analisis-Cache: HIT`, 0 Gemini, 0 cupo. En HIT se re-aplica `completarMomentoDia` (L731).  
+5. KV `analyze:{id}:{pdf_hash\|\|'na'}` (`cacheKey` L649) TTL **259200 s = 3 d** (L21, L816). HIT → 200, header `X-Analisis-Cache: HIT`, 0 Gemini, 0 cupo. En HIT se re-aplica `completarMomentoDia` y **sí** `marcarFunnel(..., 'analizado')` (L734/L744).  
 6. `checkAnalyzeLimits` (no `flash:`).  
-7. Techo TDR **60 000** chars (L18).  
-8. 1× Flash JSON (`maxOutputTokens: 65536`, thinking LOW, temp 0.15, L665–670).  
-9. Post-proceso + `KV.put`. No pisa HIT anteriores salvo TTL/hash nuevo.
+7. Techo TDR **60 000** chars (L19).  
+8. 1× Flash JSON (`maxOutputTokens: 65536`, thinking LOW, temp 0.15).  
+9. Post-proceso + `KV.put` + `marcarFunnel` analizado (L818). No pisa HIT anteriores salvo TTL/hash nuevo. 502 **no** marca funnel.
 
 Schema economía: `valor/costo/margen` estimados + `supuestos[]` + `lo_que_no_sabe[]`. Cifras de economía **no** están en `required` (L228: solo pistas/supuestos/lo_que_no_sabe). Techo **8 UIT = S/42 800** (L15).
 
 **UI:** `AnalisisContrato.tsx` + `AnalisisV2.tsx` (infografía ratio, N alternativas dinámicas, economía por componente, contradicciones) + `TimelineFishbone.tsx` (thumbnail + fullscreen, eje con salto de `momento_dia`). Panel #11 380 px, `key={contratoId}`, abierto por defecto en desktop ≥1024 px. Análisis **congelado** respecto de #11.
 
-502 (JSON Gemini inválido, p. ej. contrato **66461**): HTTP 502 con cuerpo estructurado (`analizar.ts` L823–831):
+502 (JSON Gemini inválido, p. ej. contrato **66461**): HTTP 502 con cuerpo estructurado (`analizar.ts` L827–835):
 
 ```
 { error: 'analisis_fallido', mensaje, reintentar: true, detalle_tecnico }
@@ -358,36 +360,31 @@ TTL más largo si los TDR no rotan. No reabrir el schema 2º orden sin producto.
 
 `POST /cotizar` `{ contrato_id, query, history? }`. Recalcula un **escenario** sobre el análisis **ya cacheado**. No RAG. No re-analiza TDR.
 
-Desde iter. 8: clasificador **híbrido** (reglas → Flash si hace falta) y caché **exacta** de respuestas factuales (`esCacheable`).
+Desde iter. 10: **self-routing**. El generate único elige `tipo_respuesta` (`texto` | `tabla` | `grafica` | `tabla_grafica`). El clasificador Flash y `clasificarPorReglas` **ya no existen**. Caché exacta de respuestas factuales (`esCacheable`) sigue.
 
 ### Cómo
 
-Orden (`cotizar.ts` `handleCotizar` L737–895):
+Orden (`cotizar.ts` `handleCotizar` L602–):
 
 1. Validar `contrato_id` + `query`.  
 2. `fetchFicha` + clave #10 `analyze:{id}:{pdf_hash}`.  
-3. Si no hay KV → **409** `sin_analisis` (L754–758). 0 Gemini.  
+3. Si no hay KV → **409** `sin_analisis` (L619–623). 0 Gemini. **No** marca funnel.  
 4. `sanitizeHistory` (#3).  
-5. **Caché chat** (`chatCacheKey` L353–356): `chat:{contratoId}:{pdf_hash}:{sha256(normalizarPregunta(query))}`. `normalizarPregunta` L310–312 = trim + lowercase + colapsar espacios; **no** quita tildes. TTL **259200 s = 3 d** (`CHAT_CACHE_TTL` L238).  
-   - HIT → solo RPM (`checkCotizarRpm`); **0** Flash; **no** descuenta RPD/global; `kvIncr chat_cache:hit:{day}`. Headers `X-Cotizar-Cache: HIT`, `X-Cotizar-Intent` = el que se guardó. SSE o JSON. **Ignora `history[]`.**  
+5. **Caché chat** (`chatCacheKey`): `chat:{contratoId}:{pdf_hash}:{sha256(normalizarPregunta(query))}`. `normalizarPregunta` L200–201 = trim + lowercase + colapsar espacios; **no** quita tildes. TTL **259200 s = 3 d** (`CHAT_CACHE_TTL` L195).  
+   - HIT → solo RPM (`checkCotizarRpm`); **0** Flash; **no** descuenta RPD/global; `kvIncr chat_cache:hit:{day}`; **`marcarFunnel(..., 'cotizado')`** (L652). Headers `X-Cotizar-Cache: HIT`, `X-Cotizar-Intent` = el que se guardó (`reglas` solo si la entrada es anterior al cleanup). SSE o JSON. **Ignora `history[]`.**  
    - MISS → `kvIncr chat_cache:miss:{day}`.  
-6. `clasificarPorReglas` (L264–308). Confianza **alta** solo si hay **exactamente una** señal (internet / gráfica / tabla / factual) y la query **no** es what-if económico. What-if (`y si`, margen, precio, techo…) → siempre **baja** (Flash).  
-7. `checkCotizarLimits(..., geminiCalls)` L823: **1** si reglas alta, **2** si Flash clasificador. IP cuenta 1 pregunta; `cotizar:{day}` cuenta Δ1 o Δ2.  
-8. Contador `chat_rules:{day}` o `chat_flash_clasif:{day}`.  
-9. `generarEscenario` (L581–646):  
-   - Si reglas alta: `intentPrevio` → **no** llama `clasificarIntentFlash`.  
-   - Si no: 1 Flash JSON clasificador (`maxOutputTokens: 200`, temp 0, sin thinking). Si Gemini falla → `heuristicIntent` (L245, nunca cuenta como alta).  
-   - Post-filtro: 1 sola vía + «comparar vías» → fuerza nivel 1 texto.  
-   - Generate = 1 Flash JSON (`COTIZAR_SCHEMA`, 8192, thinking LOW, temp 0.2).  
-   - Post-proceso: `normalizeEscenario` → `completarEstructuras` (tabla/gráfica desde análisis si Gemini las omite) → `aplicarFormatoSugerido` → `limpiarFormatoNatural`.  
-10. `saveChatCache` solo si `esCacheable` (L314–319): **false** si `supuestos_aplicados.length > 0` o hay monto (`valor`/`costo`/`margen` no null).  
-11. Respuesta: SSE de **presentación** (texto ya completo, ~5 palabras / 22 ms; tablas/gráficas solo en evento `data`) o JSON. Headers `X-Cotizar-Cache: MISS`, `X-Cotizar-Intent: reglas|flash`.
+6. `checkCotizarLimits(..., geminiCalls=1)` L687. IP cuenta 1 pregunta; `cotizar:{day}` cuenta **Δ1**.  
+7. `generarEscenario` (L466–510): **un** Flash JSON (`COTIZAR_SCHEMA`, 8192, thinking LOW, temp 0.2). No hay `intentPrevio` ni `clasificarIntentFlash`.  
+   - Post-proceso: `normalizeEscenario` → `completarEstructuras` **gateado por el `tipo_respuesta` crudo del modelo** (L501–503; no se recortan visuales que el modelo pidió) → `tipoDesdeDatos` → `limpiarFormatoNatural` (sin “nivel”).  
+   - `clasificacionDesdeTipo` (L456) arma `{nivel, formato}` para el front a partir del tipo final. `intentSource` MISS = `'flash'`.  
+8. `finish` (L699): **`marcarFunnel` cotizado** (independiente de cacheable) → `kvIncr cotizar_tipo:{tipo}:{day}` → `saveChatCache` solo si `esCacheable` (L204–209): **false** si `supuestos_aplicados.length > 0` o hay monto (`valor`/`costo`/`margen` no null).  
+9. Respuesta: SSE de **presentación** (texto ya completo, ~5 palabras / 22 ms; tablas/gráficas solo en evento `data`) o JSON. Headers `X-Cotizar-Cache: MISS`, `X-Cotizar-Intent: flash`.
 
-Schema condicional (`formato`): `texto` | `tabla` | `grafica` | `tabla_grafica`. Nivel 1 fuerza texto; nivel 2 tabla; nivel 3 tabla_grafica.
+`parseIntent` / `IntentCotizar` / `IntentSource` **siguen vivos** para leer HIT de caché (entradas viejas pueden tener `intent: reglas`).
 
-Fail-closed (`escenario.ts` `normalizeEscenario`): si `supuestos_aplicados` no es lista no vacía, **montos = null**.
+Fail-closed (`escenario.ts` `normalizeEscenario` L222): si `supuestos_aplicados` no es lista no vacía, **montos = null**.
 
-Cupos: `cotizar:ip:` RPM 8/60, `cotizar:ip:{day}` **20**, `cotizar:{day}` **80**. No toca `flash:` ni `analyze:`.
+Cupos: `cotizar:ip:` RPM 8/60, `cotizar:ip:{day}` **20**, `cotizar:{day}` **80 Δ1**. No toca `flash:` ni `analyze:`.
 
 **UI:** panel fijo 380 px, `key={contratoId}`, persistencia `chat_escenarios_{id}`. Desktop ≥1024 px abierto. Indicador Analizando… → Analizado ✓.
 
@@ -395,13 +392,13 @@ Cupos: `cotizar:ip:` RPM 8/60, `cotizar:ip:{day}` **20**, `cotizar:{day}` **80**
 
 El chat RAG busca **otros** contratos. Un what-if sobre **este** TDR lee la caché #10.
 
-Híbrido (iter. 8): las preguntas factuales obvias no pagan el Flash clasificador. Caché exacta: repetir «¿dónde se presta?» no paga generate. No cachear escenarios con supuestos: el número estimado no debe fosilizarse.
+Self-routing (iter. 10): el clasificador Flash era Δ2 y además recortaba visuales. Un generate elige formato; `completarEstructuras` respeta lo que pidió el modelo. Caché exacta: repetir «¿dónde se presta?» no paga generate. No cachear escenarios con supuestos: el número estimado no debe fosilizarse. Funnel: toda cotización **exitosa** (HIT o MISS) cuenta, no solo las cacheables.
 
 Streaming de presentación (iter. 7): el JSON estructurado no se stremea a medias.
 
 ### Alternativas
 
-Caché semántica (parafraseo): no está. Reescribir query + RAG: otra Flash, fuera de este endpoint. Incluir history en la clave de caché: hoy HIT ignora el hilo.
+Caché semántica (parafraseo): no está. Reescribir query + RAG: otra Flash, fuera de este endpoint. Incluir history en la clave de caché: hoy HIT ignora el hilo. Reintroducir clasificador: **no**, salvo pedido explícito.
 
 ---
 
@@ -413,7 +410,7 @@ Caché semántica (parafraseo): no está. Reescribir query + RAG: otra Flash, fu
 |---|---|---|---|---|
 | Chat RAG | `ip:${ip}` 8/60 | `ip:${ip}:${day}` **CHAT_RPD=40** | `flash:${day}` **FLASH_RPD=200** **Δ2** | extract + generate (+ embed aparte, no en Δ2) |
 | `/analizar` | `analyze:ip:${ip}` 8/60 | `analyze:ip:${ip}:${day}` **15** | `analyze:${day}` **40** | 1 generate si MISS; HIT=0 |
-| `/cotizar` | `cotizar:ip:${ip}` 8/60 | `cotizar:ip:${ip}:${day}` **20** (1 pregunta) | `cotizar:${day}` **80** **Δ1 o Δ2** | HIT caché: 0 Gemini (solo RPM). MISS reglas: 1 generate. MISS Flash: clasificador + generate. 409=0 |
+| `/cotizar` | `cotizar:ip:${ip}` 8/60 | `cotizar:ip:${ip}:${day}` **20** (1 pregunta) | `cotizar:${day}` **80** **Δ1** | HIT caché: 0 Gemini (solo RPM). MISS: **1** generate. 409=0 |
 
 RPM: `CHAT_RPM.limit({ key })` atómico por colo (`limits.ts` L80–84, L127–131, L167–171).  
 RPD: `kvBump` get+put (`limits.ts` L60–71) — **no** es transacción; dos requests concurrentes pueden pasarse 1. Periodo UTC.
@@ -426,22 +423,24 @@ Valores wrangler: `wrangler.toml` L16–21. Defaults código: `limits.ts` L16–
 |---|---|---|
 | `analyze:{id}:{hash}` | Caché JSON de `/analizar` | **259200 s** (3 d) |
 | `chat:{id}:{hash}:{sha256}` | Caché JSON de `/cotizar` si `esCacheable` | **259200 s** (3 d) |
+| `funnel:analizado:{id}` | Marca permanente #10 | **ninguno** |
+| `funnel:cotizado:{id}` | Marca permanente #11 | **ninguno** |
 | `analyze:{YYYY-MM-DD}` | Contador global ANALYZE | hasta mañana UTC |
 | `analyze:ip:{ip}:{day}` | RPD IP analizar | hasta mañana UTC |
 | `ip:{ip}:{day}` | RPD IP chat RAG | hasta mañana UTC |
 | `flash:{day}` | Global Flash del chat (Δ2) | hasta mañana UTC |
-| `cotizar:{day}` | Global Flash de `/cotizar` (Δ1/Δ2) | hasta mañana UTC |
+| `cotizar:{day}` | Global Flash de `/cotizar` (**Δ1**) | hasta mañana UTC |
 | `cotizar:ip:{ip}:{day}` | RPD IP cotizar (1 por pregunta) | hasta mañana UTC |
 | `chat_cache:hit:{day}` / `miss:{day}` | Instrumentación HIT/MISS chat | hasta mañana UTC |
-| `chat_rules:{day}` / `chat_flash_clasif:{day}` | Instrumentación origen del intent | hasta mañana UTC |
+| `cotizar_tipo:{tipo}:{day}` | Instrumentación `tipo_respuesta` | hasta mañana UTC |
 
 `/cotizar` lee `analyze:{id}:{hash}` **y** escribe `chat:…` en el mismo namespace. Límite de valor KV Cloudflare: **25 MiB** por key. RPM **no** vive en KV: binding `CHAT_RPM` namespace_id `8701`.
 
-CORS expone `X-Analisis-Cache`, `X-Cotizar-Cache`, `X-Cotizar-Intent` (`index.ts` ~L106).
+CORS expone `X-Analisis-Cache`, `X-Cotizar-Cache`, `X-Cotizar-Intent` (`index.ts` L108). Métodos CORS: GET, POST, OPTIONS (L106). `GET /funnel-pendientes` usa `Authorization` / `X-Funnel-Token`.
 
 ### Por qué aislados
 
-**HEREDADA:** un usuario de Ruta no debe vaciar el chat (FLASH 200 / CHAT 40), y los what-if no deben comer el cupo caro de análisis 60k TDR (ANALYZE 40). `/cotizar` sube `cotizar:{day}` **Δ1 o Δ2** y **no** `flash:` ni `analyze:`. HIT de caché chat no toca esos contadores (sí RPM).
+**HEREDADA:** un usuario de Ruta no debe vaciar el chat (FLASH 200 / CHAT 40), y los what-if no deben comer el cupo caro de análisis 60k TDR (ANALYZE 40). `/cotizar` sube `cotizar:{day}` **Δ1** y **no** `flash:` ni `analyze:`. HIT de caché chat no toca esos contadores (sí RPM). Funnel **no** descuenta cupo.
 
 Backstop de facturación Gemini (~S/10/mes AI Studio): **[por confirmar con Rolando]** — no está en el código.
 
@@ -451,11 +450,11 @@ Comportamiento **real**:
 
 | Endpoint | Si Gemini devuelve JSON roto / HTTP no OK |
 |---|---|
-| `/analizar` | `parseAnalisisJson` tira; catch → **HTTP 502** `{ error: 'analisis_fallido', mensaje, reintentar: true, detalle_tecnico }` (`analizar.ts` L823–831). El 66461 fue el JSON crudo `{ error: msg }`; eso **ya no** se sirve. **No** hay retry. El cupo ANALYZE **sí** se gastó. Front: banner + Reintentar (`AnalisisContrato.tsx`). |
-| `/cotizar` | Generate/parse tira; catch → **HTTP 502** JSON si aún no abrió SSE; si ya stremea → evento `{type:'error'}` con HTTP 200. Cupo cotizar (Δ2) **ya descontado**. |
-| Chat JSON | catch de `handleRagJson` → **HTTP 200** con `error` + texto «No pude completar…» (`index.ts` L671–679). El front puede pintarlo como fallo blando. |
-| Chat SSE | `stage: 'error'` dentro del stream HTTP 200 (`index.ts` L772–775). Front lanza y muestra error. |
-| Filtros v2 | HTTP/parse malos → regex, **no** 502 (`index.ts` L401–421). |
+| `/analizar` | `parseAnalisisJson` tira; catch → **HTTP 502** `{ error: 'analisis_fallido', mensaje, reintentar: true, detalle_tecnico }` (`analizar.ts` L827–835). El 66461 fue el JSON crudo `{ error: msg }`; eso **ya no** se sirve. **No** hay retry. El cupo ANALYZE **sí** se gastó. Funnel **no** se marca. Front: banner + Reintentar (`AnalisisContrato.tsx`). |
+| `/cotizar` | Generate/parse tira; catch → **HTTP 502** JSON si aún no abrió SSE; si ya stremea → evento `{type:'error'}` con HTTP 200. Cupo cotizar (Δ1) **ya descontado**. Funnel **no** se marca en 502. |
+| Chat JSON | catch de `handleRagJson` → **HTTP 200** con `error` + texto «No pude completar…» (`index.ts` L720–725). El front puede pintarlo como fallo blando. |
+| Chat SSE | `stage: 'error'` dentro del stream HTTP 200 (`index.ts` L824–827). Front lanza y muestra error. |
+| Filtros v2 | HTTP/parse malos → regex, **no** 502 (`index.ts` L414–430). |
 
 No hay cola de reintento ni circuit breaker aparte del tope `flash:` / `analyze:` / `cotizar:`.
 
@@ -547,7 +546,7 @@ Dashboard (`Dashboard.tsx`): `cargarCapaSemantica()` prefiere SQL; si `v_kpis_da
 
 `v_contratos_estado` y `v_kpis_negocio` responden. Un `SELECT *` de `v_kpis_dashboard` puede **timeout** (Postgres 57014). En ese caso el Dashboard usa TS y **no** se rompe. Backlog: aligerar esa vista.
 
-No hay valor referencial ni flag «cotizado/analizado» en `contratos` (no se inventan).
+Las columnas `analizado`/`cotizado` **sí existen** desde iter. 11 (`docs/migracion_funnel_conversion.sql`). No hay monto referencial. Detalle: §J.
 
 ### Por qué
 
@@ -556,6 +555,48 @@ No hay valor referencial ni flag «cotizado/analizado» en `contratos` (no se in
 ### Alternativas
 
 Materializar KPIs (tabla+cron) si el timeout molesta. Que Ruta también lea `v_contratos_estado`. Chat que responda KPIs: no está.
+
+---
+
+## J. Funnel de conversión (#10/#11 → PG → Dashboard)
+
+### Qué hace
+
+Tres eslabones: (1) el Worker marca en KV la **primera** vez que un contrato se analiza o se cotiza con éxito; (2) el cron copia esas marcas a `contratos`; (3) el Dashboard lee tasas 30d con **dos denominadores**.
+
+### Cómo
+
+**KV** (`funnel.ts`): claves `funnel:analizado:{id}` / `funnel:cotizado:{id}`. Valor = ISO de la primera marca. **Sin TTL**. Idempotente (GET antes de PUT; no pisa fecha). Fallo de KV no se propaga. Prefijo distinto de `analyze:` / `chat:` / cupos.
+
+Quién marca:
+
+| Evento | Marca | No marca |
+|---|---|---|
+| `/analizar` HIT o MISS 200 | `analizado` | 422 `sin_tdr`, 502, cupo |
+| `/cotizar` HIT o MISS 200 | `cotizado` (aunque no sea `esCacheable`) | 409 `sin_analisis`, 502 |
+
+**GET `/funnel-pendientes`:** Bearer `FUNNEL_TOKEN` (secret CF). Respuesta `{ analizados: [{id, fecha}], cotizados: [...] }`. 401 si token mismatch; 503 si no hay KV. No es CORS del SPA (el front no llama esto).
+
+**Reconciliación** (`reconciliar_funnel.py`, cron tras embed, `continue-on-error`): fusiona por id, upsert lotes de 100, **copia el ISO del KV** (no `now()`). `--dry-run` / `--limit`. Secret GitHub `FUNNEL_TOKEN` (mismo valor que CF).
+
+**SQL:** `docs/migracion_funnel_conversion.sql` (columnas, ya en prod). `docs/vista_kpis_conversion.sql` (vistas, ya en prod + GRANT anon). Universo = INNER JOIN `v_contratos_estado` (IT) + `fecha_publica >= now() - 30 days`. `es_postulable` **no** se reimplementa. Rubro = `v.rubro` (línea, no `fn_rubro_energetic`).
+
+Dos bloques de tasas (0..1, `numeric(4)`; NULL si denominador 0):
+
+| Bloque | Denominador | Pregunta |
+|---|---|---|
+| Cobertura | `rankeados_30d` (radar IT publicado) | ¿Cuánto del radar se tocó? |
+| Ejecución | `postulables_30d` (Ruta) | ¿Cuánto de lo accionable se trabajó? |
+
+**UI** (`cargarKpisConversion`, `Dashboard.tsx` `ConversionBlock`): falla suave → null → «Sin datos de conversión todavía» (no fallback TS). `fmtTasa(null)` → "—", nunca 0%.
+
+### Por qué
+
+**HEREDADA** (iter. 11): el sesgo de marcar solo `esCacheable` dejaba fuera los what-if (justamente los que cotizan). HIT también cuenta: reabrir un análisis viejo es trabajo real. Las vistas viven **fuera** de `capa_semantica.sql` para no `DROP CASCADE` las de iter. 9.
+
+### Alternativas
+
+TTL en funnel: no (perdería historia). Backfill pre-columna: no (FALSE ≠ “nunca en la vida”). Materializar tasas: no hace falta a esta escala.
 
 ---
 
@@ -577,10 +618,10 @@ Materializar KPIs (tabla+cron) si el timeout molesta. Que Ruta también lea `v_c
 | G1 GC | flag existe, cron **no** lo usa | **POR-CONFIRMAR** | `--gc` | Chunks de culminados hinchan HNSW |
 | Ruta 0–100 | sin IA; 2–7d&gt;hoy. Default **solo postulables** (`esPostulable`). Chip para En evaluación / cerrados | **HEREDADA** `cffcc2b` | Exigir fecha; home = Ruta | Si el chip no se usa |
 | #10 caché | `analyze:id:hash` 3 d | **HEREDADA** (clave) / **POR-DEFECTO** (TTL) | TTL | PDF que cambia seguido |
-| #11 | `/cotizar` híbrido reglas+Flash, SSE, caché exacta si `esCacheable` | **HEREDADA** iter. 4–8 | Caché semántica; history en la clave | Tokens / parafraseo |
-| Cupos | 3 **prefijos** + caché `analyze:`/`chat:` en el mismo KV `CHAT_LIMITS` | **HEREDADA** | KV aparte | Si un cupo queda muerto y otro explota |
-| 502 Gemini | `/analizar` 502 **estructurado** + banner; `/cotizar` 502; chat 200+texto. Cupo ANALYZE se cobra igual | **HEREDADA** (catch + iter. 502) | Retry 1×; no cobrar si falla | Si 66461-like se repite |
-| Métricas Dashboard | Vistas SQL + fallback TS | **HEREDADA** iter. 9 | Materializar KPIs | Timeout `v_kpis_dashboard` |
+| #11 | `/cotizar` self-routing (1 Flash), SSE, caché exacta si `esCacheable`, funnel permanente | **HEREDADA** iter. 4–10 | Caché semántica; history en la clave; clasificador (no reabrir) | Tokens / parafraseo |
+| Cupos | 3 **prefijos** + caché `analyze:`/`chat:` + `funnel:` en el mismo KV `CHAT_LIMITS` | **HEREDADA** | KV aparte | Si un cupo queda muerto y otro explota |
+| 502 Gemini | `/analizar` 502 **estructurado** + banner; `/cotizar` 502; chat 200+texto. Cupo ANALYZE se cobra igual. Funnel no marca 502 | **HEREDADA** (catch + iter. 502) | Retry 1×; no cobrar si falla | Si 66461-like se repite |
+| Métricas Dashboard | Vistas SQL + fallback TS; conversión 30d (falla suave) | **HEREDADA** iter. 9 + 11 | Materializar KPIs | Timeout `v_kpis_dashboard` |
 
 ### Discrepancias código vs PLAN
 
@@ -588,19 +629,19 @@ Materializar KPIs (tabla+cron) si el timeout molesta. Que Ruta también lea `v_c
 2. Chunks: PLAN 200–400 **con solape** · código 800/500 **sin** overlap.  
 3. G1 GC: PLAN borra chunks al cerrar · cron **sin** `--gc`.  
 4. Eval 63%: PLAN habla del Worker completo · G4 **sin** reranker.  
-5. Caché de `/cotizar`: PLAN Fase 7 opcional pedía caché semántico. Hay caché **exacta** `chat:{id}:{pdf_hash}:{sha256}` solo si `esCacheable` (iter. 8). No hay embeddings de query ni parafraseo.  
+5. Caché de `/cotizar`: PLAN Fase 7 opcional pedía caché semántico. Hay caché **exacta** `chat:{id}:{pdf_hash}:{sha256}` solo si `esCacheable` (iter. 8). No hay embeddings de query ni parafraseo. El clasificador híbrido de iter. 8 **se retiró** en iter. 10 (self-routing Δ1).  
 6. Drop `embedding(768)` + ivfflat (PLAN Fase 7): **no** hecho; v1 sigue en BD, chat no lo usa.  
 7. Header contextual en **todos** los chunks (PLAN Fase 4): PDF embebe **cuerpo**; API sigue con header largo.  
 8. **#9 postulabilidad:** criterio de acción diaria **sí** está en el ranking default (`esPostulable` + chip). El universo SQL sigue trayendo En Evaluación; el chip los muestra.
 
-### Commits de referencia (corte 20 ago 2026 noche)
+### Commits de referencia (corte 29 ago 2026)
 
 | Repo | HEAD | Qué fija |
 |---|---|---|
-| monitor | este commit de docs (padre `21921ef`) | SQL capa semántica + docs 1–9 |
-| worker | `c8113ae` · CF `075d03be-a84c-44eb-957f-7cca64bb6584` | Iter. 8 (`ecc186a`) + 502 estructurado `/analizar` |
-| web | `c0beff4` · Pages run `32441541562` | Iter. 9 + postulabilidad + badge + banner 502 |
+| monitor | `a060d2a` + este paquete de docs | Funnel SQL + reconciliar + docs 1–11. `vista_kpis_conversion.sql` entra en este commit |
+| worker | `fdcc7fd` · CF `fcefa7a0-e623-432b-8479-71b576927cda` | Self-routing (`91e8484`) + funnel (`d1832cc`) + cleanup clasificador |
+| web | `6f1a2f9` | Dashboard conversión 30d (encima de iter. 9 + 502) |
 
-Iteraciones 1–9: ver [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md). Worker ancla histórico: `75e84af` → `c8113ae`; web `4a6742f` → `c0beff4`.
+Iteraciones 1–11: ver [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md). Ancla histórica 20 ago: worker `c8113ae` · web `c0beff4` · CF `075d03be…`.
 
-Snapshot: 20 ago 2026 (Perú).
+Snapshot: 29 ago 2026 (Perú).
