@@ -11,7 +11,10 @@
 -- v_contratos_estado: flags baratos (estado + fechas). rubro_linea =
 --   mapeo categoria_it, sin regex, para listados.
 --
--- NO hay valor referencial ni flag "cotizado/analizado" en contratos.
+-- Funnel #10/#11: columnas analizado/cotizado/fecha_* viven en contratos
+-- (docs/migracion_funnel_conversion.sql). Las vistas de conversión 30d
+-- NO están aquí (docs/vista_kpis_conversion.sql) para no re-DROP CASCADE.
+-- No hay monto referencial (SEACE no lo expone en las APIs que usamos).
 -- ============================================================
 
 DROP VIEW IF EXISTS v_kpis_negocio CASCADE;

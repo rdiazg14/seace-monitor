@@ -1,4 +1,4 @@
-# Pipeline diario unificado: ingesta → G1 → detalle → PDF nativo → OCR 2h → chunk + embed v2.
+# Pipeline diario unificado: ingesta → G1 → detalle → PDF nativo → OCR 2h → chunk + embed v2 → funnel.
 # Cron 09:00 Perú (14:00 UTC). Solo alimenta embedding_v2; no llama al Worker /embed ni escribe embedding(768).
 name: Pipeline diario SEACE
 
