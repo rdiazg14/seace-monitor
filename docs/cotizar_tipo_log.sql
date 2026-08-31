@@ -3,7 +3,7 @@
 -- El contador diario en KV (cotizar_tipo:{tipo}:{YYYY-MM-DD}) sigue igual.
 --
 -- Escritura: Worker seace-ai-proxy con SUPABASE_SERVICE_KEY (service_role).
--- Lectura: SQL Editor / service_role / vistas futuras.
+-- Lectura browser: solo admin — ver cotizar_tipo_log_select_admin.sql.
 --
 -- Tras aplicar en el SQL Editor de Supabase:
 --   NOTIFY pgrst, 'reload schema';
@@ -24,3 +24,16 @@ COMMENT ON TABLE cotizar_tipo_log IS
   'Evento por respuesta cotizar (cache MISS). Fuente histórica; contador diario sigue en KV.';
 
 ALTER TABLE cotizar_tipo_log ENABLE ROW LEVEL SECURITY;
+
+-- SELECT admin (idempotente; apply-only también en cotizar_tipo_log_select_admin.sql).
+GRANT SELECT ON TABLE public.cotizar_tipo_log TO authenticated;
+
+DROP POLICY IF EXISTS cotizar_tipo_log_select_admin ON public.cotizar_tipo_log;
+CREATE POLICY cotizar_tipo_log_select_admin
+  ON public.cotizar_tipo_log
+  FOR SELECT
+  TO authenticated
+  USING (public.es_admin());
+
+COMMENT ON POLICY cotizar_tipo_log_select_admin ON public.cotizar_tipo_log IS
+  'Solo perfiles.rol = admin (es_admin). Escritura sigue siendo service_role.';
