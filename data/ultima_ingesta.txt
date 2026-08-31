@@ -1,5 +1,5 @@
-2026-08-31 14:01:34 UTC
-total_registros=77,147
-nuevos_esta_corrida=11
+2026-08-31 19:46:49 UTC
+total_registros=77,240
+nuevos_esta_corrida=93
 rechazados_esta_corrida=0
 alerta_anomala=0
