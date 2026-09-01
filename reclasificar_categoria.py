@@ -134,7 +134,7 @@ def flush_upsert(supa, lote: list[dict]) -> None:
     if not lote:
         return
     supa.table("contratos").upsert(lote, on_conflict="id").execute()
-    print(f"    → upsert lote {len(lote)} filas OK", flush=True)
+    print(f"    upsert lote {len(lote)} filas OK", flush=True)
 
 
 def main() -> int:
