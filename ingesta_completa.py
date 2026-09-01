@@ -95,6 +95,7 @@ IT_CATS: list[tuple[str, list[str]]] = [
         "sistema de informacion", "aplicativo", "software a medida",
         "plataforma web", "portal web", "sistema web",
         "sistema administrativo", "aplicacion movil", "app movil",
+        "implementacion de software",
     ]),
     ("Licencias", [
         "licencia de software", "licenciamiento", "suscripcion de software",
