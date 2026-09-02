@@ -6,10 +6,14 @@ Cascada: SELECT siempre categoria_it IS NULL AND relevancia_ia IS NULL.
 No pisa etiquetas de keywords. No toca relevancia_ia. No escribe
 flash_ocr_cuota.json.
 
+HERRAMIENTA MANUAL. temperature:0 no es determinista: el dry-run del 1 sep
+dijo 1 y la escritura fueron 3 (2 FP Hardware revertidos). Revisar el
+SELECT a mano antes de confiar. No meter en pipeline.yml sin Arquitectura C.
+
 Uso:
-  python clasificar_gemini.py --dry-run --limit 30 --filtro vigentes
-  python clasificar_gemini.py --dry-run --filtro vigentes
-  python clasificar_gemini.py --filtro vigentes            # escribe
+    python clasificar_gemini.py --dry-run --limit 30 --filtro vigentes
+    python clasificar_gemini.py --dry-run --filtro vigentes
+    python clasificar_gemini.py --filtro vigentes            # escribe
 """
 from __future__ import annotations
 
