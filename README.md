@@ -4,7 +4,7 @@ Pipeline diario del **SEACE Monitor** (contrataciones menores del Estado peruano
 
 **Punto de entrada para retomar el producto:** [`docs/TRASPASO_MAESTRO_SEACE.md`](docs/TRASPASO_MAESTRO_SEACE.md).
 
-El README de abajo describe el scraper CSV original (`scraper_seace_menores.py` / `data/contratos_token.csv`). El job de producción es **`.github/workflows/pipeline.yml` a las 09:00 Perú**, no el scrape de las 06:00.
+El README de abajo describe el scraper CSV original (`scraper_seace_menores.py` / `data/contratos_token.csv`). El job de producción es **`.github/workflows/pipeline.yml` a las 09:00 Perú**, no el scrape de las 06:00. Clasificación IT: keywords en `ingesta_completa.py`; backfill `reclasificar_categoria.py`; Gemini `clasificar_gemini.py` (manual, **no** está en el cron).
 
 ---
 

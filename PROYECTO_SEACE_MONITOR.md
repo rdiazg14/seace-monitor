@@ -1,10 +1,9 @@
 # SEACE Monitor — Documento de proyecto completo
 
-> **Briefing para un ingeniero nuevo.** Este documento es autocontenido: quien lo lea puede entender,
-> operar y mejorar el sistema sin hacer preguntas adicionales.
+> **No es el punto de entrada.** Briefing histórico (validado 2026-08-15: scrape, Llama, BGE 768). El producto vivo está en [`docs/TRASPASO_MAESTRO_SEACE.md`](docs/TRASPASO_MAESTRO_SEACE.md). Clasificación IT (1 sep 2026): keywords + Gemini manual — ver arquitectura §C.
 >
 > URL de producción: **https://seace.rdiaz-lab.xyz**
-> Última validación: **2026-08-15** (queries y llamadas reales ejecutadas ese día)
+> Última validación de *este* archivo: **2026-08-15**. Nota de cascada IT: **2026-09-01**.
 
 ---
 
@@ -205,7 +204,7 @@ TTL:    Automático
 | `fecha_fin_cotizacion` | `TIMESTAMPTZ` | `fecFinCotizacion` | Cierre cotización (determina urgencia) |
 | `tipo_cotizacion` | `TEXT` | `idTipoCotizacion` | ID del tipo de cotización |
 | `cotizar` | `BOOLEAN` | `cotizar` | Si acepta cotizaciones actualmente |
-| `categoria_it` | `TEXT\|NULL` | Pipeline | 13 categorías IT (asignadas por keyword matching) |
+| `categoria_it` | `TEXT\|NULL` | Pipeline | 13 categorías IT (keywords en ingesta; Gemini solo si ambas etiquetas quedan NULL) |
 | `relevancia_ia` | `TEXT\|NULL` | Pipeline | ALTA / MEDIA / BAJA (para IA generativa) |
 | `texto_busqueda` | `TSVECTOR` | Trigger auto | Índice FTS en español (descripcion+entidad+objeto) |
 | `created_at` | `TIMESTAMPTZ` | DB default | Timestamp de creación en Supabase |
@@ -343,7 +342,7 @@ CREATE EXTENSION IF NOT EXISTS vector;  -- pgvector para embeddings 768d
   → Navega la SPA (necesario para obtener cookies de sesión)
   → Llama a la API JSON con page.request.get() (reutiliza cookies)
   → Pagina de a 100 registros hasta el MAX(id) conocido (modo INCREMENTAL)
-  → Clasifica cada contrato: categoria_it + relevancia_ia (keyword matching)
+  → Clasifica cada contrato: categoria_it + relevancia_ia (keyword matching; Gemini es un script aparte, no esta fase)
   → UPSERT a Supabase en lotes de 500 (conflict: id → update)
   → Guarda backup local parquet + CSV
 
@@ -774,7 +773,7 @@ IT_CATS: list[tuple[str, list[str]]] = [
     ("Nueva categoría", ["keyword1", "keyword2"]),  # agregar aquí
 ]
 ```
-La nueva categoría aplica en la próxima corrida incremental. Los contratos ya en Supabase sin esa categoría no se re-clasifican automáticamente (habría que forzar `--forzar-completa`).
+La nueva categoría aplica en la próxima corrida incremental. Los contratos ya en Supabase **sin** etiqueta se re-clasifican con `reclasificar_categoria.py` (mismas keywords, solo ambas columnas NULL). Lo que keywords no cubre: `clasificar_gemini.py` (manual, no está en el cron). `--forzar-completa` **no** es el camino de backfill.
 
 ### Modificar el frontend
 Push a `main` de `rdiazg14/seace-web` → deploy automático en ~2 min.

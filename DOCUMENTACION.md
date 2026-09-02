@@ -1,12 +1,12 @@
 # SEACE Monitor — Documentación Técnica y Funcional
 
-> **No es el punto de entrada.** Este archivo describe el prototipo histórico (scrape 06:00, Llama 70B, CSV). El producto vivo (asesor #9/#10/#11, RAG v2, pipeline 09:00, iteraciones 1–9) está en:
+> **No es el punto de entrada.** Este archivo describe el prototipo histórico (scrape 06:00, Llama 70B, CSV). El producto vivo (asesor #9/#10/#11, RAG v2, pipeline 09:00, clasificación IT en cascada, iteraciones 1–11) está en:
 >
 > **[docs/TRASPASO_MAESTRO_SEACE.md](./docs/TRASPASO_MAESTRO_SEACE.md)**
 >
 > Plataforma de monitoreo de contrataciones públicas del Estado peruano (SEACE).
 > Producción: **https://seace.rdiaz-lab.xyz**
-> Última actualización de *este* archivo: 2026-08-15 (histórico). Snapshot de producto: **20 ago 2026**.
+> Última actualización de *este* archivo: 2026-09-01 (tabla IT + nota de cascada). Snapshot de producto: **1 sep 2026**.
 
 ---
 
@@ -365,6 +365,8 @@ Todos los keywords se normalizan (minúsculas + sin tildes) antes de comparar.
 
 **Clasificación IT por reglas (13 categorías):**
 
+> **Cascada (1 sep 2026):** estas keywords corren en la ingesta (`preparar_fila_db`) y en `reclasificar_categoria.py` (backfill de ambas columnas NULL). Lo que queda NULL lo puede etiquetar `clasificar_gemini.py` (manual, **no** está en `pipeline.yml`). `relevancia_ia` sigue **solo** keywords. No leen `tdr_texto` / `items_json` / `nom_area_usuaria`. Detalle: `docs/ARQUITECTURA_TECNICA.md` §C.
+
 | Categoría | Keywords principales |
 |---|---|
 | Firma digital | firma digital, certificado digital, token criptografico |
@@ -374,14 +376,14 @@ Todos los keywords se normalizan (minúsculas + sin tildes) antes de comparar.
 | Microsoft | microsoft, office 365, sharepoint, exchange, windows server |
 | Oracle | oracle database, oracle ebs, peoplesoft |
 | Base de datos/ERP | base de datos, sql server, postgresql, mysql, sap, erp |
-| Desarrollo software | desarrollo de software, sistema de informacion, plataforma web, app movil |
+| Desarrollo software | desarrollo de software, sistema de informacion, plataforma web, app movil, **implementacion de software** |
 | Licencias | licencia de software, licenciamiento, suscripcion de software |
 | Soporte tecnico | soporte tecnico, mantenimiento de software, helpdesk |
 | Redes/cableado | red de datos, cableado estructurado, switch, fibra optica, wifi |
 | Correo electronico | correo electronico, mensajeria electronica |
 | Hardware | computadora, laptop, impresora, monitor, disco duro, ups, tablet |
 
-**Algoritmo de clasificación:** Normalización NFKD (sin tildes, minúsculas) + búsqueda de substring. Para keywords de una sola palabra (`ia`, `switch`) se aplica `\b` (límite de palabra). Primera categoría que coincide gana (orden = prioridad).
+**Algoritmo de clasificación:** Normalización NFKD (sin tildes, minúsculas) + búsqueda de substring. Límite de palabra (`\b`) **solo** para el keyword `ia` (`_KW_LIMITE_PALABRA`). `switch` va con espacios (` switch `) para no pegar substrings. Primera categoría que coincide gana (orden = prioridad).
 
 **UPSERT a Supabase:**
 - Batch de 500 registros por lote
@@ -398,8 +400,9 @@ Todos los keywords se normalizan (minúsculas + sin tildes) antes de comparar.
 
 ### 6.3 GitHub Actions — scrape.yml
 
-**Schedule:** `0 11 * * *` = 11:00 UTC = **06:00 hora Perú** (UTC−5), todos los días.
-También disponible como `workflow_dispatch` (ejecución manual desde GitHub).
+> **DEPRECATED (~16 ago 2026).** Inactivo. El job diario es `.github/workflows/pipeline.yml` (09:00 Perú, disparo CF). Esta sección queda como foto del prototipo.
+
+**Schedule (histórico):** `0 11 * * *` = 11:00 UTC = **06:00 hora Perú** (UTC−5).
 
 **Configuración:**
 - Runner: `ubuntu-latest`
@@ -461,7 +464,7 @@ Supabase → Settings → API → pestaña **"Legacy anon, service_role API keys
 | `fecha_fin_cotizacion` | `timestamptz` | Cierre de cotización (indica urgencia) |
 | `tipo_cotizacion` | `text` | ID del tipo de cotización |
 | `cotizar` | `bool` | Si acepta cotizaciones |
-| `categoria_it` | `text \| null` ⁽²⁾ | Categoría IT (13 posibles) asignada por el scraper |
+| `categoria_it` | `text \| null` ⁽²⁾ | 13 categorías IT: keywords en ingesta, Gemini en nulls (manual) |
 | `relevancia_ia` | `text \| null` ⁽²⁾ | ALTA · MEDIA · BAJA — relevancia para IA generativa |
 
 ⁽¹⁾ Incluido en el índice FTS (búsqueda de texto completo en español).  

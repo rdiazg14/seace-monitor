@@ -30,6 +30,8 @@ pone su IP y gana mejor margen. El hardware NUNCA se descarta; solo pesa menos.
 
 **Regla:** software (IA/cloud/ML/desarrollo) > hardware, **pero todo se evalúa y todo aparece en el ranking.**
 
+> **Cómo se asigna `categoria_it` (1 sep 2026):** este documento mapea las 13 líneas a Núcleo/Adyacente/Oportunista/Marginal; **no** las etiqueta. La etiqueta sale del pipeline: (1) keywords `IT_CATS` en la ingesta (incluye `implementacion de software` → Desarrollo software); (2) `clasificar_gemini.py` sobre los que quedaron NULL (por objeto, no por área; `ninguna` se deja NULL). `relevancia_ia` sigue solo keywords. Detalle: `ARQUITECTURA_TECNICA.md` §C.
+
 ---
 
 ## 2. Factores de evaluación (qué pondera el score)
@@ -62,6 +64,16 @@ Como los TDR muchas veces NO muestran el monto exacto, la IA estima con este mar
 3. **Costo estimado del servicio:** precios de mercado (la IA busca) según lo que pide el TDR.
 4. **Margen = valor estimado − costo estimado.**
 5. **SIEMPRE con supuestos explícitos.** La IA declara lo que NO sabe. Nunca da un número seco como si fuera certeza.
+
+> **Estado de implementación (31 ago 2026):** el punto 3 («la IA busca») es
+> **intención de diseño, no código.** Hoy `/analizar` y `/cotizar` no llaman
+> a ninguna API de precios ni a búsqueda web: el modelo estima sobre el TDR
+> y el análisis congelado. El flag `necesita_internet` en #11 solo marca que
+> la pregunta pedía datos externos; el botón «Buscar en TDRs relacionados»
+> abre el Chat RAG (embeddings sobre el corpus SEACE), **no** internet real.
+> Una búsqueda web / precios de mercado reales (B15) está pendiente de
+> dimensionar. Hasta entonces, el costo estimado es una estimación con
+> supuestos, no una cotización de mercado.
 
 ### Si el margen sale ajustado o negativo → análisis de optimización
 La IA no dice solo "no". Añade cómo mejorar el margen, p. ej.:
@@ -134,7 +146,8 @@ Al hacer clic en un contrato, la IA despliega su análisis (usando el TDR del RA
 - ❌ Ocultar/descartar un contrato por un solo factor (salvo no calificar técnicamente).
 - ❌ Decidir por Rolando el número final de cotización.
 - ❌ Inventar el monto del contrato: si no lo sabe, lo estima con pistas y lo declara como estimación.
+- ❌ Presentar un costo como si viniera de una búsqueda de mercado cuando no hubo fuente externa (hoy no hay).
 
 ---
 
-*Documento vivo — se afina usándolo. Versión 1, definida con Rolando (ENERTRONIC).*
+*Documento vivo — se afina usándolo. Versión 1, definida con Rolando (ENERTRONIC). Nota de implementación §3: 31 ago 2026.*
