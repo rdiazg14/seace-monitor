@@ -201,13 +201,19 @@ Orden (`pipeline.yml`):
 
 **Clasificación IT (cascada, 1 sep 2026):** `categoria_it` no se pinta a mano. Tres capas, en este orden:
 
-1. **Keywords** (`ingesta_completa.py` `IT_CATS` + `clasificar_categoria_it`). Única escritura en altas: `preparar_fila_db`. Concatena API `desObjetoContrato`, `desContratacion`, `nomObjetoContrato`, `nomEntidad`. **No** lee `tdr_texto`, `items_json` ni `nom_area_usuaria`. Primera categoría gana. `relevancia_ia` es independiente (`KW_ALTA` / `KW_GENERICOS`). Límite de palabra (`\b`) solo para `ia`. Keyword añadida 1 sep: `implementacion de software` → Desarrollo software.
+**Síntoma de la fuga:** IT en el Buscador (FTS) y ausente de Ruta del día. Caso **90432** / CM-6-2026-HNSEB. Causa: keywords substring **una vez** en la ingesta. El OCR **no** clasifica (hipótesis descartada). Ruta exige `categoria_it` OR `relevancia_ia` NOT NULL.
+
+**Ejes independientes:** `categoria_it` = ¿es TI? (13 líneas; una sola es IA/analytics). `relevancia_ia` = ¿tiene IA? Pregunta correcta: «¿es TI en cualquiera de las 13?», no «¿tiene IA?».
+
+1. **Keywords** (`ingesta_completa.py` `IT_CATS` + `clasificar_categoria_it`). Única escritura en altas: `preparar_fila_db`. Concatena API `desObjetoContrato`, `desContratacion`, `nomObjetoContrato`, `nomEntidad`. **No** lee `tdr_texto`, `items_json` ni `nom_area_usuaria`. Primera categoría gana. `relevancia_ia` es independiente (`KW_ALTA` / `KW_GENERICOS`). Límite de palabra (`\b`) solo para `ia`. Keyword añadida 1 sep: `implementacion de software` → Desarrollo software (única limpia; `software`/`sistema`/`TI` se midieron y se descartaron por FP).
 2. **Backfill keywords** (`reclasificar_categoria.py`): mismos clasificadores sobre filas con **ambas** columnas NULL. El incremental del cron (`id > MAX(id)`) **no** re-etiqueta ids viejos. Corrida real 1 sep: 3 UPDATE → `Desarrollo software` (ids **28275**, **31625**, **90432**).
-3. **Gemini** (`clasificar_gemini.py`): `gemini-3.7-flash`, batch `--batch 30`, `responseSchema` enum 13 + `ninguna`. SELECT siempre `categoria_it IS NULL AND relevancia_ia IS NULL`. `ninguna` (o id ausente / fuera de enum) → se deja **NULL**. **No** escribe `relevancia_ia`. **No** toca `data/flash_ocr_cuota.json` ni los cupos KV del Worker. **No está en `pipeline.yml`.** `--filtro vigentes|evaluacion|todos`. Prompt: clasificar por **objeto**, no por área; locación de personal ≠ Desarrollo software; AA / estabilizadores de oficina ≠ Hardware. Sesgo: ante duda, `ninguna`.
+3. **Gemini** (`clasificar_gemini.py`): `gemini-3.7-flash`, `temperature: 0`, batch `--batch 30`, `responseSchema` enum 13 + `ninguna`. SELECT siempre `categoria_it IS NULL AND relevancia_ia IS NULL`. `ninguna` (o id ausente / fuera de enum) → se deja **NULL**. **No** escribe `relevancia_ia`. **No** toca `data/flash_ocr_cuota.json` ni los cupos KV del Worker. **Herramienta manual** (revisión humana del SELECT). `--filtro vigentes|evaluacion|todos`. Prompt: clasificar por **objeto**, no por área; locación de personal ≠ Desarrollo software; AA / estabilizadores de oficina ≠ Hardware. Sesgo: ante duda, `ninguna`.
 
-Corrida Gemini vigentes 1 sep: escribió **3** (drift vs dry-run de 1). Quedó **90331** Redes/cableado. Se revirtieron a NULL **90592** y **90386** (Hardware FP: toner / CPU autómata diésel).
+**Drift (MEDIDA, 1 sep):** dry-run vigentes → 1 candidato; escritura real → **3**. Quedó **90331** Redes/cableado («comunicación privada»). Se revirtieron a NULL **90592** (tóner→Hardware) y **90386** (CPU autómata diésel→Hardware). Implicación: un dry-run limpio **no** autoriza el backfill. **No** meter este script en `pipeline.yml` sin Arquitectura C.
 
-Hueco natural para meter Gemini en el cron: **post-detalle / pre-OCR**. Aún no cableado. RLS de `contratos`: SELECT anon/authenticated; el JWT admin **no** puede UPDATE `categoria_it`. Writes: service role / pipeline.
+**Arquitectura C (diseñada, no implementada):** keywords en tabla de config + Gemini con confianza declarada + desempate para dudosos + cola de revisión admin (C1–C4). Sesión aparte. Hasta entonces no hay defensa anti-drift.
+
+Huevo-gallina OCR: `--solo-ti` exige etiqueta; un IT no detectado nunca entra a Flash. RLS de `contratos`: SELECT anon/authenticated; el JWT admin **no** puede UPDATE `categoria_it`. Writes: service role / pipeline.
 
 **OCR selectivo:** vigentes + **ventana de cotización abierta** (`ventana_cotizacion_abierta`, `descargar_requerimiento.py` L999–1000: `fecha_fin` NOT NULL y &gt; now) + `--solo-ti` (`es_ti` = `categoria_it` OR `relevancia_ia`, L1008–1009). Sin etiqueta no entra a Flash. El TDR llega **después** de las keywords: no hay re-paso automático sobre `tdr_texto`. Por página: `paginas_ocr_pendientes` / `paginas_ocr_hechas` (no re-OCR). Reloj 2 h.
 
@@ -221,11 +227,11 @@ Hueco natural para meter Gemini en el cron: **post-detalle / pre-OCR**. Aún no 
 | OCR no masivo | **HEREDADA** — cupo Flash vs chat; `--solo-ti` + 2 h en el yaml |
 | `--gc` apagado | **POR-CONFIRMAR** — el flag existe; no está en el workflow. PLAN G1 sí pedía borrar chunks al cerrar |
 | G1 no usa `fecha_fin_cotizacion` para GC | **HEREDADA** — comentario en `refresh_estados.py` L166–172: esa fecha es ventana de cotización, no cierre del contrato. Terminal = `idEstadoContrato` 4 (L45–48, observado 2026-08-16 en el mismo archivo) |
-| Gemini IT **fuera** del cron | **MEDIDA** 1 sep — 2 FP Hardware revertidos; sesgo a `ninguna`; no mezclar con cuota OCR |
+| Gemini IT **fuera** del cron | **MEDIDA** 1 sep — dry-run≠write; 2 FP Hardware; `temperature: 0` no basta |
 
 ### Alternativas
 
-Encender `--gc` cuando se acepte borrar chunks de culminados. OCR más amplio si hay cuota. Reabrir 2 h / rpm 6 si la cola imagen (1 398) no baja. Meter `clasificar_gemini.py` en el cron (post-detalle, pre-OCR) si la cola de nulls vigentes no baja; hoy es manual a propósito.
+Encender `--gc` cuando se acepte borrar chunks de culminados. OCR más amplio si hay cuota. Reabrir 2 h / rpm 6 si la cola imagen (1 398) no baja. Clasificación automática: **Arquitectura C** (sesión aparte), no cablear `clasificar_gemini.py` al yaml.
 
 **B12 (medido, no resuelto, 30 ago):** 27.4 % de los contratos IT en 60 días tuvieron ventana de cotización &lt;24 h (118/430). De esos, ~13 % eran rubro Núcleo. Casos de ventana que abrió después del cron y cerró antes del siguiente: **90326**, **90083**. B13/B14 (alerta + frecuencia) **bloqueados** hasta que B20 se vea estable 2–3 días.
 
@@ -704,7 +710,7 @@ Lee claves UTC de hoy: `flash:`, `analyze:`, `cotizar:`, `cotizar_tipo:{texto|ta
 | Chunk | 800/500, **sin** overlap | **POR-DEFECTO**; ≠ PLAN 200–400. Medición ya diseñada: Tarea #4 vs 63% success@10 | #4 overlap/tamaño (eval offline) | Tras #4 |
 | Embed PDF | cuerpo sin header | **MEDIDA** A/B 87164 | — | Headers API largos si molestan |
 | OCR | vigentes+ventana+TI, 2 h, por página | **HEREDADA** cupo | Más cola imagen | Si 1398 no baja |
-| Clasificación IT | keywords en ingesta + backfill; Gemini solo nulls, **manual** (no en `pipeline.yml`) | **MEDIDA** 1 sep (3 keywords + 1 Gemini; 2 FP revertidos) | Meter Gemini post-detalle / pre-OCR | Si la cola de nulls vigentes no baja o hay FP |
+| Clasificación IT | keywords + backfill; Gemini **manual** (no en yaml) | **MEDIDA** 1 sep (drift dry-run 1 vs write 3; 2 FP revertidos) | **Arquitectura C** (config + confianza + cola admin) | Cuando se abra esa sesión; **no** cron del script actual |
 | G1 GC | flag existe, cron **no** lo usa | **POR-CONFIRMAR** | `--gc` | Chunks de culminados hinchan HNSW |
 | Ruta 0–100 | sin IA; 2–7d&gt;hoy. Default **solo postulables** (`esPostulable`). Chip para En evaluación / cerrados | **HEREDADA** `cffcc2b` | Exigir fecha; home = Ruta | Si el chip no se usa |
 | #10 caché | `analyze:id:hash` 3 d | **HEREDADA** (clave) / **POR-DEFECTO** (TTL) | TTL | PDF que cambia seguido |

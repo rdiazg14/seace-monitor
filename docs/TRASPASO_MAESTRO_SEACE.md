@@ -40,12 +40,12 @@ El front **no** llama a Gemini. Lee Supabase (anon + RLS) y pega al Worker. El p
 ### Método de trabajo
 
 - **Expand-contract (D5):** columnas/RPC nuevas en paralelo; no dropear v1 hasta Fase 7. El RAG nunca queda a medias.
-- **Probar chico** (dry-run, `--limit`, un contrato) → medir → recién entonces cron/prod.
+- **Probar chico** (dry-run, `--limit`, un contrato) → medir → recién entonces cron/prod. **Excepción:** `clasificar_gemini.py` no es determinista (`temperature: 0` igual). Un dry-run limpio **no** garantiza el UPDATE real; revisar el SELECT a mano antes de confiar.
 - **Medir, no adivinar:** eval G4 (`data/eval_v2.json`, success@10 **0.633**). Etiquetas en arquitectura: MEDIDA vs POR-DEFECTO.
 - **Puntos de control:** Rolando aprueba antes de cron, deploy masivo u OCR caro.
 - **Calibración vs código:** el asistente (Rolando) define criterio de negocio; Cursor implementa. Criterios ENERTRONIC mandan sobre ocurrencias del LLM.
 
-Al retomar: leé **§6 (cierre 30–31 ago + clasificación 1 sep)** + §7 (gotchas) + [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md). No reabras retrieval v2 ni Auth salvo pedido explícito. No diseñes B13/B14 hasta confirmar B20 estable.
+Al retomar: leé **§6 (cierre 30–31 ago + clasificación 1 sep)** + §7 (gotchas) + [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md). No reabras retrieval v2 ni Auth salvo pedido explícito. No diseñes B13/B14 hasta confirmar B20 estable. **No** metas `clasificar_gemini.py` en el cron: hace falta Arquitectura C (sesión aparte).
 
 ---
 
@@ -361,19 +361,27 @@ Auditoría de confianza + Paquete C + B20 + routing RAG + B4 fase 1. Hechos veri
 
 Cascada en prod. Detalle: [ARQUITECTURA_TECNICA.md](./ARQUITECTURA_TECNICA.md) §C.
 
+**Síntoma (fuga):** IT visible en el Buscador y **ausente** de Ruta del día. Caso: **90432** / CM-6-2026-HNSEB («implementación de software»). Ruta filtra `categoria_it` OR `relevancia_ia` NOT NULL; sin etiqueta no entra. La hipótesis «el OCR no clasifica» se **descartó**: las keywords corren una vez en la ingesta y no leen TDR.
+
+**Ejes independientes:** `categoria_it` = ¿es TI? (13 líneas; **solo 1** es IA/analytics). `relevancia_ia` = ¿tiene IA? El clasificador pregunta «¿es TI en cualquiera de las 13?», no «¿tiene IA?». Los rescates 90432 (desarrollo) y 90331 (redes) **no** eran IA.
+
 | Ítem | Resultado |
 |---|---|
-| Fase A keywords | `IT_CATS` Desarrollo software + `implementacion de software`. Script `reclasificar_categoria.py` (dry-run / `--limit`, solo ambas NULL). 3 UPDATE: **28275**, **31625**, **90432**. `relevancia_ia` siguió null. Commits `1004b02`, `24a2a3b`. |
-| Fase B Gemini | `clasificar_gemini.py`: batch Flash + schema enum 13 + `ninguna`. Solo nulls; no pisa keywords; no escribe `relevancia_ia`; no toca cuota OCR. **No está en `pipeline.yml`.** Commit `d430272`. |
-| Corrida vigentes | Escribió 3 (drift vs dry-run de 1). Quedó **90331** Redes/cableado. Revertidos a NULL **90592** y **90386** (Hardware FP). |
-| Qué no hace | Incremental no re-etiqueta ids viejos. Keywords no leen TDR / ítems / área. OCR `--solo-ti` exige etiqueta previa. JWT admin no puede UPDATE `categoria_it`. |
+| Fase A keywords | `IT_CATS` Desarrollo software + `implementacion de software` (única keyword limpia; el resto se midió y se descartó por FP). `reclasificar_categoria.py` (solo ambas NULL). 3 UPDATE: **28275**, **31625**, **90432**. Commits `1004b02`, `24a2a3b`. |
+| Fase B Gemini | `clasificar_gemini.py`: batch Flash + schema enum 13 + `ninguna`. Solo nulls; no pisa keywords; no escribe `relevancia_ia`; no toca cuota OCR. **Herramienta manual.** Commit `d430272`. |
+| Corrida vigentes | `temperature: 0` igual. Dry-run → 1; escritura real → **3**. Quedó **90331** Redes/cableado («comunicación privada»). Revertidos a NULL **90592** (tóner→Hardware) y **90386** (CPU autómata diésel→Hardware). |
+| Qué no hace | Incremental no re-etiqueta. Keywords no leen TDR / ítems / área. OCR `--solo-ti` exige etiqueta (huevo-gallina). JWT admin no UPDATE `categoria_it`. |
+
+**Lección (leer antes de tocar clasificación):** Gemini **no** es determinista. Un dry-run limpio no autoriza un backfill. Revisión humana del SELECT **obligatoria** antes de confiar. **No** automatizar sin Arquitectura C.
+
+**Arquitectura C (diseñada, no implementada; sesión aparte):** keywords en tabla de config + Gemini con confianza declarada + desempate para dudosos + cola de revisión admin (fases C1–C4). Hasta entonces `clasificar_gemini.py` queda **manual**.
 
 **Próximo paso recomendado**
 
 1. Observar B20 2–3 días (`gh run list`, horario).  
 2. Recién entonces retomar **B13/B14**.  
-3. **B4 fase 2** (tokens Gemini / costo en soles): mismo cuidado que B20 — toca rutas de producción en caliente; hoy **no** hay `usageMetadata` en ningún endpoint.  
-4. Clasificación: decidir si `clasificar_gemini.py` entra al cron (post-detalle / pre-OCR) o sigue manual; no ampliar keywords sucias (`software`, `sistema`, `TI`).
+3. **B4 fase 2** (tokens Gemini / costo en soles): mismo cuidado que B20; hoy **no** hay `usageMetadata`.  
+4. Clasificación automática = **Arquitectura C**, no «meter el script actual en el cron». No ampliar keywords sucias (`software`, `sistema`, `TI`).
 
 ### Backlog (todo opcional)
 
@@ -383,7 +391,10 @@ Cascada en prod. Detalle: [ARQUITECTURA_TECNICA.md](./ARQUITECTURA_TECNICA.md) �
 | B13 / B14 | Medio | Ventanas &lt;24 h | **Bloqueado** por B20 |
 | B4 fase 2 | Medio | Costo real | Instrumentar Gemini; no mezclar con observabilidad de KV |
 | B15 / búsqueda web | Alto (dimensionar) | Economía #10 | Fusionado; no tabla estática |
-| Cobertura `categoria_it` | Operación | Fuga IT | Cascada en prod (keywords + Gemini **manual**). Cablear Gemini al cron = decisión aparte |
+| Cobertura `categoria_it` / **Arquitectura C** | Alto | Anti-drift | Diseñada, **no** implementada. No cablear el script actual al cron |
+| B17 auto-postulación | Alto | Producto | Análisis profundo; **alto riesgo legal**. No tocado |
+| B18 firma blockchain | Investigar | Mercado | Medir corpus antes de construir. No tocado |
+| B19 2ª fuente SEACE | Alto | Cobertura | prod4 / OpenEgocio; hay bot-detection. No tocado |
 | Home = Ruta del día | Bajo | Enfoque | `/` = Dashboard |
 | Aligerar `v_kpis_dashboard` | Bajo–medio | Estabilidad | timeout 57014; fallback TS |
 | Caché semántica `/cotizar` | Medio | Tokens | Hoy solo exacta + `esCacheable` |
@@ -429,9 +440,11 @@ Cascada en prod. Detalle: [ARQUITECTURA_TECNICA.md](./ARQUITECTURA_TECNICA.md) �
 27. **B20 no está cerrado al 100 %.** Un run `workflow_dispatch` (33319218551) prueba el mecanismo, no la serie de horarios. No diseñar B13/B14 encima todavía.
 28. **`GITHUB_PAT` / `TRIGGER_TEST_TOKEN`:** los carga Rolando. Cursor no hace `wrangler secret put` de esos valores.
 29. **`categoria_it` es cascada, no un job único.** Keywords en la ingesta; `reclasificar_categoria.py` para nulls viejos; Gemini **solo** si ambas columnas siguen NULL. El incremental **no** re-etiqueta. Keywords **no** leen `tdr_texto` / `items_json` / `nom_area_usuaria`.
-30. **`clasificar_gemini.py` no está en el cron.** No descuenta cupos KV ni `flash_ocr_cuota.json`. Clasifica por objeto, no por área. `ninguna` se deja NULL (no hay 14ª categoría). Ante duda, `ninguna`. Locación de personal ≠ Desarrollo software. Toner / estabilizadores / CPU de grupo electrógeno ≠ Hardware (FP 90592/90386 revertidos).
-31. **OCR `--solo-ti` exige etiqueta previa** (`es_ti` = `categoria_it` OR `relevancia_ia`). Sin etiqueta no hay Flash OCR. Meter Gemini **después** del detalle y **antes** del OCR si se cablea al yaml.
+30. **`clasificar_gemini.py` es herramienta manual.** `temperature: 0` no lo vuelve determinista: dry-run vigentes → 1; escritura → 3. Revisar el SELECT a mano. No descuenta cupos KV ni `flash_ocr_cuota.json`. Clasifica por objeto, no por área. `ninguna` → NULL. Toner / CPU de grupo electrógeno ≠ Hardware (FP 90592/90386 revertidos). **No** meterlo en el cron sin Arquitectura C.
+31. **OCR `--solo-ti` exige etiqueta previa** (`es_ti` = `categoria_it` OR `relevancia_ia`). Huevo-gallina: un IT que keywords no vio nunca entra a Flash OCR. Arquitectura C es el lugar para romper ese ciclo, no un cron del script actual.
 32. **Admin JWT no UPDATE `categoria_it`.** RLS de `contratos` es SELECT. Correcciones a mano: service role / SQL Editor.
+33. **`categoria_it` y `relevancia_ia` son ejes independientes.** 13 categorías TI; solo IA/analytics es «tiene IA». Ruta pide **cualquiera** de las dos. No clasificar preguntando solo «¿tiene IA?».
+34. **Windows cp1252:** prints con `→` u otro no-ASCII revientan el pipeline. ASCII (`->`) o UTF-8 forzado en stdout. Fix: `24a2a3b`.
 
 ---
 

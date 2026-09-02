@@ -30,7 +30,7 @@ pone su IP y gana mejor margen. El hardware NUNCA se descarta; solo pesa menos.
 
 **Regla:** software (IA/cloud/ML/desarrollo) > hardware, **pero todo se evalúa y todo aparece en el ranking.**
 
-> **Cómo se asigna `categoria_it` (1 sep 2026):** este documento mapea las 13 líneas a Núcleo/Adyacente/Oportunista/Marginal; **no** las etiqueta. La etiqueta sale del pipeline: (1) keywords `IT_CATS` en la ingesta (incluye `implementacion de software` → Desarrollo software); (2) `clasificar_gemini.py` sobre los que quedaron NULL (por objeto, no por área; `ninguna` se deja NULL). `relevancia_ia` sigue solo keywords. Detalle: `ARQUITECTURA_TECNICA.md` §C.
+> **Cómo se asigna `categoria_it` (1 sep 2026):** este documento mapea las 13 líneas a Núcleo/Adyacente/Oportunista/Marginal; **no** las etiqueta. `categoria_it` (¿es TI?) y `relevancia_ia` (¿tiene IA?) son ejes **independientes**: de las 13 categorías, solo IA/analytics es «tiene IA». Ruta del día pide cualquiera de las dos. Pipeline: (1) keywords `IT_CATS` en la ingesta (`implementacion de software` → Desarrollo software); (2) `clasificar_gemini.py` **manual** sobre nulls (por objeto, no por área; `ninguna` → NULL). Automatizar exige Arquitectura C, no el script actual en el cron. Detalle: `ARQUITECTURA_TECNICA.md` §C.
 
 ---
 

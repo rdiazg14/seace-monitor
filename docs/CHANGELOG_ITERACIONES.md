@@ -24,7 +24,7 @@ Repos: `seace-monitor` · `seace-web` · `seace-ai-proxy`.
 | 10 | Self-routing `/cotizar` | Un generate elige `tipo_respuesta`. Se elimina el clasificador Flash (Δ2→Δ1). `completarEstructuras` respeta el tipo que pidió el modelo (no recorta visuales). Cleanup: se borran `clasificarPorReglas`, `clasificarIntentFlash`, `heuristicIntent`, `aplicarFormatoSugerido`. Vivos: `parseIntent`, `IntentCotizar`, `IntentSource` (HIT caché) | Worker `cotizar.ts`, `escenario.ts` | `91e8484`, `fdcc7fd` | **prod** · CF `fcefa7a0-e623-432b-8479-71b576927cda` |
 | 11 | Funnel KV → PG + conversión 30d | Marcas permanentes `funnel:analizado/cotizado:{id}` (HIT y MISS; independiente de `esCacheable`; 409/502 no marcan). `GET /funnel-pendientes` con `FUNNEL_TOKEN`. Cron `reconciliar_funnel.py` copia ISO del KV. Columnas + vistas `v_kpis_conversion` (cobertura vs ejecución). Dashboard: `fmtTasa(null)` → "—" | Worker `funnel.ts`; monitor `reconciliar_funnel.py`, `docs/migracion_funnel_conversion.sql`, `docs/vista_kpis_conversion.sql`; web `capaSemantica.ts`, `Dashboard.tsx` | Worker `d1832cc`; monitor `cc75cf3`, `a060d2a`; web `6f1a2f9` | **prod** (SQL aplicado a mano; GRANT anon) |
 | — | Clasificación IT Fase A | Keyword `implementacion de software` → Desarrollo software. `reclasificar_categoria.py` reaplica keywords sobre ambas columnas NULL (no Gemini, no pisa etiquetas). Tapa 3 vigentes: **28275**, **31625**, **90432** | `ingesta_completa.py` `IT_CATS`; `reclasificar_categoria.py` | `1004b02`, `24a2a3b` | **prod** |
-| — | Clasificación IT Fase B | Gemini Flash batch + `responseSchema` enum 13 + `ninguna` sobre nulls. Por objeto, no por área. No escribe `relevancia_ia` ni cuota OCR. **No está en `pipeline.yml`.** Corrida vigentes: **90331** Redes/cableado; FP Hardware **90592**/**90386** revertidos a NULL | `clasificar_gemini.py` | `d430272` | **prod** (manual) |
+| — | Clasificación IT Fase B | Gemini Flash batch + enum 13 + `ninguna` sobre nulls. Por objeto, no por área. **Manual:** dry-run vigentes 1 ≠ write 3; FP Hardware 90592/90386 revertidos. `temperature: 0` no elimina drift. No en `pipeline.yml` | `clasificar_gemini.py` | `d430272` | **prod** (manual; no automatizar sin Arquitectura C) |
 
 ## Qué no cubren estas iteraciones
 
@@ -38,4 +38,4 @@ Siguen fuera (backlog real; ver estado de cierre 29 ago + TRASPASO §6):
 - Retry de `/analizar` / no cobrar cupo si Gemini falla (el 502 amable **no** tocó el cupo).
 - Caché semántica de `/cotizar` (solo exacta + `esCacheable`).
 - Chat que responda KPIs de la capa semántica.
-- Meter `clasificar_gemini.py` en el cron (hoy es manual).
+- Arquitectura C (clasificador TI anti-drift). **No** meter `clasificar_gemini.py` en el cron.

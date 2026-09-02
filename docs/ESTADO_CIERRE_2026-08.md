@@ -6,4 +6,4 @@ Este archivo es un **puntero**. La foto vigente está fechada:
 
 Histórico de 1–9 + fixes: [ESTADO_CIERRE_2026-08-20.md](./ESTADO_CIERRE_2026-08-20.md).
 
-Clasificación IT (keywords + Gemini, 1 sep 2026): no hay foto de cierre aparte — vive en [TRASPASO_MAESTRO_SEACE.md](./TRASPASO_MAESTRO_SEACE.md) §6.
+Clasificación IT (keywords + Gemini **manual**, 1 sep 2026): [TRASPASO_MAESTRO_SEACE.md](./TRASPASO_MAESTRO_SEACE.md) §6. Arquitectura C (anti-drift) está diseñada y **no** implementada.
