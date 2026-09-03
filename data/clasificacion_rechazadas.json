@@ -1,4 +1,5 @@
 [
   {"id": 90592, "categoria_rechazada": "Hardware", "fecha": "2026-09-01", "nota": "toner"},
-  {"id": 90386, "categoria_rechazada": "Hardware", "fecha": "2026-09-01", "nota": "CPU autómata diésel"}
+  {"id": 90386, "categoria_rechazada": "Hardware", "fecha": "2026-09-01", "nota": "CPU autómata diésel"},
+  {"id": 91327, "categoria_rechazada": "Licencias", "fecha": "2026-09-03", "nota": "suscripcion a biblioteca virtual = contenido editorial, no software"}
 ]
