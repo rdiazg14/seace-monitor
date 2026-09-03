@@ -1,0 +1,76 @@
+# Deteccion temprana (B12). El pipeline diario dura ~49 min, de los cuales
+# G1 (refresh_estados) son ~40. La ingesta incremental son 13 s.
+# SEACE publica y abre la ventana casi al mismo tiempo (mediana 25 min),
+# asi que no hay nada que anticipar: hay que mirar mas seguido.
+# De 445 contratos IT en 60 dias, 78 (17.5%) tuvieron una ventana que ningun
+# disparo de las 14:00 UTC alcanzo. Los 78 tienen todo lo que Ruta del dia
+# necesita para rankear (categoria_it por keywords + estado de la ingesta);
+# no necesitan TDR ni embeddings para aparecer.
+# Este workflow NO commitea data/: el parquet/CSV lo mantiene el diario.
+# La fuente de verdad es Supabase.
+name: Deteccion temprana (altas + detalle)
+
+on:
+  workflow_dispatch:
+  # schedule:
+  #   - cron: "0 */2 * * *"  # cada 2h UTC; descomentar despues de validar a mano
+
+permissions:
+  issues: write
+  contents: read
+
+# Grupo propio, distinto de scrape-seace. No compite con el diario porque no
+# toca git ni corre G1; el grupo propio evita que dos livianos se solapen entre si.
+concurrency:
+  group: deteccion-temprana
+  cancel-in-progress: false
+
+jobs:
+  deteccion:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      issues: write
+      contents: read
+    env:
+      PYTHONUNBUFFERED: "1"
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      FUNNEL_TOKEN: ${{ secrets.FUNNEL_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+
+      - name: Ingesta incremental
+        id: ingesta
+        continue-on-error: true
+        run: python ingesta_completa.py
+
+      - name: Detalle web
+        id: detalle
+        continue-on-error: true
+        run: python enriquecer_detalle.py
+
+      - name: G3 deteccion_ingesta
+        if: ${{ always() && !cancelled() && steps.ingesta.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python alerta_g3.py --paso deteccion_ingesta --job-status failure
+
+      - name: G3 deteccion_detalle
+        if: ${{ always() && !cancelled() && steps.detalle.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python alerta_g3.py --paso deteccion_detalle --job-status failure
