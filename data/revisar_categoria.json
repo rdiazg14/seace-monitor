@@ -1,0 +1,240 @@
+{
+  "actualizado_utc": "2026-09-03T04:35:02.318840+00:00",
+  "items": [
+    {
+      "id": 90140,
+      "origen": "consenso_inestable",
+      "p1": "Firma digital",
+      "p2": "Firma digital",
+      "escrita": null,
+      "titulo": "SERVICIO DE AUTENTICACION Y SEGURIDAD DE SERVIDORES DE RED MEDIANTE LA PROVISION, INSTALACION Y CONFIGURACION DE...",
+      "artefacto": "consenso_it_20260903-043502.json",
+      "estado": "pendiente",
+      "votos": {
+        "propuestas_it_20260903-040545.json": "Firma digital",
+        "propuestas_it_20260903-041040.json": "Ciberseguridad",
+        "propuestas_it_20260903-041553.json": "Firma digital"
+      }
+    },
+    {
+      "id": 79006,
+      "origen": "discrepa_es_it",
+      "p1": "Redes/cableado",
+      "p2": "ninguna",
+      "escrita": null,
+      "titulo": "ADQUISICION DE ANALIZADOR DE REDES EN EL MARCO DE LA IOARR 2537265 ADQUISICION DE EQUIPAMIENTO DE AULA, EQUIPAMIENTO...",
+      "artefacto": "propuestas_it_20260903-041553.json",
+      "estado": "pendiente"
+    },
+    {
+      "id": 74482,
+      "origen": "discrepa_es_it",
+      "p1": "Licencias",
+      "p2": "ninguna",
+      "escrita": null,
+      "titulo": "CONTRATACIÓN DEL SERVICIO WEB DE CONSULTAS EN LISTAS INTERNACIONALES RESTRICTIVAS ESTABLECIDAS POR LA SBS Y...",
+      "artefacto": "propuestas_it_20260903-031747.json",
+      "estado": "pendiente"
+    },
+    {
+      "id": 57882,
+      "origen": "discrepa_intra_it",
+      "p1": "Desarrollo software",
+      "p2": "IA/analytics",
+      "escrita": "Desarrollo software",
+      "titulo": "CONTRATACIÓN DE REPORTE Y ESTADISTICO DE CONTROL DE ACCESOS AL SISTEMA DE DA00 EN LA PLATAFORMA DE MAINFRAME",
+      "artefacto": "propuestas_it_20260903-041553.json",
+      "estado": "pendiente"
+    },
+    {
+      "id": 34039,
+      "origen": "consenso_inestable",
+      "p1": "ninguna",
+      "p2": null,
+      "escrita": null,
+      "titulo": "ADQUISICION DE COLECTOR DE DATOS",
+      "artefacto": "consenso_it_20260903-043502.json",
+      "estado": "pendiente",
+      "votos": {
+        "propuestas_it_20260903-040545.json": "Hardware",
+        "propuestas_it_20260903-041040.json": "ninguna",
+        "propuestas_it_20260903-041553.json": "ninguna"
+      }
+    },
+    {
+      "id": 32378,
+      "origen": "discrepa_intra_it",
+      "p1": "Redes/cableado",
+      "p2": "Hardware",
+      "escrita": "Redes/cableado",
+      "titulo": "SERVICIO DE ADECUACION Y EQUIPAMENTO DE DATA CENTER ALTERNO",
+      "artefacto": "propuestas_it_20260903-041040.json",
+      "estado": "pendiente"
+    },
+    {
+      "id": 31971,
+      "origen": "desempate_sin_evidencia",
+      "p1": "Hardware",
+      "p2": "Hardware",
+      "escrita": null,
+      "titulo": "ADQUISICION DE EQUIPAMIENTO PARA SEGURIDAD INSTITUCIONAL Y OTROS",
+      "artefacto": "propuestas_it_20260903-041553.json",
+      "estado": "pendiente"
+    },
+    {
+      "id": 18971,
+      "origen": "desempate_sin_evidencia",
+      "p1": "Redes/cableado",
+      "p2": "Redes/cableado",
+      "escrita": null,
+      "titulo": "SERVICIO DE MONTAJE DE CÁMARAS DE VIGILANCIA EN EL ALMACÉN DE LA UGEL CAJAMARCA - La contratación del servicio de...",
+      "artefacto": "propuestas_it_20260903-041553.json",
+      "estado": "pendiente"
+    },
+    {
+      "id": 18267,
+      "origen": "discrepa_es_it",
+      "p1": "Ciberseguridad",
+      "p2": "ninguna",
+      "escrita": null,
+      "titulo": "SERVICIO ESPECIALIZADO EN LA FORMULACION DEL ANALISIS DE IMPACTO DE NEGOCIO",
+      "artefacto": "propuestas_it_20260903-041553.json",
+      "estado": "pendiente"
+    },
+    {
+      "id": 11415,
+      "origen": "discrepa_es_it",
+      "p1": "IA/analytics",
+      "p2": "ninguna",
+      "escrita": null,
+      "titulo": "SERVICIO DE PROCESAMIENTO DE DATOS",
+      "artefacto": "propuestas_it_20260903-041553.json",
+      "estado": "pendiente"
+    },
+    {
+      "id": 90891,
+      "origen": "discrepa_intra_it",
+      "p1": "Soporte tecnico",
+      "p2": "Cloud/hosting",
+      "escrita": "Soporte tecnico",
+      "titulo": "SERVICIO ESPECIALIZADO DE SOPORTE Y ADMINISTRACIÓN DE LA PLATAFORMA DE VIRTUALIZACIÓN E INFRAESTRUCTURA ASOCIADA",
+      "artefacto": "propuestas_it_20260903-040545.json",
+      "estado": "pendiente"
+    },
+    {
+      "id": 77731,
+      "origen": "desempate_sin_evidencia",
+      "p1": "IA/analytics",
+      "p2": "IA/analytics",
+      "escrita": null,
+      "titulo": "SUSCRIPCION ANUAL A UNA PLATAFORMA EN LA NUBE",
+      "artefacto": "propuestas_it_20260903-041553.json",
+      "estado": "pendiente"
+    },
+    {
+      "id": 70370,
+      "origen": "consenso_inestable",
+      "p1": "Licencias",
+      "p2": "ninguna",
+      "escrita": null,
+      "titulo": "SERVICIO DE FACTURACION ELECTRONICA DE 75000 FOLIOS PARA LA DIGA",
+      "artefacto": "consenso_it_20260903-043502.json",
+      "estado": "pendiente",
+      "votos": {
+        "propuestas_it_20260903-040545.json": "Desarrollo software",
+        "propuestas_it_20260903-041040.json": "Licencias",
+        "propuestas_it_20260903-041553.json": "ninguna"
+      }
+    },
+    {
+      "id": 18635,
+      "origen": "consenso_inestable",
+      "p1": "Hardware",
+      "p2": "Hardware",
+      "escrita": null,
+      "titulo": "ADQUISICION DE EQUIPO DE CONTROL DE ACCESO BIOMETRICO",
+      "artefacto": "consenso_it_20260903-043502.json",
+      "estado": "pendiente",
+      "votos": {
+        "propuestas_it_20260903-040545.json": "ninguna",
+        "propuestas_it_20260903-041040.json": "ninguna",
+        "propuestas_it_20260903-041553.json": "Hardware"
+      }
+    },
+    {
+      "id": 91229,
+      "origen": "consenso_inestable",
+      "p1": "Licencias",
+      "p2": "Ciberseguridad",
+      "escrita": null,
+      "titulo": "ADQUISICIÓN DE 380 LICENCIAS DE SOFTWARE ANTIVIRUS PARA LA UGEL 03",
+      "artefacto": "consenso_it_20260903-043502.json",
+      "estado": "pendiente",
+      "votos": {
+        "propuestas_it_20260903-040545.json": "Ciberseguridad",
+        "propuestas_it_20260903-041040.json": "Licencias",
+        "propuestas_it_20260903-041553.json": "Licencias"
+      }
+    },
+    {
+      "id": 78271,
+      "origen": "consenso_inestable",
+      "p1": "Correo electronico",
+      "p2": "ninguna",
+      "escrita": null,
+      "titulo": "Servicio de envío de mensajes de texto a través de SMS",
+      "artefacto": "consenso_it_20260903-043502.json",
+      "estado": "pendiente",
+      "votos": {
+        "propuestas_it_20260903-040545.json": "Correo electronico",
+        "propuestas_it_20260903-041040.json": "Correo electronico",
+        "propuestas_it_20260903-041553.json": "ninguna"
+      }
+    },
+    {
+      "id": 34405,
+      "origen": "consenso_inestable",
+      "p1": "ninguna",
+      "p2": null,
+      "escrita": null,
+      "titulo": "ADQUISICION DE COLECTOR DE DATOS",
+      "artefacto": "consenso_it_20260903-043502.json",
+      "estado": "pendiente",
+      "votos": {
+        "propuestas_it_20260903-040545.json": "Hardware",
+        "propuestas_it_20260903-041040.json": "ninguna",
+        "propuestas_it_20260903-041553.json": "ninguna"
+      }
+    },
+    {
+      "id": 33395,
+      "origen": "consenso_inestable",
+      "p1": "Hardware",
+      "p2": "Hardware",
+      "escrita": null,
+      "titulo": "ADQUISICION DE COLECTOR DE DATOS",
+      "artefacto": "consenso_it_20260903-043502.json",
+      "estado": "pendiente",
+      "votos": {
+        "propuestas_it_20260903-040545.json": "ninguna",
+        "propuestas_it_20260903-041040.json": "Hardware",
+        "propuestas_it_20260903-041553.json": "Hardware"
+      }
+    },
+    {
+      "id": 33303,
+      "origen": "consenso_inestable",
+      "p1": "Hardware",
+      "p2": "Hardware",
+      "escrita": null,
+      "titulo": "ADQUISICION DE COLECTOR DE DATOS",
+      "artefacto": "consenso_it_20260903-043502.json",
+      "estado": "pendiente",
+      "votos": {
+        "propuestas_it_20260903-040545.json": "ninguna",
+        "propuestas_it_20260903-041040.json": "Hardware",
+        "propuestas_it_20260903-041553.json": "Hardware"
+      }
+    }
+  ]
+}

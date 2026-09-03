@@ -12,7 +12,8 @@ SELECT a mano antes de confiar. No meter en pipeline.yml sin Arquitectura C.
 
 C1 (preferido):
     python clasificar_gemini.py --proponer --filtro vigentes
-    python clasificar_gemini.py --aplicar data/propuestas_it_YYYYMMDD-HHMMSS.json
+    python clasificar_gemini.py --consenso data/propuestas_it_A.json data/propuestas_it_B.json
+    python clasificar_gemini.py --aplicar data/consenso_it_YYYYMMDD-HHMMSS.json
 
 Camino directo (deprecado, se elimina en C3):
     python clasificar_gemini.py --dry-run --limit 30 --filtro vigentes
@@ -60,6 +61,7 @@ PAGE_DB = 1_000
 TIMEOUT_S = 120.0
 DATA_DIR = Path(__file__).parent / "data"
 LEDGER_PATH = DATA_DIR / "clasificacion_rechazadas.json"
+COLA_PATH = DATA_DIR / "revisar_categoria.json"
 ARTEFACTO_MAX_DIAS = 7
 
 CATEGORIAS_IT = [
@@ -127,13 +129,13 @@ DEF_CATEGORIAS = """\
 - Firma digital: firma digital, certificado digital/electronico, token criptografico.
 - IA/analytics: inteligencia artificial, LLM/GPT/Copilot, analytics, BI, big data, ML.
 - Ciberseguridad: ciberseguridad, seguridad informatica/de la informacion, firewall, pentest.
-- Cloud/hosting: nube publica, cloud computing, hosting, servidor virtual, AWS, Google Cloud.
+- Cloud/hosting: infraestructura o plataforma en la nube contratada como servicio (IaaS/PaaS): servidor virtual, hosting, almacenamiento, capacidad de computo, servicios gestionados sobre AWS/Azure/GCP.
 - Microsoft: Microsoft 365, Office 365, SharePoint, Exchange, Windows Server.
 - Oracle: Oracle Database, Oracle EBS, PeopleSoft.
 - Base de datos/ERP: motores SQL, data warehouse, SAP, ERP.
 - Desarrollo software: creacion/implementacion de sistemas, aplicativos web o moviles, software a medida.
-- Licencias: licencia, licenciamiento o suscripcion de software.
-- Soporte tecnico: soporte tecnico, mantenimiento de software/sistemas, mesa de ayuda.
+- Licencias: derecho de uso de software de terceros, sea perpetuo, por suscripcion o entregado como servicio en la nube (SaaS). Si lo que se compra es el derecho de uso de un producto de un tercero (Autodesk, Adobe, SOTI, ArcGIS, Microsoft 365 y similares), es Licencias aunque se entregue en la nube y aunque el titulo diga "cloud" o "suscripcion".
+- Soporte tecnico: soporte tecnico, mantenimiento de software/sistemas, mesa de ayuda. Es sobre software, sistemas o infraestructura TI. El mantenimiento o reparacion FISICA de equipos de oficina (impresoras, fotocopiadoras, escaneres como aparato) NO es Soporte tecnico -> 'ninguna'.
 - Redes/cableado: red de datos, cableado estructurado, switch, router, wifi, fibra optica.
 - Correo electronico: correo o mensajeria electronica.
 - Hardware: compra de EQUIPOS de computo (PC, laptop, impresora, monitor, disco, RAM, scanner, UPS de datacenter). NO son Hardware: los consumibles y suministros de esos equipos (toner, cartuchos, tinta, cintas, papel, etiquetas, rollos, repuestos genericos) aunque el texto nombre el equipo que los usa; ni los equipos de reprografia de oficina (fotocopiadora, duplicadora, mimeografo, guillotina); ni electrodomesticos, estabilizadores de oficina o aire acondicionado. Todo eso -> 'ninguna'.
@@ -154,6 +156,9 @@ SYSTEM_PROMPT_REGLAS = (
     "practicante, 'servicio de un profesional') NO es Desarrollo software aunque "
     "el titulo sea de sistemas/informatica. Desarrollo software es crear o "
     "implementar un sistema/aplicativo/software, no alquilar un profesional.\n"
+    "Soporte tecnico es sobre software, sistemas o infraestructura TI. El "
+    "mantenimiento o reparacion FISICA de equipos de oficina (impresoras, "
+    "fotocopiadoras, escaneres como aparato) NO es Soporte tecnico -> 'ninguna'.\n"
     "Hardware es SOLO compra de EQUIPOS de computo (PC, laptop, impresora, "
     "monitor, disco, RAM, scanner, UPS de datacenter). NO son Hardware: los "
     "consumibles y suministros de esos equipos (toner, cartuchos, tinta, "
@@ -161,6 +166,10 @@ SYSTEM_PROMPT_REGLAS = (
     "nombre el equipo que los usa; ni los equipos de reprografia de oficina "
     "(fotocopiadora, duplicadora, mimeografo, guillotina); ni electrodomesticos, "
     "estabilizadores de oficina o aire acondicionado. Todo eso -> 'ninguna'.\n"
+    "Frontera Licencias vs Cloud/hosting: si el objeto es el derecho de uso de un "
+    "producto de software de un tercero, es Licencias, aunque se entregue en la "
+    "nube. Cloud/hosting es solo cuando se contrata infraestructura o plataforma "
+    "(computo, almacenamiento, servidores, servicios gestionados).\n"
     'La "senal" debe copiarse del texto de "descripcion", "objeto" o "item". El '
     'campo "cubso" es la familia del catalogo estatal, no describe lo que se '
     'compra: si la unica evidencia esta ahi, la confianza es "media" como maximo.\n'
@@ -291,7 +300,7 @@ def cubsos(row: dict) -> str:
             continue
         n = (it.get("nom_cubso") or it.get("descripcion") or "").strip()
         if n:
-            names.append(n[:80])
+            names.append(_cortar_en_palabra(_texto_colapsado(n), 80))
     return "; ".join(names)
 
 
@@ -310,7 +319,10 @@ def items_desc(row: dict) -> str:
             continue
         n = (it.get("descripcion") or "").strip()
         if n:
-            names.append(n[:80])
+            # Mismo criterio que recortar(): el n[:80] a mitad de palabra
+            # era la senal que copiaba el modelo (31971 "servidor de
+            # redunda", 18971 "Cableado Estructurad").
+            names.append(_cortar_en_palabra(_texto_colapsado(n), 80))
     return "; ".join(names)
 
 
@@ -324,13 +336,81 @@ def items_cubso(row: dict) -> str:
             continue
         n = (it.get("nom_cubso") or "").strip()
         if n:
-            names.append(n[:80])
+            names.append(_cortar_en_palabra(_texto_colapsado(n), 80))
     return "; ".join(names)
 
 
+def _texto_colapsado(s) -> str:
+    return " ".join(str(s or "").split())
+
+
+def _cortar_en_palabra(t: str, n: int) -> str:
+    """Corta t (ya colapsado) a n chars. Si el corte cae a mitad de
+    palabra, retrocede al ultimo espacio; si no hay espacio, corta
+    como hoy (t[:n-1]). Lo usa recortar() y el recorte de 80 por item."""
+    if len(t) <= n:
+        return t
+    limite = n - 1
+    frag = t[:limite]
+    if limite < len(t) and not t[limite].isspace():
+        sp = frag.rfind(" ")
+        if sp != -1:
+            frag = frag[:sp]
+    return frag
+
+
 def recortar(s, n: int = 220) -> str:
-    t = " ".join(str(s or "").split())
-    return t if len(t) <= n else t[: n - 1] + "..."
+    t = _texto_colapsado(s)
+    if len(t) <= n:
+        return t
+    # El modelo copia la senal del texto recortado; un corte a mitad de
+    # palabra genera senales que la verificacion rechaza (31971 "servidor
+    # de redunda", 18971 "Cableado Estructurad").
+    return _cortar_en_palabra(t, n) + "..."
+
+
+def _bruto_mas_largo_que(bruto, n: int) -> bool:
+    return len(" ".join(str(bruto or "").split())) > n
+
+
+def _match_senal(ns: str, texto_recortado: str, *, truncado: bool) -> bool:
+    """True si ns esta en el texto y no pega contra un recorte (ultimos 5)."""
+    nt = normalizar(texto_recortado)
+    idx = nt.find(ns)
+    if idx < 0:
+        return False
+    if truncado and (idx + len(ns)) > len(nt) - 5:
+        return False
+    return True
+
+
+def _match_item_o_cubso(ns: str, row: dict, key: str, joined: str) -> bool:
+    rec = recortar(joined, 240)
+    if ns not in normalizar(rec):
+        return False
+    items = row.get("items_json") or []
+    if isinstance(items, list):
+        any_hit = False
+        valid = False
+        for it in items[:8]:
+            if not isinstance(it, dict):
+                continue
+            raw = (it.get(key) or "").strip()
+            piece = _cortar_en_palabra(_texto_colapsado(raw), 80)
+            nt = normalizar(piece)
+            idx = nt.find(ns)
+            if idx < 0:
+                continue
+            any_hit = True
+            if _bruto_mas_largo_que(raw, 80) and (idx + len(ns)) > len(nt) - 5:
+                continue
+            valid = True
+            break
+        if any_hit and not valid:
+            return False
+    return _match_senal(
+        ns, rec, truncado=_bruto_mas_largo_que(joined, 240),
+    )
 
 
 def normalizar(s: str) -> str:
@@ -347,15 +427,22 @@ def verificar_senal(senal: str, row: dict) -> tuple[bool, str]:
     ns = normalizar(senal)
     if len(ns) < 4:
         return False, "ninguna"
-    candidatos = (
-        ("descripcion", recortar(row.get("descripcion"), 400)),
-        ("objeto", recortar(row.get("objeto"), 80)),
-        ("item", recortar(items_desc(row), 240)),
-        ("cubso", recortar(items_cubso(row), 240)),
-    )
-    for fuente, texto in candidatos:
-        if ns in normalizar(texto):
-            return True, fuente
+    desc = row.get("descripcion")
+    obj = row.get("objeto")
+    item_j = items_desc(row)
+    cubso_j = items_cubso(row)
+    if _match_senal(
+        ns, recortar(desc, 400), truncado=_bruto_mas_largo_que(desc, 400),
+    ):
+        return True, "descripcion"
+    if _match_senal(
+        ns, recortar(obj, 80), truncado=_bruto_mas_largo_que(obj, 80),
+    ):
+        return True, "objeto"
+    if _match_item_o_cubso(ns, row, "descripcion", item_j):
+        return True, "item"
+    if _match_item_o_cubso(ns, row, "nom_cubso", cubso_j):
+        return True, "cubso"
     return False, "ninguna"
 
 
@@ -364,14 +451,19 @@ def verificar_senal_p2(senal: str, row: dict) -> tuple[bool, str]:
     ns = normalizar(senal)
     if len(ns) < 4:
         return False, "ninguna"
-    candidatos = (
-        ("descripcion", recortar(row.get("descripcion"), 400)),
-        ("objeto", recortar(row.get("objeto"), 80)),
-        ("item", recortar(items_desc(row), 240)),
-    )
-    for fuente, texto in candidatos:
-        if ns in normalizar(texto):
-            return True, fuente
+    desc = row.get("descripcion")
+    obj = row.get("objeto")
+    item_j = items_desc(row)
+    if _match_senal(
+        ns, recortar(desc, 400), truncado=_bruto_mas_largo_que(desc, 400),
+    ):
+        return True, "descripcion"
+    if _match_senal(
+        ns, recortar(obj, 80), truncado=_bruto_mas_largo_que(obj, 80),
+    ):
+        return True, "objeto"
+    if _match_item_o_cubso(ns, row, "descripcion", item_j):
+        return True, "item"
     return False, "ninguna"
 
 
@@ -700,6 +792,11 @@ def categoria_propuesta_escritura(item: dict) -> str | None:
     return None
 
 
+def categoria_efectiva(item: dict) -> str:
+    """Categoria que --aplicar escribiria; si no escribe, ninguna."""
+    return categoria_propuesta_escritura(item) or CATEGORIA_NINGUNA
+
+
 def aplicar_ledger(items: list[dict], ledger: list[dict]) -> None:
     por_id = ledger_por_id(ledger)
     for item in items:
@@ -731,9 +828,11 @@ def conteos_items(items: list[dict]) -> dict[str, int]:
         "senal_no_verificada": 0,
         "senal_solo_cubso": 0,
         "senal_fuente_item": 0,
-        "degradados_a_p2": 0,
         "desempate_sin_evidencia": 0,
         "p2_senal_no_verificada": 0,
+        "discrepa_intra_it": 0,
+        "discrepa_es_it": 0,
+        "revisar": 0,
     }
     for it in items:
         dec = it.get("decision")
@@ -752,6 +851,12 @@ def conteos_items(items: list[dict]) -> dict[str, int]:
             c["desempate_sin_evidencia"] += 1
         elif orig == "desempate_discrepa":
             c["desempate_discrepa"] += 1
+        elif orig == "discrepa_intra_it":
+            c["discrepa_intra_it"] += 1
+        elif orig == "discrepa_es_it":
+            c["discrepa_es_it"] += 1
+        if it.get("revisar"):
+            c["revisar"] += 1
         p1 = it.get("p1") or {}
         cat_p1 = p1.get("categoria")
         if cat_p1 and cat_p1 != CATEGORIA_NINGUNA:
@@ -761,11 +866,6 @@ def conteos_items(items: list[dict]) -> dict[str, int]:
                 c["senal_solo_cubso"] += 1
             if p1.get("senal_fuente") == "item":
                 c["senal_fuente_item"] += 1
-            if (
-                p1.get("confianza_original") == "alta"
-                and p1.get("confianza") in ("media", "baja")
-            ):
-                c["degradados_a_p2"] += 1
         p2 = it.get("p2") or {}
         if p2.get("senal_verificada") is False:
             c["p2_senal_no_verificada"] += 1
@@ -777,11 +877,74 @@ def ruta_artefacto(ahora: datetime) -> Path:
     return DATA_DIR / f"propuestas_it_{stamp}.json"
 
 
+def ruta_consenso(ahora: datetime) -> Path:
+    stamp = ahora.strftime("%Y%m%d-%H%M%S")
+    return DATA_DIR / f"consenso_it_{stamp}.json"
+
+
 def escribir_json(path: Path, payload: dict) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
+    )
+
+
+def persistir_cola_revision(
+    items: list[dict], artefacto: Path, ahora: datetime,
+) -> None:
+    # Los artefactos estan en .gitignore; sin esto la cola de revision se
+    # pierde entre corridas. Esta es la semilla de la tabla
+    # clasificacion_pendiente de C3.
+    existentes: list[dict] = []
+    if COLA_PATH.exists():
+        raw = json.loads(COLA_PATH.read_text(encoding="utf-8"))
+        if isinstance(raw, dict) and isinstance(raw.get("items"), list):
+            existentes = [e for e in raw["items"] if isinstance(e, dict)]
+    por_id: dict[int, dict] = {}
+    for e in existentes:
+        try:
+            por_id[int(e["id"])] = e
+        except (TypeError, ValueError, KeyError):
+            continue
+    for it in items:
+        if not (it.get("revisar") or it.get("decision") == "cola"):
+            continue
+        cid = int(it["id"])
+        prev = por_id.get(cid)
+        if prev is not None and prev.get("estado") != "pendiente":
+            continue
+        p1 = it.get("p1") or {}
+        p2 = it.get("p2") or {}
+        entrada = {
+            "id": cid,
+            "origen": it.get("origen"),
+            "p1": p1.get("categoria"),
+            "p2": p2.get("categoria"),
+            "escrita": categoria_propuesta_escritura(it),
+            "titulo": recortar(it.get("descripcion"), 120),
+            "artefacto": artefacto.name,
+            "estado": "pendiente",
+        }
+        if it.get("votos"):
+            entrada["votos"] = it["votos"]
+        por_id[cid] = entrada
+    vistos: set[int] = set()
+    out: list[dict] = []
+    for e in existentes:
+        try:
+            cid = int(e["id"])
+        except (TypeError, ValueError, KeyError):
+            out.append(e)
+            continue
+        vistos.add(cid)
+        out.append(por_id.get(cid, e))
+    for cid, e in por_id.items():
+        if cid not in vistos:
+            out.append(e)
+    escribir_json(
+        COLA_PATH,
+        {"actualizado_utc": ahora.isoformat(), "items": out},
     )
 
 
@@ -853,11 +1016,15 @@ def comando_proponer(supa, args, filas: list[dict]) -> int:
             )
             for cid, p in p1_map.items():
                 degradar_p1(p, por_id[cid])
+            # 91197 salio Licencias en una corrida y Cloud/hosting en otra,
+            # ambas con confianza alta y senal verificada; la confianza
+            # declarada no predice estabilidad de CATEGORIA. Costo: ~5
+            # llamadas extra sobre 1802 contratos. La confianza degradada
+            # se guarda como diagnostico, no decide quien va a P2.
             ids_p2 = [
                 cid
                 for cid, p in p1_map.items()
                 if p["categoria"] != CATEGORIA_NINGUNA
-                and p["confianza"] in ("media", "baja")
             ]
             rng = random.Random(SEED_P2)
             rng.shuffle(ids_p2)
@@ -889,6 +1056,7 @@ def comando_proponer(supa, args, filas: list[dict]) -> int:
             "decision": "sin_respuesta",
             "origen": None,
             "en_ledger": False,
+            "revisar": False,
         }
         if cid in sin_p1 or cid not in p1_map:
             items.append(item)
@@ -898,9 +1066,6 @@ def comando_proponer(supa, args, filas: list[dict]) -> int:
         if p1["categoria"] == CATEGORIA_NINGUNA:
             item["decision"] = "no_escribir"
             item["origen"] = "ninguna"
-        elif p1["confianza"] == "alta":
-            item["decision"] = "escribir"
-            item["origen"] = "alta_directa"
         elif cid in sin_p2 or cid not in p2_map:
             item["decision"] = "sin_respuesta"
             item["origen"] = None
@@ -915,9 +1080,23 @@ def comando_proponer(supa, args, filas: list[dict]) -> int:
                 else:
                     item["decision"] = "cola"
                     item["origen"] = "desempate_sin_evidencia"
+            elif (
+                p1["categoria"] != CATEGORIA_NINGUNA
+                and p2["categoria"] != CATEGORIA_NINGUNA
+            ):
+                # Si ambas pasadas coinciden en que es IT y difieren solo
+                # en cual de las 13, dejar NULL lo saca de Ruta del dia por
+                # completo (el filtro es categoria_it OR relevancia_ia NOT
+                # NULL). Ocultar es peor que etiquetar suboptimo: la regla
+                # de oro es que la IA rankea pero nunca oculta. "revisar"
+                # alimenta la cola de C3. Se escribe la categoria de P1.
+                item["decision"] = "escribir"
+                item["origen"] = "discrepa_intra_it"
+                item["revisar"] = True
             else:
                 item["decision"] = "cola"
-                item["origen"] = "desempate_discrepa"
+                item["origen"] = "discrepa_es_it"
+                item["revisar"] = True
         items.append(item)
 
     aplicar_ledger(items, cargar_ledger())
@@ -932,7 +1111,7 @@ def comando_proponer(supa, args, filas: list[dict]) -> int:
             "batch_p1": args.batch,
             "batch_p2": BATCH_P2,
             "universo_seleccionado": len(filas),
-            "version_c": "C1.2",
+            "version_c": "C1.5",
             "incluir_ventana_cerrada": bool(
                 getattr(args, "incluir_ventana_cerrada", False)
             ),
@@ -948,6 +1127,7 @@ def comando_proponer(supa, args, filas: list[dict]) -> int:
     }
     path = ruta_artefacto(ahora)
     escribir_json(path, payload)
+    persistir_cola_revision(items, path, ahora)
 
     print("\n  id | decision | origen | p1 | p2 | descripcion", flush=True)
     for it in items:
@@ -958,6 +1138,18 @@ def comando_proponer(supa, args, filas: list[dict]) -> int:
             f"{p1c} | {p2c} | {it['descripcion']}",
             flush=True,
         )
+    revisar = [it for it in items if it.get("revisar")]
+    if revisar:
+        print("\n  REVISAR (escritos pero con discrepancia)", flush=True)
+        print("  id | origen | p1 | p2 | descripcion", flush=True)
+        for it in revisar:
+            p1c = (it.get("p1") or {}).get("categoria") or "-"
+            p2c = (it.get("p2") or {}).get("categoria") or "-"
+            print(
+                f"  {it['id']} | {it.get('origen') or '-'} | "
+                f"{p1c} | {p2c} | {it['descripcion']}",
+                flush=True,
+            )
     print("\n--- resumen C1 --proponer ---", flush=True)
     print(f"  artefacto={path}", flush=True)
     print(f"  universo={len(filas)}", flush=True)
@@ -980,6 +1172,213 @@ def comando_proponer(supa, args, filas: list[dict]) -> int:
     return 0
 
 
+def _cargar_artefacto_consenso(ruta: Path) -> tuple[dict | None, int]:
+    if not ruta.is_file():
+        print(f"ERROR: no existe el artefacto {ruta}", flush=True)
+        return None, 1
+    payload = json.loads(ruta.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        print(f"ERROR: {ruta.name} no es un objeto JSON", flush=True)
+        return None, 1
+    return payload, 0
+
+
+def comando_consenso(rutas: list[str]) -> int:
+    """Cruza artefactos --proponer. No llama Gemini. No escribe Supabase."""
+    paths = [Path(r) for r in rutas]
+    payloads: list[dict] = []
+    for p in paths:
+        payload, code = _cargar_artefacto_consenso(p)
+        if payload is None:
+            return code
+        payloads.append(payload)
+
+    metas = [(p.get("meta") or {}) if isinstance(p.get("meta"), dict) else {}
+             for p in payloads]
+    filtros = [m.get("filtro") for m in metas]
+    ventanas = [bool(m.get("incluir_ventana_cerrada")) for m in metas]
+    versions = [m.get("version_c") for m in metas]
+
+    if any(f is None for f in filtros) or len(set(filtros)) != 1:
+        print(
+            "ERROR: --consenso aborta (exit 6): los artefactos no tienen el "
+            f"mismo filtro: { {n.name: f for n, f in zip(paths, filtros)} }",
+            flush=True,
+        )
+        return 6
+    if len(set(ventanas)) != 1:
+        print(
+            "ERROR: --consenso aborta (exit 6): los artefactos no tienen el "
+            "mismo incluir_ventana_cerrada: "
+            f"{ {n.name: v for n, v in zip(paths, ventanas)} }",
+            flush=True,
+        )
+        return 6
+    if any(v is None for v in versions) or len(set(versions)) != 1:
+        print(
+            "ERROR: --consenso aborta (exit 6): los artefactos no tienen el "
+            f"mismo version_c: { {n.name: v for n, v in zip(paths, versions)} }",
+            flush=True,
+        )
+        return 6
+    for path, payload in zip(paths, payloads):
+        if payload.get("aplicado"):
+            print(
+                f"ERROR: --consenso aborta (exit 6): {path.name} ya tiene "
+                "bloque aplicado. No se puede cruzar un artefacto ya escrito.",
+                flush=True,
+            )
+            return 6
+
+    item_maps: list[dict[int, dict]] = []
+    id_sets: list[set[int]] = []
+    for path, payload in zip(paths, payloads):
+        m: dict[int, dict] = {}
+        for it in payload.get("items") or []:
+            if not isinstance(it, dict):
+                continue
+            try:
+                m[int(it["id"])] = it
+            except (TypeError, ValueError, KeyError):
+                continue
+        item_maps.append(m)
+        id_sets.append(set(m))
+        print(f"  {path.name}: {len(m)} ids  version_c={payload.get('meta', {}).get('version_c')}",
+              flush=True)
+
+    union = set.union(*id_sets) if id_sets else set()
+    inter = set.intersection(*id_sets) if id_sets else set()
+    descartados = union - inter
+    if descartados:
+        print(
+            f"[aviso] universos no coinciden: interseccion={len(inter)} "
+            f"union={len(union)} ids_descartados={len(descartados)}",
+            flush=True,
+        )
+        for path, s in zip(paths, id_sets):
+            extra = s - inter
+            if extra:
+                muestra = ", ".join(str(i) for i in sorted(extra, reverse=True)[:12])
+                mas = "" if len(extra) <= 12 else f" ... +{len(extra) - 12}"
+                print(
+                    f"  {path.name}: {len(extra)} ids fuera ({muestra}{mas})",
+                    flush=True,
+                )
+    else:
+        print(f"  universos coinciden: {len(inter)} ids", flush=True)
+
+    n_corridas = len(paths)
+    nombres = [p.name for p in paths]
+    ultimo = item_maps[-1]
+    orden = [cid for cid in ultimo if cid in inter]
+
+    items: list[dict] = []
+    for cid in orden:
+        votos: dict[str, str] = {}
+        cats: list[str] = []
+        for nombre, m in zip(nombres, item_maps):
+            cat = categoria_efectiva(m[cid])
+            votos[nombre] = cat
+            cats.append(cat)
+        last_it = ultimo[cid]
+        item = {
+            "id": cid,
+            "descripcion": last_it.get("descripcion"),
+            "entidad": last_it.get("entidad"),
+            "p1": last_it.get("p1"),
+            "p2": last_it.get("p2"),
+            "decision": "cola",
+            "origen": None,
+            "en_ledger": False,
+            "revisar": False,
+            "votos": votos,
+            "n_corridas": n_corridas,
+        }
+        if cats and all(c == cats[0] for c in cats):
+            if cats[0] != CATEGORIA_NINGUNA:
+                item["decision"] = "escribir"
+                item["origen"] = "consenso_unanime"
+            else:
+                item["decision"] = "no_escribir"
+                item["origen"] = "consenso_ninguna"
+        else:
+            item["decision"] = "cola"
+            item["origen"] = "consenso_inestable"
+            item["revisar"] = True
+        items.append(item)
+
+    aplicar_ledger(items, cargar_ledger())
+    # El ledger puede bajar un unanime a rechazado_previo; el conteo
+    # tiene que reflejar lo que --aplicar escribiria, no el voto crudo.
+    n_unanime = sum(
+        1 for it in items
+        if it.get("origen") == "consenso_unanime"
+        and it.get("decision") == "escribir"
+    )
+    n_ninguna = sum(
+        1 for it in items if it.get("origen") == "consenso_ninguna"
+    )
+    n_inestable = sum(
+        1 for it in items if it.get("origen") == "consenso_inestable"
+    )
+    ahora = datetime.now(timezone.utc)
+    counts = {
+        "consenso_unanime": n_unanime,
+        "consenso_ninguna": n_ninguna,
+        "consenso_inestable": n_inestable,
+    }
+    payload = {
+        "meta": {
+            "generado_utc": ahora.isoformat(),
+            "modo": "consenso",
+            "version_c": "C1.5",
+            "artefactos": nombres,
+            "n_corridas": n_corridas,
+            "universo_interseccion": len(inter),
+            "ids_descartados": len(descartados),
+            "filtro": filtros[0],
+            "incluir_ventana_cerrada": ventanas[0],
+            "conteos": counts,
+        },
+        "items": items,
+    }
+    path = ruta_consenso(ahora)
+    escribir_json(path, payload)
+    persistir_cola_revision(items, path, ahora)
+
+    unanimes = [
+        it for it in items
+        if it.get("origen") == "consenso_unanime"
+        and it.get("decision") == "escribir"
+    ]
+    inestables = [it for it in items if it.get("origen") == "consenso_inestable"]
+    if unanimes:
+        print("\n  consenso_unanime", flush=True)
+        print("  id | categoria | descripcion", flush=True)
+        for it in unanimes:
+            cat = categoria_efectiva(it)
+            print(
+                f"  {it['id']} | {cat} | {it.get('descripcion') or ''}",
+                flush=True,
+            )
+    if inestables:
+        print("\n  consenso_inestable", flush=True)
+        for it in inestables:
+            print(
+                f"  {it['id']} | votos={json.dumps(it.get('votos'), ensure_ascii=False)} "
+                f"| {it.get('descripcion') or ''}",
+                flush=True,
+            )
+    print("\n--- resumen C1 --consenso ---", flush=True)
+    print(f"  artefacto={path}", flush=True)
+    print(f"  n_corridas={n_corridas}  interseccion={len(inter)}  "
+          f"descartados={len(descartados)}", flush=True)
+    for k, n in counts.items():
+        print(f"    {k}: {n}", flush=True)
+    print("  no se escribio en Supabase.", flush=True)
+    return 0
+
+
 def reselect_ids(supa, ids: list[int]) -> dict[int, dict]:
     out: dict[int, dict] = {}
     for i in range(0, len(ids), BATCH_DB):
@@ -996,6 +1395,12 @@ def reselect_ids(supa, ids: list[int]) -> dict[int, dict]:
 
 
 def comando_aplicar(ruta: str) -> int:
+    # Acepta artefactos --proponer y --consenso sin cambiar la logica:
+    # solo mira decision=="escribir" + categoria_propuesta_escritura.
+    # consenso_unanime no es desempate_ok, asi que usa p1 del ULTIMO
+    # artefacto; por construccion esa p1 coincide con el voto unanime
+    # (si el ultimo escribia, p1 es esa categoria; si era desempate_ok,
+    # p1==p2). Ledger se aplica en --proponer/--consenso, no aqui.
     path = Path(ruta)
     if not path.is_file():
         print(f"ERROR: no existe el artefacto {path}", flush=True)
@@ -1160,7 +1565,14 @@ def main() -> int:
     ap.add_argument("--proponer", action="store_true",
                     help="C1: dos pasadas Gemini -> artefacto JSON; no escribe")
     ap.add_argument("--aplicar", metavar="RUTA", default=None,
-                    help="C1: aplica un artefacto --proponer; no llama Gemini")
+                    help="C1: aplica un artefacto --proponer o --consenso; no llama Gemini")
+    ap.add_argument(
+        "--consenso",
+        nargs="+",
+        metavar="ART",
+        default=None,
+        help="C1.5: cruza >=2 artefactos --proponer; no llama Gemini ni escribe BD",
+    )
     ap.add_argument("--limit", type=int, default=0,
                     help="Tope de contratos (0 = todos del filtro)")
     ap.add_argument(
@@ -1179,30 +1591,42 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    if args.proponer and args.aplicar:
-        print("ERROR: --proponer y --aplicar son mutuamente excluyentes",
-              flush=True)
+    if args.consenso is not None and len(args.consenso) < 2:
+        print("ERROR: --consenso requiere al menos 2 artefactos", flush=True)
         return 2
-    if args.proponer and args.dry_run:
-        print("ERROR: --proponer y --dry-run son mutuamente excluyentes",
-              flush=True)
-        return 2
-    if args.aplicar and args.dry_run:
-        print("ERROR: --aplicar y --dry-run son mutuamente excluyentes",
-              flush=True)
-        return 2
-    if not args.proponer and not args.aplicar:
+
+    modos = [
+        ("--proponer", bool(args.proponer)),
+        ("--aplicar", bool(args.aplicar)),
+        ("--consenso", args.consenso is not None),
+        ("--dry-run", bool(args.dry_run)),
+    ]
+    activos = [n for n, on in modos if on]
+    if len(activos) > 1:
         print(
-            "[deprecado] usa --proponer / --aplicar; "
-            "el camino directo se elimina en C3",
+            "ERROR: " + " y ".join(activos) + " son mutuamente excluyentes",
             flush=True,
         )
+        return 2
+
+    if args.consenso is not None:
+        print("=" * 60, flush=True)
+        print("C1 --consenso artefactos (sin Gemini, sin Supabase)", flush=True)
+        print("=" * 60, flush=True)
+        return comando_consenso(args.consenso)
 
     if args.aplicar:
         print("=" * 60, flush=True)
         print("C1 --aplicar artefacto (sin Gemini)", flush=True)
         print("=" * 60, flush=True)
         return comando_aplicar(args.aplicar)
+
+    if not args.proponer:
+        print(
+            "[deprecado] usa --proponer / --aplicar / --consenso; "
+            "el camino directo se elimina en C3",
+            flush=True,
+        )
 
     if args.batch <= 0:
         print("ERROR: --batch debe ser > 0", flush=True)
