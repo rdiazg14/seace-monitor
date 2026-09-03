@@ -180,12 +180,15 @@ def clasificar_relevancia_ia(r: dict) -> str | None:
 _FMT_SEACE = "%d/%m/%Y %H:%M:%S"
 
 
+# SEACE entrega hora de pared de Lima sin zona ('dd/mm/yyyy HH:MM:SS').
+# Peru no tiene horario de verano: el offset es constante -05:00.
+# Pegar +00:00 (B21) dejaba cada instante 5 h antes del real.
 def parsear_fecha(s: str | None) -> str | None:
-    """'dd/mm/yyyy HH:MM:SS' → ISO 8601 con offset UTC para PostgreSQL."""
+    """'dd/mm/yyyy HH:MM:SS' → ISO 8601 con offset Lima (-05:00)."""
     if not s:
         return None
     try:
-        return datetime.strptime(s.strip(), _FMT_SEACE).isoformat() + "+00:00"
+        return datetime.strptime(s.strip(), _FMT_SEACE).isoformat() + "-05:00"
     except Exception:
         return None
 
