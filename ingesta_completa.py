@@ -141,9 +141,11 @@ def _norm(texto: str) -> str:
     return t.lower()
 
 
-def _contiene(texto_norm: str, kw: str) -> bool:
+def _contiene(texto_norm: str, kw: str, limite_palabra: bool | None = None) -> bool:
     kn = _norm(kw)
-    if kn in _KW_LIMITE_PALABRA:
+    if limite_palabra is None:
+        limite_palabra = kn in _KW_LIMITE_PALABRA
+    if limite_palabra:
         return bool(re.search(r"\b" + re.escape(kn) + r"\b", texto_norm))
     return kn in texto_norm
 
@@ -157,10 +159,66 @@ def _texto_contrato(r: dict) -> str:
     ) + " "
 
 
-def clasificar_categoria_it(r: dict) -> str | None:
+def cargar_keywords(supa) -> list[tuple[str, list[dict]]] | None:
+    """Carga it_keywords activas. None si no hay cliente, SELECT falla o tabla vacía.
+
+    Retorno: [(categoria, [{keyword, tipo, limite_palabra}, ...]), ...]
+    en orden de prioridad. No explota: el caller hace fallback a IT_CATS.
+    """
+    if not supa:
+        return None
+    try:
+        res = (
+            supa.table("it_keywords")
+            .select("id,categoria,keyword,tipo,limite_palabra,prioridad")
+            .eq("activa", True)
+            .order("prioridad")
+            .order("id")
+            .limit(5000)
+            .execute()
+        )
+    except Exception as e:
+        print(f"[keywords] SELECT it_keywords fallo: {e}", flush=True)
+        return None
+    filas = res.data or []
+    if not filas:
+        return None
+    grupos: dict[str, list[dict]] = {}
+    for f in filas:
+        cat = f["categoria"]
+        grupos.setdefault(cat, []).append({
+            "keyword": f["keyword"],
+            "tipo": f.get("tipo") or "incluye",
+            "limite_palabra": bool(f.get("limite_palabra")),
+        })
+    return list(grupos.items())
+
+
+def clasificar_categoria_it(
+    r: dict,
+    cats: list[tuple[str, list[dict]]] | None = None,
+) -> str | None:
+    """Primera categoria por prioridad. cats=None usa IT_CATS (fallback).
+
+    tipo 'excluye': si matchea, esa categoria no gana y la cascada sigue.
+    tipo 'incluye': si matchea, gana. limite_palabra True = \\b...\\b.
+    """
     t = _texto_contrato(r)
-    for cat, kws in IT_CATS:
-        if any(_contiene(t, kw) for kw in kws):
+    if cats is None:
+        for cat, kws in IT_CATS:
+            if any(_contiene(t, kw) for kw in kws):
+                return cat
+        return None
+    for cat, kws in cats:
+        if any(
+            _contiene(t, d["keyword"], bool(d.get("limite_palabra")))
+            for d in kws if d.get("tipo") == "excluye"
+        ):
+            continue
+        if any(
+            _contiene(t, d["keyword"], bool(d.get("limite_palabra")))
+            for d in kws if d.get("tipo") != "excluye"
+        ):
             return cat
     return None
 
@@ -309,7 +367,10 @@ def filtrar_validos(raw: list[dict], client) -> tuple[list[dict], int]:
     return ok, n_rech
 
 
-def preparar_fila_db(r: dict) -> dict:
+def preparar_fila_db(
+    r: dict,
+    cats: list[tuple[str, list[dict]]] | None = None,
+) -> dict:
     """Convierte un registro de la API SEACE al esquema de la tabla contratos."""
     return {
         "id":                   r["idContrato"],
@@ -324,7 +385,7 @@ def preparar_fila_db(r: dict) -> dict:
         "fecha_fin_cotizacion": parsear_fecha(r.get("fecFinCotizacion")),
         "tipo_cotizacion":      str(r.get("idTipoCotizacion", "")),
         "cotizar":              bool(r.get("cotizar", False)),
-        "categoria_it":         clasificar_categoria_it(r),
+        "categoria_it":         clasificar_categoria_it(r, cats),
         "relevancia_ia":        clasificar_relevancia_ia(r),
     }
 
@@ -462,6 +523,16 @@ def main():
                     help="navegador visible (útil para depurar)")
     ap.add_argument("--simular-rechazo", action="store_true",
                     help="G2: inserta un payload inválido en ingesta_rechazados y sale")
+    ap.add_argument(
+        "--verificar-keywords",
+        action="store_true",
+        help=(
+            "Compara categoria tabla vs IT_CATS en cada alta y reporta DIFF. "
+            "No cambia lo escrito (siempre se persiste el resultado de la tabla). "
+            "La equivalencia se probo sobre el corpus historico; este flag la "
+            "verifica sobre datos frescos de SEACE."
+        ),
+    )
     args = ap.parse_args()
     os.makedirs("data", exist_ok=True)
 
@@ -507,6 +578,31 @@ def main():
         print("\nFila persistida:", flush=True)
         print(json.dumps(row, ensure_ascii=False, indent=2, default=str), flush=True)
         return
+
+    # ── 1b. Keywords IT (tabla; fallback explicito a IT_CATS) ──────────
+    cats_tabla = cargar_keywords(supa)
+    if cats_tabla is None:
+        if not supa:
+            motivo = "sin cliente Supabase"
+        else:
+            motivo = "tabla vacia o SELECT fallo"
+        print(f"[keywords] FALLBACK a IT_CATS hardcoded: {motivo}", flush=True)
+        cats: list[tuple[str, list[dict]]] | None = None
+    elif len(cats_tabla) < 13:
+        print(
+            f"[keywords] FALLBACK a IT_CATS hardcoded: "
+            f"{len(cats_tabla)} categorias (hace falta 13)",
+            flush=True,
+        )
+        cats = None
+    else:
+        n_kw = sum(len(kws) for _, kws in cats_tabla)
+        print(
+            f"[keywords] tabla it_keywords: {n_kw} keywords, "
+            f"{len(cats_tabla)} categorias",
+            flush=True,
+        )
+        cats = cats_tabla
 
     # ── 2. Determinar punto de partida (incremental vs completo) ───────
     max_id = 0
@@ -600,18 +696,37 @@ def main():
         print(f"  aceptados={len(nuevas_raw):,}  rechazados={n_rech:,}", flush=True)
         print("Clasificando registros...")
         filas_db: list[dict] = []
+        n_kw_diff = 0
         for r in nuevas_raw:
             try:
-                filas_db.append(preparar_fila_db(r))
+                fila = preparar_fila_db(r, cats)
             except Exception as e:
                 n_rech += 1
                 registrar_rechazo(supa, r, f"preparar_fila_db: {e}")
+                continue
+            if args.verificar_keywords:
+                codigo = clasificar_categoria_it(r)
+                if fila["categoria_it"] != codigo:
+                    print(
+                        f"[keywords DIFF] id={fila['id']} "
+                        f"tabla={fila['categoria_it']} codigo={codigo}",
+                        flush=True,
+                    )
+                    n_kw_diff += 1
+            filas_db.append(fila)
         n_it = sum(1 for f in filas_db if f["categoria_it"])
         n_ia = sum(1 for f in filas_db if f["relevancia_ia"])
         print(f"  categoria_it asignada: {n_it:,}  |  relevancia_ia: {n_ia:,}")
+        if args.verificar_keywords:
+            print(
+                f"[keywords] diffs tabla vs codigo: {n_kw_diff} / {len(filas_db)}",
+                flush=True,
+            )
     else:
         filas_db = []
         print("Sin registros nuevos. Corpus al día.")
+        if args.verificar_keywords:
+            print("[keywords] diffs tabla vs codigo: 0 / 0", flush=True)
 
     # ── 5. Upsert a Supabase ───────────────────────────────────────────
     if supa and filas_db:
