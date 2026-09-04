@@ -12,8 +12,8 @@ name: Deteccion temprana (altas + detalle)
 
 on:
   workflow_dispatch:
-  # schedule:
-  #   - cron: "0 */2 * * *"  # cada 2h UTC; descomentar despues de validar a mano
+  schedule:
+    - cron: "0 */2 * * *"  # cada 2h UTC
 
 permissions:
   issues: write
@@ -61,7 +61,7 @@ jobs:
       - name: Detalle web
         id: detalle
         continue-on-error: true
-        run: python enriquecer_detalle.py
+        run: python enriquecer_detalle.py --limit 150
 
       - name: G3 deteccion_ingesta
         if: ${{ always() && !cancelled() && steps.ingesta.outcome == 'failure' }}
