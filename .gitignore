@@ -17,6 +17,8 @@ data/rag_pruebas.json
 data/eval_*.json
 data/auditoria_rag.json
 data/propuestas_it_*.json
+data/consenso_it_*.json
+data/backfill_c2_*.json
 *.bak
 
 # Export estático de Penpot
