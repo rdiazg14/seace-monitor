@@ -1,6 +1,16 @@
 {
-  "actualizado_utc": "2026-09-03T04:35:02.318840+00:00",
+  "actualizado_utc": "2026-09-05T04:43:00+00:00",
   "items": [
+    {
+      "id": 90331,
+      "origen": "gemini_directo_sin_consenso",
+      "p1": "Redes/cableado",
+      "p2": null,
+      "escrita": "Redes/cableado",
+      "titulo": "Contratar un servicio integral de comunicación privada para Orcopampa, Huancarama y Acarí",
+      "artefacto": "clasificar_gemini.py camino_directo 2026-09-01",
+      "estado": "pendiente"
+    },
     {
       "id": 90140,
       "origen": "consenso_inestable",
