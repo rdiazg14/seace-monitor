@@ -102,6 +102,10 @@ GASTO_STOP_PEN = 2.0
 FLASH_USD_IN_PER_M = 0.50
 FLASH_USD_OUT_PER_M = 3.00
 LAST_OCR_USAGE: dict = {}
+BUCKET_TDR = "tdr"
+MAX_PDF_STORAGE_BYTES = 52_428_800
+_RUTA_ARBOL = re.compile(r"^tdr/\d{4}/\d{2}/\d+/\d+\.pdf$")
+_TZ_LIMA = timezone(timedelta(hours=-5))
 
 
 class SinPdf(Exception):
@@ -551,7 +555,13 @@ def borrar_temp(tmp: Path) -> None:
         print(f"  [warn] no se pudo borrar {tmp}: {e}", flush=True)
 
 
-def procesar_contrato(http: SeaceHttp, contrato: dict, *, permitir_ocr: bool = True) -> dict:
+def procesar_contrato(
+    http: SeaceHttp,
+    contrato: dict,
+    *,
+    permitir_ocr: bool = True,
+    supa=None,
+) -> dict:
     cid = int(contrato["id"])
     _listar_url, archivos = listar_archivos(http, cid)
     elegido = elegir_pdf(archivos)
@@ -594,6 +604,8 @@ def procesar_contrato(http: SeaceHttp, contrato: dict, *, permitir_ocr: bool = T
         descargar_binario(http, dl_url, tmp)
         meta["pdf_hash"] = pdf_sha256(tmp)
         meta["bytes"] = tmp.stat().st_size if tmp.exists() else 0
+        meta["fecha_publica"] = contrato.get("fecha_publica")
+        cachear_pdf_storage(supa, contrato, meta, tmp)
         try:
             extra = extraer_paginas(tmp, permitir_ocr=permitir_ocr)
         except NecesitaOcr as e:
@@ -997,6 +1009,59 @@ def _parse_dt(val) -> datetime | None:
     return dt.astimezone(timezone.utc)
 
 
+def pdf_storage_ruta(cid: int, aid: int, fecha_publica=None) -> str:
+    """tdr/{YYYY}/{MM}/{contrato_id}/{pdf_archivo_id}.pdf (mes Lima)."""
+    dt = _parse_dt(fecha_publica) if fecha_publica is not None else None
+    if dt is None:
+        dt = datetime.now(timezone.utc)
+    lima = dt.astimezone(_TZ_LIMA)
+    return f"tdr/{lima.year:04d}/{lima.month:02d}/{int(cid)}/{int(aid)}.pdf"
+
+
+def es_ruta_arbol_tdr(path: str | None) -> bool:
+    return bool(path and _RUTA_ARBOL.match(str(path).strip()))
+
+
+def cachear_pdf_storage(supa, contrato: dict, meta: dict, tmp: Path) -> None:
+    """Sube el binario ya descargado al bucket tdr. Fallo: log y sigue."""
+    if supa is None or not tmp.exists():
+        return
+    cid = meta.get("id") or contrato.get("id")
+    try:
+        aid = meta.get("pdf_archivo_id") or contrato.get("pdf_archivo_id")
+        if not aid:
+            return
+        raw = tmp.read_bytes()
+        if not raw.lstrip().startswith(b"%PDF"):
+            print(f"  [warn] storage tdr id={cid}: no es PDF, no se cachea", flush=True)
+            return
+        if len(raw) > MAX_PDF_STORAGE_BYTES:
+            print(
+                f"  [warn] storage tdr id={cid}: {len(raw)} bytes > tope "
+                f"{MAX_PDF_STORAGE_BYTES}",
+                flush=True,
+            )
+            return
+        path = pdf_storage_ruta(
+            int(cid),
+            int(aid),
+            contrato.get("fecha_publica") or meta.get("fecha_publica"),
+        )
+        supa.storage.from_(BUCKET_TDR).upload(
+            path,
+            raw,
+            {"content-type": "application/pdf", "upsert": "true"},
+        )
+        meta["pdf_storage_path"] = path
+        meta["pdf_storage_bytes"] = len(raw)
+        print(
+            f"  storage tdr id={cid} OK {path} {len(raw)} bytes",
+            flush=True,
+        )
+    except Exception as e:
+        print(f"  [warn] storage tdr id={cid}: {e}", flush=True)
+
+
 def ventana_cotizacion_abierta(
     row: dict,
     now: datetime | None = None,
@@ -1394,6 +1459,15 @@ def ocr_contrato_selectivo(
     tmp = Path(tmp_name)
     try:
         descargar_binario(http, dl_url, tmp)
+        if not contrato.get("pdf_storage_path"):
+            meta_st = {
+                "id": cid,
+                "pdf_archivo_id": contrato.get("pdf_archivo_id"),
+                "pdf_nombre": contrato.get("pdf_nombre"),
+                "fecha_publica": contrato.get("fecha_publica"),
+            }
+            cachear_pdf_storage(supa, contrato, meta_st, tmp)
+            persistir_storage_si_hay(supa, cid, meta_st)
         with pymupdf.open(tmp) as doc:
             n = doc.page_count
             if not contrato.get("tdr_n_paginas"):
@@ -1759,7 +1833,7 @@ def guardar_ok(supa, row: dict) -> None:
                 else len(ocr_pend))
     n_nat = int(row.get("n_paginas_nativas") if row.get("n_paginas_nativas") is not None
                 else max(n_pag - n_ocr, 0))
-    _update_contrato(supa, row["id"], {
+    payload = {
         "tdr_texto": row["tdr_texto"] or None,
         "pdf_hash": row["pdf_hash"],
         "pdf_es_imagen": tipo != "nativo_puro",
@@ -1774,12 +1848,18 @@ def guardar_ok(supa, row: dict) -> None:
         "tdr_n_paginas_ocr": n_ocr,
         "_pdf_archivo_id": row.get("pdf_archivo_id"),
         "_pdf_nombre": (row.get("pdf_nombre") or "")[:500] or None,
-    })
+    }
+    if row.get("pdf_storage_path"):
+        payload["pdf_storage_path"] = row["pdf_storage_path"]
+        payload["pdf_storage_at"] = datetime.now(timezone.utc).isoformat()
+        if row.get("pdf_storage_bytes") is not None:
+            payload["pdf_storage_bytes"] = int(row["pdf_storage_bytes"])
+    _update_contrato(supa, row["id"], payload)
 
 
 def guardar_pendiente_ocr(supa, cid: int, meta: dict) -> None:
     """Deja pdf_descargado=false para --solo-ocr. No llama a Flash."""
-    _update_contrato(supa, cid, {
+    payload = {
         "tdr_texto": None,
         "pdf_hash": meta.get("pdf_hash"),
         "pdf_es_imagen": True,
@@ -1788,7 +1868,31 @@ def guardar_pendiente_ocr(supa, cid: int, meta: dict) -> None:
         "req_url": REQ_PENDIENTE_OCR,
         "_pdf_archivo_id": meta.get("pdf_archivo_id"),
         "_pdf_nombre": (meta.get("pdf_nombre") or "")[:500] or None,
-    })
+    }
+    if meta.get("pdf_storage_path"):
+        payload["pdf_storage_path"] = meta["pdf_storage_path"]
+        payload["pdf_storage_at"] = datetime.now(timezone.utc).isoformat()
+        if meta.get("pdf_storage_bytes") is not None:
+            payload["pdf_storage_bytes"] = int(meta["pdf_storage_bytes"])
+    _update_contrato(supa, cid, payload)
+
+
+def persistir_storage_si_hay(supa, cid: int, meta: dict) -> None:
+    """Persiste solo columnas pdf_storage_* si el upload ya llenó meta."""
+    path = meta.get("pdf_storage_path")
+    if not path:
+        return
+    payload = {
+        "pdf_storage_path": path,
+        "pdf_storage_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if meta.get("pdf_storage_bytes") is not None:
+        payload["pdf_storage_bytes"] = int(meta["pdf_storage_bytes"])
+    if meta.get("pdf_archivo_id") is not None:
+        payload["_pdf_archivo_id"] = meta["pdf_archivo_id"]
+    if meta.get("pdf_nombre"):
+        payload["_pdf_nombre"] = str(meta["pdf_nombre"])[:500]
+    _update_contrato(supa, cid, payload)
 
 
 def guardar_sin_pdf(supa, cid: int) -> None:
@@ -2240,7 +2344,9 @@ def main() -> None:
             cid = int(c["id"])
             desc = (c.get("descripcion_contrato") or "")[:50]
             try:
-                row = procesar_contrato(http, c, permitir_ocr=permitir_ocr)
+                row = procesar_contrato(
+                    http, c, permitir_ocr=permitir_ocr, supa=None if args.dry_run else supa
+                )
                 tipo = row.get("tdr_tipo_extraccion") or clasificar_tipo(
                     int(row.get("n_paginas") or 0),
                     list(row.get("ocr_paginas") or []),
@@ -2303,6 +2409,7 @@ def main() -> None:
                 err += 1
                 imprimir_linea(i, len(filas), cid, f"FAIL ({e})", desc)
                 if not args.dry_run:
+                    persistir_storage_si_hay(supa, cid, e.meta or {})
                     registrar_rechazo(
                         supa,
                         payload_rechazo(c, str(e)[:500], {
