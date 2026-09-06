@@ -1,7 +1,7 @@
 # Traspaso maestro — SEACE Monitor
 
 Contexto completo para retomar el proyecto **sin chat previo**.
-Snapshot: **1 sep 2026** (Perú). Un solo punto de entrada; el detalle vive en los docs enlazados.
+Snapshot: **5 sep 2026** (Perú). Un solo punto de entrada; el detalle vive en los docs enlazados.
 
 | Doc | Para qué |
 |---|---|
@@ -40,24 +40,24 @@ El front **no** llama a Gemini. Lee Supabase (anon + RLS) y pega al Worker. El p
 ### Método de trabajo
 
 - **Expand-contract (D5):** columnas/RPC nuevas en paralelo; no dropear v1 hasta Fase 7. El RAG nunca queda a medias.
-- **Probar chico** (dry-run, `--limit`, un contrato) → medir → recién entonces cron/prod. **Excepción:** `clasificar_gemini.py` no es determinista (`temperature: 0` igual). Un dry-run limpio **no** garantiza el UPDATE real; revisar el SELECT a mano antes de confiar.
+- **Probar chico** (dry-run, `--limit`, un contrato) → medir → recién entonces cron/prod. **Excepción:** `clasificar_gemini.py` no es determinista (`temperature: 0` igual). `--dry-run` y la escritura eran dos inferencias distintas (1 sep: dry-run 1, escritura 3). Usar `--proponer` / `--consenso` / `--aplicar`. Un dry-run limpio **no** garantiza el UPDATE real.
 - **Medir, no adivinar:** eval G4 (`data/eval_v2.json`, success@10 **0.633**). Etiquetas en arquitectura: MEDIDA vs POR-DEFECTO.
 - **Puntos de control:** Rolando aprueba antes de cron, deploy masivo u OCR caro.
 - **Calibración vs código:** el asistente (Rolando) define criterio de negocio; Cursor implementa. Criterios ENERTRONIC mandan sobre ocurrencias del LLM.
 
-Al retomar: leé **§6 (cierre 30–31 ago + clasificación 1 sep)** + §7 (gotchas) + [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md). No reabras retrieval v2 ni Auth salvo pedido explícito. No diseñes B13/B14 hasta confirmar B20 estable. **No** metas `clasificar_gemini.py` en el cron: hace falta Arquitectura C (sesión aparte).
+Al retomar: leé **§6 (cierre 30–31 ago + clasificación 1 sep + cierre 3–5 sep)** + §7 (gotchas) + [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md). No reabras retrieval v2 ni Auth salvo pedido explícito. C1 y C2 están hechos; C3 y C4 **no**. **No** metas `clasificar_gemini.py` en el cron (eso es C4).
 
 ---
 
 ## 1. Mapa de los 4 repos
 
-Hashes de este corte (HEAD `origin/main` al 1 sep 2026):
+Hashes de este corte (HEAD `origin/main` al 5 sep 2026):
 
 | Repo | GitHub | Visibilidad | Rama | HEAD |
 |---|---|---|---|---|
-| seace-monitor | https://github.com/rdiazg14/seace-monitor | **público** | `main` | `d430272` |
-| seace-web | https://github.com/rdiazg14/seace-web | **público** | `main` | `8a0b596` |
-| seace-ai-proxy | https://github.com/rdiazg14/seace-ai-proxy | **privado** | `main` | `da3caf8` · Worker CF `cbf31b49-e3e7-44b0-a8cf-6cd4f5113ad4` |
+| seace-monitor | https://github.com/rdiazg14/seace-monitor | **público** | `main` | `c7d5b7c` |
+| seace-web | https://github.com/rdiazg14/seace-web | **público** | `main` | `8a0b596` (sin cambios en esta sesion; no re-verificado el 5 sep) |
+| seace-ai-proxy | https://github.com/rdiazg14/seace-ai-proxy | **privado** | `main` | `da3caf8` (sin cambios en esta sesion; no re-verificado el 5 sep) · Worker CF `cbf31b49-e3e7-44b0-a8cf-6cd4f5113ad4` |
 | seace-pipeline-trigger | carpeta local (mismo account CF) | — | — | Worker `seace-pipeline-trigger.rdiazg14.workers.dev` |
 
 ### 1.1 seace-monitor
@@ -68,11 +68,14 @@ Hashes de este corte (HEAD `origin/main` al 1 sep 2026):
 
 | Path | Rol |
 |---|---|
-| `ingesta_completa.py` | Altas incrementales + keywords `IT_CATS` / `relevancia_ia` |
-| `reclasificar_categoria.py` | Backfill keywords sobre ambas columnas NULL (no Gemini) |
-| `clasificar_gemini.py` | Fase B: `categoria_it` con Flash sobre nulls. **No** está en el cron |
+| `ingesta_completa.py` | Altas incrementales; lee `it_keywords` (fallback `IT_CATS`); `relevancia_ia` |
+| `reclasificar_categoria.py` | Backfill keywords sobre ambas columnas NULL (no Gemini; **no** desetiqueta) |
+| `clasificar_gemini.py` | C1: `--proponer` / `--consenso` / `--aplicar`. `categoria_it` con Flash sobre nulls. **No** está en el cron |
+| `scripts/backfill_categoria.py` | C2 fase 4: backfill histórico `--proponer`/`--aplicar` (puede desetiquetar) |
+| `scripts/run_sql.py` | Ejecuta un `.sql` completo (DDL/DO) vía `DATABASE_URL` |
+| `scripts/validar_keywords_tabla.py` | Equivalencia tabla vs `IT_CATS` (fase 1: 0/77662) |
 | `refresh_estados.py` | G1 frescura de estado (`--gc` existe, **cron no lo pasa**) |
-| `enriquecer_detalle.py` | Área + ítems CUBSO |
+| `enriquecer_detalle.py` | Área + ítems CUBSO (puede pisar `descripcion`) |
 | `descargar_requerimiento.py` | PDF nativo + OCR selectivo |
 | `chunker_contratos.py` | Chunks 800/500, sin overlap |
 | `generar_embeddings.py` | Solo `embedding_v2`, `RETRIEVAL_DOCUMENT` + L2 |
@@ -81,7 +84,8 @@ Hashes de este corte (HEAD `origin/main` al 1 sep 2026):
 | `eval_retrieval.py` | G4 híbrido **pre-rerank** |
 | `buscar_tdr_v2.sql` | RPC vector 1536 |
 | `.github/workflows/pipeline.yml` | Job diario (schedule GHA = respaldo; disparo primario = CF) |
-| `docs/` | Traspaso, arquitectura, cierres 20/29-ago, changelog, criterios, PLAN, SQL funnel/conversión/`cotizar_tipo_log` |
+| `.github/workflows/deteccion_temprana.yml` | Cada 2 h: solo ingesta + detalle. Cron `"0 */2 * * *"` |
+| `docs/` | Traspaso, arquitectura, cierres 20/29-ago, changelog, criterios, PLAN, SQL funnel/conversión/`cotizar_tipo_log` / C2 / B21 |
 | `capa_semantica.sql` | Vistas Dashboard (iter. 9). Ya aplicado. **No** incluye `v_kpis_conversion` |
 | `docs/migracion_funnel_conversion.sql` | Columnas `analizado`/`cotizado`/`fecha_*`. Ya aplicado |
 | `docs/vista_kpis_conversion.sql` | `v_kpis_conversion` + `_rubro`. Ya aplicado (GRANT anon) |
@@ -97,7 +101,9 @@ uv run python chunker_contratos.py --solo-pdf --solo-nuevos
 uv run python generar_embeddings.py --backend gemini --ids 87164 --fuente pdf
 uv run python eval_retrieval.py --backend v2
 uv run python reclasificar_categoria.py --dry-run --limit 200
-uv run python clasificar_gemini.py --dry-run --limit 30 --filtro vigentes
+uv run python clasificar_gemini.py --proponer --filtro vigentes
+uv run python scripts/backfill_categoria.py --proponer
+uv run python scripts/run_sql.py docs/c2_keywords_fase3b.sql --dry-run
 ```
 
 **Deploy:** no hay servidor. Push a `main` no despliega el pipeline. El disparo **primario** es el Worker `seace-pipeline-trigger` (cron CF 14:00 UTC → `workflow_dispatch`). El `schedule: 0 14 * * *` de `pipeline.yml` queda como respaldo. `workflow_dispatch` también permite OCR/skip/dry-run a mano.
@@ -119,7 +125,7 @@ npm run dev          # Vite, puerto 5173 (CORS del Worker lo permite)
 
 `npm run build` → `tsc -b && vite build`. El workflow copia `dist/index.html` a `dist/404.html` (SPA en Pages).
 
-**Deploy:** push a `main` → `.github/workflows/deploy.yml` (`Deploy seace-web → GitHub Pages`). HEAD de este corte: `8a0b596`.
+**Deploy:** push a `main` → `.github/workflows/deploy.yml` (`Deploy seace-web → GitHub Pages`). HEAD de este corte: `8a0b596` (sin cambios en esta sesion; no re-verificado el 5 sep).
 
 ### 1.3 seace-ai-proxy
 
@@ -140,7 +146,7 @@ npx wrangler dev     # secrets desde .dev.vars
 npx wrangler deploy
 ```
 
-No hay Action de deploy del Worker: es manual (`npx wrangler deploy` desde esta carpeta). Versión viva: `npx wrangler deployments list` → este corte **`cbf31b49-e3e7-44b0-a8cf-6cd4f5113ad4`** = git `da3caf8`.
+No hay Action de deploy del Worker: es manual (`npx wrangler deploy` desde esta carpeta). Versión viva: `npx wrangler deployments list` → este corte **`cbf31b49-e3e7-44b0-a8cf-6cd4f5113ad4`** = git `da3caf8` (sin cambios en esta sesion; no re-verificado el 5 sep).
 
 Router (`index.ts`): **GET** `/funnel-pendientes` (Bearer `FUNNEL_TOKEN`; no es para el front) y **GET `/admin/stats`** (JWT de sesión + `perfiles.rol === 'admin'`). El resto es **POST**. `/embed` → 410 · `/analizar` · `/cotizar` (JSON o SSE) · resto = chat RAG (`query` + `history?`). SSE si `Accept: text/event-stream`.
 
@@ -327,7 +333,7 @@ Tres sistemas **aislados** (un flujo no descuenta al otro). Periodo RPD = **UTC*
 
 ### En producción (base, iter. 1–11 + clasificación 1 sep)
 
-Asesor #9 + #10 + #11 (self-routing, streaming, caché exacta) · funnel KV→PG · Dashboard conversión 30d · capa semántica · RAG v2 · memoria #3 · login · **cascada `categoria_it`** (keywords en ingesta + Gemini manual). Foto iter. 1–11: `ESTADO_CIERRE_2026-08-29.md`. Calibración: **87880** SEDAPAR, **87502** CENEPRED.
+Asesor #9 + #10 + #11 (self-routing, streaming, caché exacta) · funnel KV→PG · Dashboard conversión 30d · capa semántica · RAG v2 · memoria #3 · login · **C1** (Gemini consenso, manual) · **C2** (`it_keywords` + backfill). Foto iter. 1–11: `ESTADO_CIERRE_2026-08-29.md`. Calibración: **87880** SEDAPAR, **87502** CENEPRED.
 
 No reabrir salvo pedido: cutover embed 768, Auth, `RAG_BACKEND=v2`, schema 2º orden de #10, orden del cupo ANALYZE, clasificador Flash de `/cotizar` (borrado a propósito). **Sí** se puede reabrir el *cómo* se dispara el cron (B20): el `schedule:` de GHA ya no se trata como reloj fiable.
 
@@ -347,9 +353,9 @@ Auditoría de confianza + Paquete C + B20 + routing RAG + B4 fase 1. Hechos veri
 | Routing RAG | `necesita_internet` lo declara el modelo (schema + fail-closed). Botón «Buscar en TDRs relacionados» → `/chat`. Texto del modelo: «No tengo internet.» Fallback de stream vacío en Chat. |
 | B4 fase 1 | `/observabilidad` + `GET /admin/stats` (JWT + rol admin server-side). Curl: 401 / 401 / 405. |
 
-**Medido, no resuelto — B12**
+**Medido, no resuelto — B12 (30 ago, proxy viejo)**
 
-27.4 % de contratos IT en 60 días con ventana &lt;24 h (**118/430**). ~13 % de esos eran Núcleo. Casos: **90326**, **90083**. B13/B14 (alerta + frecuencia del pipeline) **bloqueados** hasta B20 estable.
+27.4 % de contratos IT en 60 días con ventana &lt;24 h (**118/430**). ~13 % de esos eran Núcleo. Casos: **90326**, **90083**. Re-medido el 3–5 sep con fechas B21: ver cierre 3–5 sep.
 
 **Redefinido — B15**
 
@@ -372,26 +378,66 @@ Cascada en prod. Detalle: [ARQUITECTURA_TECNICA.md](./ARQUITECTURA_TECNICA.md) �
 | Corrida vigentes | `temperature: 0` igual. Dry-run → 1; escritura real → **3**. Quedó **90331** Redes/cableado («comunicación privada»). Revertidos a NULL **90592** (tóner→Hardware) y **90386** (CPU autómata diésel→Hardware). |
 | Qué no hace | Incremental no re-etiqueta. Keywords no leen TDR / ítems / área. OCR `--solo-ti` exige etiqueta (huevo-gallina). JWT admin no UPDATE `categoria_it`. |
 
-**Lección (leer antes de tocar clasificación):** Gemini **no** es determinista. Un dry-run limpio no autoriza un backfill. Revisión humana del SELECT **obligatoria** antes de confiar. **No** automatizar sin Arquitectura C.
+**Lección (leer antes de tocar clasificación):** Gemini **no** es determinista. `--dry-run` y la escritura eran dos inferencias distintas (1 sep: 1 vs 3). El consenso C1 elimina varianza, no sesgo. Revisión humana del SELECT **obligatoria** antes de `--aplicar`. **No** automatizar sin C4.
 
-**Arquitectura C (diseñada, no implementada; sesión aparte):** keywords en tabla de config + Gemini con confianza declarada + desempate para dudosos + cola de revisión admin (fases C1–C4). Hasta entonces `clasificar_gemini.py` queda **manual**.
+**Arquitectura C:** C1 y C2 **implementados** (3–5 sep). C3 (cola de revisión admin) y C4 (integrar al cron) **no** hechos. Hasta C4, `clasificar_gemini.py` queda **manual**.
 
-**Próximo paso recomendado**
+### Cierre 3–5 sep 2026
 
-1. Observar B20 2–3 días (`gh run list`, horario).  
-2. Recién entonces retomar **B13/B14**.  
-3. **B4 fase 2** (tokens Gemini / costo en soles): mismo cuidado que B20; hoy **no** hay `usageMetadata`.  
-4. Clasificación automática = **Arquitectura C**, no «meter el script actual en el cron». No ampliar keywords sucias (`software`, `sistema`, `TI`).
+C1 + B21 + B12 re-medido + detección temprana + B20 cuantificado + C2 (4 fases + 3b). Detalle: [ARQUITECTURA_TECNICA.md](./ARQUITECTURA_TECNICA.md) §C.
+
+**C1 (Arquitectura C fase 1) — IMPLEMENTADO, manual, NO en el cron**
+
+`clasificar_gemini.py`: `--proponer` (Gemini, sin escritura) / `--aplicar` (escritura, sin Gemini) / `--consenso` (interseca N artefactos). Pasada 1: señal literal + confianza declarada. Pasada 2: ciega, sin entidad, área_usuaria ni cubso. `verificar_senal()`: la señal debe existir literal en el texto; sin match → confianza baja; solo en cubso → máximo media. `items_desc`/`items_cubso`: `nom_cubso` ya no tapa la descripción del ítem. Ledger `data/clasificacion_rechazadas.json` (par id+categoría): 90592 tóner, 90386 CPU autómata diésel, 91327 biblioteca virtual. Cola `data/revisar_categoria.json` (commiteada; los artefactos van a `.gitignore`): los 9 inestables de C1 + **90331**. Medición 1802 contratos × 3 corridas: 54 unánimes escritos, 1738 ninguna estable, 9 inestables (4 son el mismo texto «colector de datos»). Aplicado: 54 escritos, 0 descartados por re-SELECT. Commits `6de09f9`, `dd084c2`.
+
+Hallazgo: `--dry-run` y la escritura eran **dos inferencias distintas**. Por eso el dry-run del 1 sep vio 1 y la escritura produjo 3. El consenso elimina **varianza**, no sesgo: 91327 (biblioteca virtual → Licencias) salió unánime en las 3 corridas y fue rechazado a mano.
+
+**B21 — CONFIRMADO Y CORREGIDO**
+
+`parsear_fecha` pegaba `+00:00` a un string naive de SEACE (`dd/mm/yyyy HH:MM:SS`). SEACE entrega hora de pared de Lima. Perú no tiene DST: `-05:00` constante. Evidencia: 78 % de los cierres caen en horario hábil peruano tal como estaban grabados; como UTC, 28 % caían de madrugada. Pico de 1001 cierres a las 23:59 (fin de día civil) que como UTC serían las 18:59. Afectaba `fecha_publica`, `fecha_ini_cotizacion`, `fecha_fin_cotizacion`. Backfill `docs/b21_fix_timezone.sql`: 77485 filas +5h, idempotente, guardia de corte `id<=91374`, marcador en `migraciones_datos`. `pct_habil_8_17`: 48.9 % → 78.1 %. Consumidores que comparaban **instante** (afectados): `ventana_cotizacion_abierta` del OCR, `pasa_filtro` de `clasificar_gemini`. Consumidores que comparan **día Lima** (casi no afectados): `esPostulable`, `seace_fecha_lima`, chips y KPIs del front. Commits `ba27371`, `cbca110`.
+
+`scripts/run_sql.py`: PostgREST no ejecuta DDL ni bloques DO. Lee `DATABASE_URL` del `.env`.
+
+**B12 — RE-MEDIDO con fechas corregidas**
+
+Universo: 445 contratos IT con `fecha_fin` en 60 días. Inalcanzables (ningún disparo 14:00 UTC dentro de la ventana): 78 = 17.5 %. Un solo disparo: 130 (29.2 %). Dos o más: 237 (53.3 %). La medición vieja (27.4 %, 118/430) usaba el proxy «ventana &lt;24 h», que inflaba: de las 145 ventanas cortas, 67 sí contenían un disparo. Por banda: Núcleo 16/82 (19.5 %), Adyacente 5/19 (26.3 %), Oportunista 21/121 (17.4 %), Marginal 36/223 (16.1 %). 2×/día rescataría 11 de 78. 4×/día rescataría 40 de 78. Mediana publicación→apertura: 25 min. Solo 19 de 78 existían en el disparo previo. **No** hay margen de anticipación: SEACE publica y abre casi simultáneo. Residual: 17.5 % inalcanzable; más frecuencia no lo resuelve.
+
+**Detección temprana — IMPLEMENTADA**
+
+`.github/workflows/deteccion_temprana.yml`, cron `"0 */2 * * *"`. Solo ingesta + detalle. Sin G1, sin OCR, sin embeddings, sin git push de `data/`. Duración medida: 2m16s (el diario ~49 min, de los cuales G1 ~40). Primera corrida: 93 altas que el diario no había visto. Repo público: los minutos de Actions no descuentan cupo. Commits `e4f238a`, `666f108`.
+
+**B20 — CUANTIFICADO, no resuelto**
+
+`schedule:` de GHA sobre 10 runs: atraso medio 4h04m, máximo 9h25m. Cron del Worker `seace-pipeline-trigger`: llega con ~26s de desvío. El primario funciona; el respaldo de GitHub es poco fiable.
+
+**C2 — IMPLEMENTADO en 4 fases (+ 3b)**
+
+Tabla `it_keywords` (`id`, `categoria`, `keyword`, `prioridad`, `tipo` incluye/excluye, `limite_palabra`, `activa`, `nota`). RLS SELECT admin (`es_admin()`). Fase 1: carga byte a byte de `IT_CATS` (98 keywords), equivalencia 0 discrepancias / 77662 (`scripts/validar_keywords_tabla.py`). Fase 2: `ingesta_completa.py` lee la tabla. `IT_CATS` queda como FALLBACK con aviso explícito. Flag `--verificar-keywords` (0 diffs sobre 94 altas frescas). Fase 3: 6 includes nuevas (`antivirus`, `videovigilancia`, `telefonia ip`, `internet`, `licencia`, `data center`) + 11 exclusiones. Descartadas por ruido medido: `servidor` (29 casos de personal municipal) y `sistema informatico` (11 filas, mitad locación de personal). Fase 3b: 4 exclusiones más en Cloud/hosting (`grupo electrogeno`, `pozo a tierra`, `subestacion`, `contraincendios`). Fase 4: `scripts/backfill_categoria.py` `--proponer`/`--aplicar`. Snapshot previo `categoria_it_snapshot_c2` (3255 filas). Aplicado: 697 altas, 53 cambios, 222 desetiquetadas. Excluidos del universo: los 54 de C1 y 90331. Distribución antes → después: Hardware 1475 → 1231, Redes 204 → 599, Licencias 157 → 397, Ciberseguridad 123 → 189, Cloud 63 → 106. Total 3245 → 3730. Nulls: 74513 → 74206. Commits `d10051d`, `17ea24e`, `e677c1f`, `c7d5b7c`.
+
+Medición que motivó C2: `impresora` sola producía 769 de 3240 etiquetas (24%); 220 filas Hardware contenían toner/cartucho/tinta. En el otro extremo, 1622 nulls contenían palabras claramente TI que `IT_CATS` no cubría.
+
+**Pendientes (sin plan)**
+
+- C3 (cola de revisión admin) y C4 (integrar al cron): **no** hechos.
+- 9 inestables de C1 + **90331** en `data/revisar_categoria.json` (ese es el contenido de la cola; no hay más ids ahí).
+- `data center` sigue con ruido de planta física pese a las exclusiones.
+- `licencia` tiene ~2/10 de ruido municipal (licencia de funcionamiento).
+- `videovigilancia` incluye capacitaciones y locación de personal de monitoreo.
+- `enriquecer_detalle.py` puede pisar `descripcion`, de donde C1 saca la señal.
+- RLS de `it_keywords` quedó admin-only (`es_admin()`), no `authenticated`.
+- Supabase muestra EXCEEDING USAGE LIMITS.
+- B12 residual: 17.5 % inalcanzable; más frecuencia no lo resuelve.
+- B4 fase 2 (tokens reales de Gemini), B15 (búsqueda web), reranker y chunking: sin cambios.
 
 ### Backlog (todo opcional)
 
 | Ítem | Esfuerzo | Valor | Notas |
 |---|---|---|---|
-| Observar B20 | Operación | Reloj | 2–3 días de `gh run list` |
-| B13 / B14 | Medio | Ventanas &lt;24 h | **Bloqueado** por B20 |
-| B4 fase 2 | Medio | Costo real | Instrumentar Gemini; no mezclar con observabilidad de KV |
-| B15 / búsqueda web | Alto (dimensionar) | Economía #10 | Fusionado; no tabla estática |
-| Cobertura `categoria_it` / **Arquitectura C** | Alto | Anti-drift | Diseñada, **no** implementada. No cablear el script actual al cron |
+| Observar B20 | Operación | Reloj | Cuantificado, **no** resuelto (GHA 10 runs: atraso medio 4h04m, máx 9h25m; Worker ~26s) |
+| B13 / B14 | Medio | Ventanas cortas | B12 residual 17.5 % inalcanzable; más frecuencia no lo resuelve. Detección temprana (2 h) ya está |
+| B4 fase 2 | Medio | Costo real | Instrumentar Gemini; no mezclar con observabilidad de KV. **Sin cambios** el 3–5 sep |
+| B15 / búsqueda web | Alto (dimensionar) | Economía #10 | Fusionado; no tabla estática. **Sin cambios** el 3–5 sep |
+| C3 / C4 | Alto | Anti-drift + cron | C1 y C2 hechos. C3 cola admin y C4 cron: **no** hechos. No cablear Gemini al yaml |
 | B17 auto-postulación | Alto | Producto | Análisis profundo; **alto riesgo legal**. No tocado |
 | B18 firma blockchain | Investigar | Mercado | Medir corpus antes de construir. No tocado |
 | B19 2ª fuente SEACE | Alto | Cobertura | prod4 / OpenEgocio; hay bot-detection. No tocado |
@@ -439,9 +485,9 @@ Cascada en prod. Detalle: [ARQUITECTURA_TECNICA.md](./ARQUITECTURA_TECNICA.md) �
 26. **CRITERIOS §3 «la IA busca» no está en código.** No inventar una tabla de precios “para cumplir el criterio” sin dimensionar B15.
 27. **B20 no está cerrado al 100 %.** Un run `workflow_dispatch` (33319218551) prueba el mecanismo, no la serie de horarios. No diseñar B13/B14 encima todavía.
 28. **`GITHUB_PAT` / `TRIGGER_TEST_TOKEN`:** los carga Rolando. Cursor no hace `wrangler secret put` de esos valores.
-29. **`categoria_it` es cascada, no un job único.** Keywords en la ingesta; `reclasificar_categoria.py` para nulls viejos; Gemini **solo** si ambas columnas siguen NULL. El incremental **no** re-etiqueta. Keywords **no** leen `tdr_texto` / `items_json` / `nom_area_usuaria`.
-30. **`clasificar_gemini.py` es herramienta manual.** `temperature: 0` no lo vuelve determinista: dry-run vigentes → 1; escritura → 3. Revisar el SELECT a mano. No descuenta cupos KV ni `flash_ocr_cuota.json`. Clasifica por objeto, no por área. `ninguna` → NULL. Toner / CPU de grupo electrógeno ≠ Hardware (FP 90592/90386 revertidos). **No** meterlo en el cron sin Arquitectura C.
-31. **OCR `--solo-ti` exige etiqueta previa** (`es_ti` = `categoria_it` OR `relevancia_ia`). Huevo-gallina: un IT que keywords no vio nunca entra a Flash OCR. Arquitectura C es el lugar para romper ese ciclo, no un cron del script actual.
+29. **`categoria_it` es cascada, no un job único.** La ingesta lee `it_keywords` (C2; fallback `IT_CATS`). C2 fase 4 (`scripts/backfill_categoria.py`) ya aplicó la cascada nueva al corpus histórico (puede desetiquetar). `reclasificar_categoria.py` sigue existiendo pero solo mira ambas columnas NULL y **no** desetiqueta. C1 Gemini **solo** si ambas columnas siguen NULL (no pisa los 54 escritos ni 90331). El incremental **no** re-etiqueta ids viejos. Keywords **no** leen `tdr_texto` / `items_json` / `nom_area_usuaria`.
+30. **`clasificar_gemini.py` es herramienta manual (C1 hecho, C4 no).** `--proponer` / `--consenso` / `--aplicar`. `temperature: 0` no lo vuelve determinista: `--dry-run` y la escritura eran dos inferencias (1 sep: 1 vs 3). El consenso elimina varianza, no sesgo (91327 unánime y rechazado a mano). Ledger `clasificacion_rechazadas.json`. No descuenta cupos KV ni `flash_ocr_cuota.json`. Clasifica por objeto, no por área. `ninguna` → NULL. **No** meterlo en el cron (C4).
+31. **OCR `--solo-ti` exige etiqueta previa** (`es_ti` = `categoria_it` OR `relevancia_ia`). Huevo-gallina: un IT que keywords no vio nunca entra a Flash OCR. C2 redujo nulls (74513 → 74206) pero no rompe el ciclo. `enriquecer_detalle.py` puede pisar `descripcion`, de donde C1 saca la señal. C3/C4 no hechos.
 32. **Admin JWT no UPDATE `categoria_it`.** RLS de `contratos` es SELECT. Correcciones a mano: service role / SQL Editor.
 33. **`categoria_it` y `relevancia_ia` son ejes independientes.** 13 categorías TI; solo IA/analytics es «tiene IA». Ruta pide **cualquiera** de las dos. No clasificar preguntando solo «¿tiene IA?».
 34. **Windows cp1252:** prints con `→` u otro no-ASCII revientan el pipeline. ASCII (`->`) o UTF-8 forzado en stdout. Fix: `24a2a3b`.
@@ -461,11 +507,11 @@ Cascada en prod. Detalle: [ARQUITECTURA_TECNICA.md](./ARQUITECTURA_TECNICA.md) �
 | Web local | `d:\ROLANDO\DEV_APPS\seace8uit\seace-web` |
 | Worker local | `d:\ROLANDO\DEV_APPS\seace8uit\seace-ai-proxy` |
 | Trigger local | `d:\ROLANDO\DEV_APPS\seace8uit\seace-pipeline-trigger` |
-| HEAD monitor | `d430272` |
-| HEAD web | `8a0b596` |
-| HEAD worker | `da3caf8` |
+| HEAD monitor | `c7d5b7c` |
+| HEAD web | `8a0b596` (sin cambios en esta sesion; no re-verificado el 5 sep) |
+| HEAD worker | `da3caf8` (sin cambios en esta sesion; no re-verificado el 5 sep) |
 | Worker CF Gemini | `cbf31b49-e3e7-44b0-a8cf-6cd4f5113ad4` |
-| Pages | push `main` → Actions GitHub Pages (HEAD `8a0b596`) |
+| Pages | push `main` → Actions GitHub Pages (HEAD `8a0b596`, sin cambios en esta sesion; no re-verificado el 5 sep) |
 | Disparo pipeline | CF Cron `0 14 * * *` → `workflow_dispatch` (GHA `schedule:` respaldo) |
 | Chat local | `npm run dev` (5173) |
 | Worker local | `npx wrangler dev` |
@@ -480,4 +526,4 @@ Cascada en prod. Detalle: [ARQUITECTURA_TECNICA.md](./ARQUITECTURA_TECNICA.md) �
 
 Endpoints Worker Gemini: `POST /` · `POST /analizar` · `POST /cotizar` · `GET /funnel-pendientes` (FUNNEL_TOKEN) · `GET /admin/stats` (JWT admin) · `POST /embed` → 410.
 
-Fecha snapshot: **1 sep 2026** (Perú).
+Fecha snapshot: **5 sep 2026** (Perú).
