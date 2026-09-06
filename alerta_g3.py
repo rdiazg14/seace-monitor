@@ -100,7 +100,7 @@ def main() -> None:
     ap.add_argument(
         "--paso",
         default="",
-        help="Eslabón que falló (ingesta, g1, detalle, pdf, ocr, chunk, embed, funnel)",
+        help="Eslabón que falló (ingesta, g1, detalle, pdf, ocr, chunk, embed, analizar, funnel)",
     )
     args = ap.parse_args()
 

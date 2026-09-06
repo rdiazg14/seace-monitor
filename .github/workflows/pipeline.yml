@@ -1,4 +1,4 @@
-# Pipeline diario unificado: ingesta → G1 → detalle → PDF nativo → OCR 2h → chunk + embed v2 → funnel.
+# Pipeline diario unificado: ingesta → G1 → detalle → PDF nativo → OCR 2h → chunk + embed v2 → analizar postulables → funnel.
 # Cron 09:00 Perú (14:00 UTC). Solo alimenta embedding_v2; no llama al Worker /embed ni escribe embedding(768).
 name: Pipeline diario SEACE
 
@@ -49,6 +49,8 @@ jobs:
       SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       FUNNEL_TOKEN: ${{ secrets.FUNNEL_TOKEN }}
+      ANALIZAR_SERVICE_TOKEN: ${{ secrets.ANALIZAR_SERVICE_TOKEN }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -156,6 +158,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python alerta_g3.py --paso embed_v2 --job-status failure
+
+      - name: Analizar postulables
+        id: analizar
+        if: ${{ success() && github.event.inputs.solo_ocr != 'true' }}
+        continue-on-error: true
+        timeout-minutes: 20
+        run: python scripts/analizar_postulables.py --limit 25
+
+      - name: G3 analizar
+        if: ${{ always() && !cancelled() && github.event.inputs.solo_ocr != 'true' && steps.analizar.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python alerta_g3.py --paso analizar --job-status failure
 
       - name: Reconciliar funnel
         id: funnel
