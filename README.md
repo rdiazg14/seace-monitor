@@ -4,6 +4,10 @@ Pipeline diario del **SEACE Monitor** (contrataciones menores del Estado peruano
 
 **Punto de entrada para retomar el producto:** [`docs/TRASPASO_MAESTRO_SEACE.md`](docs/TRASPASO_MAESTRO_SEACE.md).
 
+> **NO usar `--forzar-completa` hasta completar la fase 6:** reescribe
+> `categoria_it` con keywords y pisaría las 54 clasificaciones de C1.
+> El flag exige además `SEACE_FORZAR_COMPLETA=1`. Ver [`docs/ARQUITECTURA_DATOS.md`](docs/ARQUITECTURA_DATOS.md).
+
 El README de abajo describe el scraper CSV original (`scraper_seace_menores.py` / `data/contratos_token.csv`). El job de producción es **`.github/workflows/pipeline.yml` a las 09:00 Perú**, no el scrape de las 06:00. Clasificación IT: keywords en `ingesta_completa.py`; backfill `reclasificar_categoria.py`; Gemini `clasificar_gemini.py` (manual, **no** está en el cron).
 
 ---

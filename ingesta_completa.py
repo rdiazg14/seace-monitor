@@ -518,7 +518,11 @@ def main():
         description="Ingesta corpus SEACE → Supabase + parquet + CSV"
     )
     ap.add_argument("--forzar-completa", action="store_true",
-                    help="ignora max_id y re-descarga todo el corpus")
+                    help=(
+                        "ignora max_id y re-descarga todo el corpus. "
+                        "MORATORIA hasta fase 6: pisa categoria_it (C1). "
+                        "Requiere SEACE_FORZAR_COMPLETA=1."
+                    ))
     ap.add_argument("--headed", action="store_true",
                     help="navegador visible (útil para depurar)")
     ap.add_argument("--simular-rechazo", action="store_true",
@@ -534,6 +538,13 @@ def main():
         ),
     )
     args = ap.parse_args()
+    if args.forzar_completa and os.environ.get("SEACE_FORZAR_COMPLETA", "").strip() != "1":
+        raise SystemExit(
+            "MORATORIA: --forzar-completa reescribe categoria_it con keywords "
+            "y pisaria las 54 clasificaciones de C1. Bloqueado hasta completar "
+            "la fase 6 (docs/ARQUITECTURA_DATOS.md). Para anular en staging: "
+            "SEACE_FORZAR_COMPLETA=1"
+        )
     os.makedirs("data", exist_ok=True)
 
     # ── 1. Iniciar Supabase ────────────────────────────────────────────
