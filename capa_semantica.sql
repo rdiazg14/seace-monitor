@@ -3,8 +3,8 @@
 -- Ejecutar en: Supabase → SQL Editor → Run
 -- Idempotente (CREATE OR REPLACE).
 --
--- Día Lima = timezone('America/Lima', timestamptz)::date
---   (misma regla que esPostulable() / limaDateISO() en el front)
+-- Postulable = instante (ini <= now <= fin). Día Lima solo para tramos
+--   de cierre (mañana / semana 2–7) y altas 7d. Gemelo de esPostulable().
 --
 -- Rubro en KPIs: fn_rubro_energetic = gemelo de clasificarNivel()
 --   (rutaDia.ts). Solo se evalúa sobre postulables (conjunto chico).
@@ -182,21 +182,20 @@ SELECT
   seace_rubro_linea(c.categoria_it) AS rubro,
   (
     c.estado = 'Vigente'
-    AND (
-      c.fecha_fin_cotizacion IS NULL
-      OR seace_fecha_lima(c.fecha_fin_cotizacion) >= seace_hoy_lima()
-    )
+    AND (c.fecha_ini_cotizacion IS NULL OR c.fecha_ini_cotizacion <= now())
+    AND (c.fecha_fin_cotizacion IS NULL OR c.fecha_fin_cotizacion >= now())
   ) AS es_postulable,
   (
     c.estado = 'Vigente'
     AND c.fecha_fin_cotizacion IS NOT NULL
-    AND seace_fecha_lima(c.fecha_fin_cotizacion) < seace_hoy_lima()
+    AND c.fecha_fin_cotizacion < now()
   ) AS es_vigente_ventana_vencida,
   (c.estado = 'En Evaluación') AS es_en_evaluacion,
   (c.estado = 'Culminado') AS es_culminado,
   (
     c.estado = 'Vigente'
-    AND seace_fecha_lima(c.fecha_fin_cotizacion) = seace_hoy_lima()
+    AND c.fecha_fin_cotizacion >= now()
+    AND c.fecha_fin_cotizacion <= (seace_hoy_lima() + time '23:59:59.999') AT TIME ZONE 'America/Lima'
   ) AS cierra_hoy,
   (
     c.estado = 'Vigente'
@@ -212,7 +211,11 @@ SELECT
     AND seace_fecha_lima(c.fecha_fin_cotizacion)
       BETWEEN seace_hoy_lima() + 2 AND seace_hoy_lima() + 7
   ) AS cierra_semana,
-  (seace_fecha_lima(c.fecha_publica) = seace_hoy_lima()) AS es_nuevo_hoy
+  (seace_fecha_lima(c.fecha_publica) = seace_hoy_lima()) AS es_nuevo_hoy,
+  (
+    c.estado = 'Vigente'
+    AND c.fecha_ini_cotizacion > now()
+  ) AS es_por_abrir
 FROM contratos c
 WHERE c.categoria_it IS NOT NULL OR c.relevancia_ia IS NOT NULL;
 
@@ -231,15 +234,24 @@ it AS (
 post AS (
   SELECT *
   FROM it
-  WHERE estado = 'Vigente' AND (fin IS NULL OR fin >= (SELECT d FROM hoy))
+  WHERE estado = 'Vigente'
+    AND (fecha_ini_cotizacion IS NULL OR fecha_ini_cotizacion <= now())
+    AND (fecha_fin_cotizacion IS NULL OR fecha_fin_cotizacion >= now())
 )
 SELECT
   (SELECT count(*)::int FROM post) AS total_postulables,
-  (SELECT count(*)::int FROM post WHERE fin = (SELECT d FROM hoy)) AS cierran_hoy,
+  (SELECT count(*)::int FROM post
+    WHERE fecha_fin_cotizacion >= now()
+      AND fecha_fin_cotizacion <= ((SELECT d FROM hoy) + time '23:59:59.999') AT TIME ZONE 'America/Lima'
+  ) AS cierran_hoy,
   (SELECT count(*)::int FROM post WHERE fin = (SELECT d FROM hoy) + 1) AS cierran_manana,
   (SELECT count(*)::int FROM post WHERE fin BETWEEN (SELECT d FROM hoy) + 2 AND (SELECT d FROM hoy) + 7) AS cierran_semana,
   (SELECT count(*)::int FROM post WHERE pub = (SELECT d FROM hoy)) AS nuevos_hoy_postulables,
-  (SELECT count(*)::int FROM it WHERE estado = 'Vigente' AND fin IS NOT NULL AND fin < (SELECT d FROM hoy)) AS vigentes_ventana_vencida,
+  (SELECT count(*)::int FROM it
+    WHERE estado = 'Vigente'
+      AND fecha_fin_cotizacion IS NOT NULL
+      AND fecha_fin_cotizacion < now()
+  ) AS vigentes_ventana_vencida,
   (SELECT count(*)::int FROM it WHERE estado = 'En Evaluación') AS en_evaluacion,
   (SELECT count(*)::int FROM it WHERE estado = 'Culminado') AS culminados_it,
   (SELECT count(*)::int FROM it WHERE pub BETWEEN (SELECT d FROM hoy) - 6 AND (SELECT d FROM hoy)) AS altas_it_7d,
@@ -276,10 +288,8 @@ WITH post AS (
   FROM contratos
   WHERE (categoria_it IS NOT NULL OR relevancia_ia IS NOT NULL)
     AND estado = 'Vigente'
-    AND (
-      fecha_fin_cotizacion IS NULL
-      OR seace_fecha_lima(fecha_fin_cotizacion) >= seace_hoy_lima()
-    )
+    AND (fecha_ini_cotizacion IS NULL OR fecha_ini_cotizacion <= now())
+    AND (fecha_fin_cotizacion IS NULL OR fecha_fin_cotizacion >= now())
 ),
 scored AS (
   SELECT
@@ -325,10 +335,10 @@ GRANT SELECT ON v_kpis_dashboard TO anon, authenticated;
 GRANT SELECT ON v_kpis_negocio TO anon, authenticated;
 
 COMMENT ON VIEW v_contratos_estado IS
-  'Universo IT/IA con flags de postulabilidad (día Lima). rubro = mapeo linea (barato).';
+  'Universo IT/IA. es_postulable = instante (ini<=now<=fin). es_por_abrir = ini futura. cierran_hoy = now..fin dia Lima. rubro = mapeo linea.';
 COMMENT ON VIEW v_kpis_dashboard IS
-  'Agregados del tablero. cierran_semana = días 2–7 (igual que Ruta del día).';
+  'Agregados del tablero. total_postulables por instante. cierran_hoy = now..medianoche Lima; manana/semana por dias Lima (2-7).';
 COMMENT ON VIEW v_kpis_negocio IS
-  'KPIs ENERTRONIC sobre postulables. Rubro = fn_rubro_energetic (overlay + IA real).';
+  'KPIs ENERTRONIC sobre postulables (instante). Rubro = fn_rubro_energetic.';
 
 NOTIFY pgrst, 'reload schema';
