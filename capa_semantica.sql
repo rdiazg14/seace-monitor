@@ -113,6 +113,7 @@ AS $$
     WHEN 'IA/analytics' THEN 'nucleo'
     WHEN 'Cloud/hosting' THEN 'nucleo'
     WHEN 'Desarrollo software' THEN 'nucleo'
+    WHEN 'Telemetria/OT' THEN 'nucleo'
     WHEN 'Base de datos/ERP' THEN 'adyacente'
     WHEN 'Oracle' THEN 'adyacente'
     WHEN 'Soporte tecnico' THEN 'oportunista'
