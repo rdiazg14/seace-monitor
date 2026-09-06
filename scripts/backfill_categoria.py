@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -28,7 +29,7 @@ from psycopg.rows import dict_row
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
-from ingesta_completa import _contiene, _texto_contrato  # noqa: E402
+from ingesta_completa import _contiene, _norm, _texto_contrato  # noqa: E402
 
 _ENV = _ROOT / ".env"
 DATA_DIR = _ROOT / "data"
@@ -53,6 +54,40 @@ IDS_C1_HARDCODE: frozenset[int] = frozenset({
 # de keywords no la puede borrar: un substring que no matchea no es evidencia
 # de que la etiqueta este mal. Va a la cola, no a NULL.
 IDS_PROTEGIDOS: frozenset[int] = frozenset({90331})
+
+TESTIGOS_FASE4: tuple[int, ...] = (
+    91505, 92055, 91928, 92040, 91674, 91637, 92167,
+    92056, 92070, 92081, 91688, 92082, 91583, 91936,
+)
+
+
+def _contiene_plural(texto_norm: str, kw: str) -> bool:
+    """s/es opcional en cada palabra. \\b palabrae?s? \\b ..."""
+    kn = _norm(kw)
+    words = kn.split()
+    if not words:
+        return False
+    parts = [re.escape(w) + r"e?s?" for w in words]
+    return bool(re.search(r"\b" + r"\s+".join(parts) + r"\b", texto_norm))
+
+
+def _match_kw(texto_norm: str, d: dict) -> bool:
+    kw = d["keyword"]
+    if d.get("tolera_plural"):
+        return _contiene_plural(texto_norm, kw)
+    return _contiene(texto_norm, kw, bool(d.get("limite_palabra")))
+
+
+def _es_postulable(row: dict, ahora: datetime) -> bool:
+    if row.get("estado") != "Vigente":
+        return False
+    ini = row.get("fecha_ini_cotizacion")
+    fin = row.get("fecha_fin_cotizacion")
+    if ini is not None and ini > ahora:
+        return False
+    if fin is not None and fin < ahora:
+        return False
+    return True
 
 
 def _cargar_env() -> None:
@@ -183,7 +218,7 @@ def ids_excluidos_universo() -> tuple[set[int], set[int], dict]:
 def cargar_cascada(conn) -> list[tuple[str, list[dict]]]:
     filas = conn.execute(
         """
-        SELECT categoria, keyword, tipo, limite_palabra, prioridad
+        SELECT categoria, keyword, tipo, limite_palabra, prioridad, tolera_plural
         FROM it_keywords
         WHERE activa
         ORDER BY prioridad, id
@@ -195,11 +230,12 @@ def cargar_cascada(conn) -> list[tuple[str, list[dict]]]:
             "keyword": f["keyword"],
             "tipo": f.get("tipo") or "incluye",
             "limite_palabra": bool(f.get("limite_palabra")),
+            "tolera_plural": bool(f.get("tolera_plural")),
         })
-    if len(grupos) < 13:
+    if len(grupos) < 14:
         print(
             f"ERROR: it_keywords activa tiene {len(grupos)} categorias "
-            "(se esperan 13). Aborto.",
+            "(se esperan 14, con Telemetria/OT). Aborto.",
             flush=True,
         )
         sys.exit(1)
@@ -213,15 +249,12 @@ def clasificar_con_kw(
     """(categoria, keyword incluye que gano)."""
     t = _texto_contrato(api)
     for cat, kws in cats:
-        if any(
-            _contiene(t, d["keyword"], bool(d.get("limite_palabra")))
-            for d in kws if d.get("tipo") == "excluye"
-        ):
+        if any(_match_kw(t, d) for d in kws if d.get("tipo") == "excluye"):
             continue
         for d in kws:
             if d.get("tipo") == "excluye":
                 continue
-            if _contiene(t, d["keyword"], bool(d.get("limite_palabra"))):
+            if _match_kw(t, d):
                 return cat, d["keyword"]
     return None, None
 
@@ -239,7 +272,7 @@ def keyword_desetiqueta(
         for d in kws:
             if d.get("tipo") != "excluye":
                 continue
-            if _contiene(t, d["keyword"], bool(d.get("limite_palabra"))):
+            if _match_kw(t, d):
                 return d["keyword"]
         return None
     return None
@@ -283,7 +316,7 @@ def comando_proponer() -> int:
         contratos = conn.execute(
             """
             SELECT id, descripcion, descripcion_contrato, objeto, entidad,
-                   categoria_it
+                   categoria_it, estado, fecha_ini_cotizacion, fecha_fin_cotizacion
             FROM contratos
             ORDER BY id
             """
@@ -297,6 +330,8 @@ def comando_proponer() -> int:
     por_deset: Counter[str] = Counter()
     items: list[dict] = []
     ids_en_items: set[int] = set()
+    testigos: dict[int, dict] = {}
+    altas_postulables: list[dict] = []
 
     for row in contratos:
         cid = int(row["id"])
@@ -305,6 +340,15 @@ def comando_proponer() -> int:
                 n_c1_en_corpus += 1
             if cid in IDS_PROTEGIDOS:
                 n_prot_en_corpus += 1
+            if cid in TESTIGOS_FASE4:
+                testigos[cid] = {
+                    "id": cid,
+                    "titulo": _titulo(row),
+                    "antes": _cat(row.get("categoria_it")),
+                    "despues": None,
+                    "accion": "excluido_c1_o_protegido",
+                    "keyword_que_gano": None,
+                }
             continue
         api = _fila_api(row)
         despues, kw_g = clasificar_con_kw(api, cats)
@@ -325,17 +369,22 @@ def comando_proponer() -> int:
             accion = "sin_cambio"
             kw = kw_g if despues is not None else None
         por_accion[accion] += 1
-        if accion == "sin_cambio":
-            continue
-        ids_en_items.add(cid)
-        items.append({
+        rec = {
             "id": cid,
             "titulo": _titulo(row),
             "antes": antes,
             "despues": despues,
             "accion": accion,
             "keyword_que_gano": kw,
-        })
+        }
+        if cid in TESTIGOS_FASE4:
+            testigos[cid] = rec
+        if accion == "alta" and _es_postulable(row, ahora):
+            altas_postulables.append(rec)
+        if accion == "sin_cambio":
+            continue
+        ids_en_items.add(cid)
+        items.append(rec)
 
     choque_c1 = sorted(ids_en_items & ids_c1)
     choque_prot = sorted(ids_en_items & set(IDS_PROTEGIDOS))
@@ -410,6 +459,32 @@ def comando_proponer() -> int:
     for it in desets[:15]:
         print(
             f"  {it['id']}\t{it['antes']} -> NULL\t"
+            f"kw={it['keyword_que_gano']!r}\t{it['titulo']}",
+            flush=True,
+        )
+
+    altas_postulables.sort(key=lambda x: -x["id"])
+    print(
+        f"\n--- altas postulables (vigente + ventana abierta): "
+        f"{len(altas_postulables)} ---",
+        flush=True,
+    )
+    for it in altas_postulables:
+        print(
+            f"  {it['id']}\t{it['despues']}\t"
+            f"kw={it['keyword_que_gano']!r}\t{it['titulo']}",
+            flush=True,
+        )
+
+    print("\n--- 14 testigos fase 4 ---", flush=True)
+    for cid in TESTIGOS_FASE4:
+        it = testigos.get(cid)
+        if not it:
+            print(f"  {cid}\tNO ESTA EN CORPUS", flush=True)
+            continue
+        print(
+            f"  {cid}\t{it['accion']}\t"
+            f"{it['antes']!r} -> {it['despues']!r}\t"
             f"kw={it['keyword_que_gano']!r}\t{it['titulo']}",
             flush=True,
         )
