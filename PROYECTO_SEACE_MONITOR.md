@@ -170,7 +170,7 @@ seace-ai-proxy/
 
 ```
 SUPABASE_URL      = https://wusywwhcyqngnpvpzxyr.supabase.co
-SUPABASE_ANON_KEY = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind1c3l3d2hjeXFuZ25wdnB6eHlyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY3NDc0NDcsImV4cCI6MjEwMjMyMzQ0N30.jDZeGaW8lQuROU7IF11clkfjgyyiMrgyIfi6LvuAFeY
+SUPABASE_ANON_KEY = <ANON_KEY>
 ```
 
 La service_role key (escritura) vive en `.env` local y en GitHub Secrets. **Nunca en código.**
@@ -577,7 +577,7 @@ GitHub Pages retorna 404 cuando se accede directamente a `/chat` o `/buscar`. La
 
 ```
 VITE_SUPABASE_URL      = https://wusywwhcyqngnpvpzxyr.supabase.co
-VITE_SUPABASE_ANON_KEY = eyJhbGci... (anon key, OK en frontend)
+VITE_SUPABASE_ANON_KEY = <ANON_KEY>... (anon key, OK en frontend)
 VITE_WORKER_URL        = https://seace-ai-proxy.rdiazg14.workers.dev
 ```
 
@@ -599,7 +599,7 @@ Cualquier push a `main` de `rdiazg14/seace-web` dispara `deploy.yml`:
 ```
 Base URL: https://wusywwhcyqngnpvpzxyr.supabase.co
 Headers requeridos:
-  apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind1c3l3d2hjeXFuZ25wdnB6eHlyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY3NDc0NDcsImV4cCI6MjEwMjMyMzQ0N30.jDZeGaW8lQuROU7IF11clkfjgyyiMrgyIfi6LvuAFeY
+  apikey: <ANON_KEY>
   Authorization: Bearer [misma key]
   Content-Type: application/json
 ```
@@ -650,7 +650,7 @@ Eres un asistente especializado en contrataciones públicas del Estado peruano (
 Endpoint de búsqueda:
 POST https://wusywwhcyqngnpvpzxyr.supabase.co/rest/v1/rpc/buscar_contratos
 Headers:
-  apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind1c3l3d2hjeXFuZ25wdnB6eHlyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY3NDc0NDcsImV4cCI6MjEwMjMyMzQ0N30.jDZeGaW8lQuROU7IF11clkfjgyyiMrgyIfi6LvuAFeY
+  apikey: <ANON_KEY>
   Authorization: Bearer [mismo]
   Content-Type: application/json
 Body: { "termino": "texto", "filtro_objeto": null, "filtro_estado": null,

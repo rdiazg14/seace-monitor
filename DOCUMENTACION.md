@@ -596,7 +596,7 @@ El frontend es una SPA estática compilada con Vite y desplegada en GitHub Pages
 import { createClient } from '@supabase/supabase-js'
 
 const SUPABASE_URL = 'https://wusywwhcyqngnpvpzxyr.supabase.co'
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
+const SUPABASE_ANON_KEY = '<ANON_KEY>...'
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 ```
@@ -863,13 +863,13 @@ try {
 | Variable | Valor | Dónde vive |
 |---|---|---|
 | `SUPABASE_URL` | `https://wusywwhcyqngnpvpzxyr.supabase.co` | `.env` local + GitHub Secret |
-| `SUPABASE_SERVICE_KEY` | `eyJhbGci...` (JWT service_role) | `.env` local + GitHub Secret — **NUNCA en código** |
+| `SUPABASE_SERVICE_KEY` | `<ANON_KEY>...` (JWT service_role) | `.env` local + GitHub Secret — **NUNCA en código** |
 
 ### seace-web (frontend)
 
 | Variable | Valor | Dónde vive |
 |---|---|---|
-| `SUPABASE_ANON_KEY` | `eyJhbGci...` (JWT anon) | Hardcoded en `src/lib/supabase.ts` — es pública y segura |
+| `SUPABASE_ANON_KEY` | `<ANON_KEY>...` (JWT anon) | Hardcoded en `src/lib/supabase.ts` — es pública y segura |
 
 ### seace-ai-proxy (Cloudflare Worker)
 
@@ -879,8 +879,8 @@ No necesita variables de entorno adicionales. El binding `AI` de Workers AI se c
 
 ```env
 SUPABASE_URL=https://wusywwhcyqngnpvpzxyr.supabase.co
-SUPABASE_SERVICE_KEY=eyJhbGci...   ← obtener de Supabase Settings > API > Legacy
-SUPABASE_ANON_KEY=eyJhbGci...     ← no requerida por el scraper, solo referencia
+SUPABASE_SERVICE_KEY=<ANON_KEY>...   ← obtener de Supabase Settings > API > Legacy
+SUPABASE_ANON_KEY=<ANON_KEY>...     ← no requerida por el scraper, solo referencia
 ```
 
 `.env` está en `.gitignore`. Nunca se commitea.
@@ -998,7 +998,7 @@ Si se cambia el modelo de IA u otra configuración:
 
 ```
 Base URL: https://wusywwhcyqngnpvpzxyr.supabase.co
-API Key:  eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind1c3l3d2hjeXFuZ25wdnB6eHlyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY3NDc0NDcsImV4cCI6MjEwMjMyMzQ0N30.jDZeGaW8lQuROU7IF11clkfjgyyiMrgyIfi6LvuAFeY
+API Key:  <ANON_KEY>
 ```
 
 Headers requeridos en todas las peticiones:
@@ -1014,8 +1014,8 @@ Búsqueda full-text con filtros opcionales.
 
 ```bash
 curl -X POST 'https://wusywwhcyqngnpvpzxyr.supabase.co/rest/v1/rpc/buscar_contratos' \
-  -H "apikey: eyJhbGci..." \
-  -H "Authorization: Bearer eyJhbGci..." \
+  -H "apikey: <ANON_KEY>..." \
+  -H "Authorization: Bearer <ANON_KEY>..." \
   -H "Content-Type: application/json" \
   -d '{
     "termino": "ciberseguridad",
@@ -1031,16 +1031,16 @@ curl -X POST 'https://wusywwhcyqngnpvpzxyr.supabase.co/rest/v1/rpc/buscar_contra
 
 ```bash
 curl 'https://wusywwhcyqngnpvpzxyr.supabase.co/rest/v1/dashboard_resumen' \
-  -H "apikey: eyJhbGci..." \
-  -H "Authorization: Bearer eyJhbGci..."
+  -H "apikey: <ANON_KEY>..." \
+  -H "Authorization: Bearer <ANON_KEY>..."
 ```
 
 ### GET /rest/v1/vigentes_urgentes
 
 ```bash
 curl 'https://wusywwhcyqngnpvpzxyr.supabase.co/rest/v1/vigentes_urgentes?limit=20' \
-  -H "apikey: eyJhbGci..." \
-  -H "Authorization: Bearer eyJhbGci..."
+  -H "apikey: <ANON_KEY>..." \
+  -H "Authorization: Bearer <ANON_KEY>..."
 ```
 
 ### POST https://seace-ai-proxy.rdiazg14.workers.dev
@@ -1058,7 +1058,7 @@ curl -X POST 'https://seace-ai-proxy.rdiazg14.workers.dev' \
 import requests
 
 URL = 'https://wusywwhcyqngnpvpzxyr.supabase.co'
-KEY = 'eyJhbGci...'
+KEY = '<ANON_KEY>...'
 
 def buscar(termino, objeto=None, estado=None, limite=10):
     r = requests.post(
@@ -1092,7 +1092,7 @@ Tienes acceso a una base de datos con 76,250 contratos publicados en 2026.
 
 POST https://wusywwhcyqngnpvpzxyr.supabase.co/rest/v1/rpc/buscar_contratos
 Headers:
-  apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind1c3l3d2hjeXFuZ25wdnB6eHlyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY3NDc0NDcsImV4cCI6MjEwMjMyMzQ0N30.jDZeGaW8lQuROU7IF11clkfjgyyiMrgyIfi6LvuAFeY
+  apikey: <ANON_KEY>
   Authorization: Bearer [mismo valor]
   Content-Type: application/json
 
@@ -1115,7 +1115,7 @@ Eres un experto en el SEACE (contrataciones públicas de Perú).
 Usa Code Interpreter para llamar a esta API:
 
 POST https://wusywwhcyqngnpvpzxyr.supabase.co/rest/v1/rpc/buscar_contratos
-API KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind1c3l3d2hjeXFuZ25wdnB6eHlyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY3NDc0NDcsImV4cCI6MjEwMjMyMzQ0N30.jDZeGaW8lQuROU7IF11clkfjgyyiMrgyIfi6LvuAFeY
+API KEY: <ANON_KEY>
 
 Body: { termino, filtro_objeto, filtro_estado, filtro_entidad: null, limite: 10, offset_val: 0 }
 
