@@ -162,7 +162,7 @@ def _texto_contrato(r: dict) -> str:
 def cargar_keywords(supa) -> list[tuple[str, list[dict]]] | None:
     """Carga it_keywords activas. None si no hay cliente, SELECT falla o tabla vacía.
 
-    Retorno: [(categoria, [{keyword, tipo, limite_palabra}, ...]), ...]
+    Retorno: [(categoria, [{keyword, tipo, limite_palabra, tolera_plural}, ...]), ...]
     en orden de prioridad. No explota: el caller hace fallback a IT_CATS.
     """
     if not supa:
@@ -170,7 +170,7 @@ def cargar_keywords(supa) -> list[tuple[str, list[dict]]] | None:
     try:
         res = (
             supa.table("it_keywords")
-            .select("id,categoria,keyword,tipo,limite_palabra,prioridad")
+            .select("id,categoria,keyword,tipo,limite_palabra,prioridad,tolera_plural")
             .eq("activa", True)
             .order("prioridad")
             .order("id")
@@ -190,8 +190,22 @@ def cargar_keywords(supa) -> list[tuple[str, list[dict]]] | None:
             "keyword": f["keyword"],
             "tipo": f.get("tipo") or "incluye",
             "limite_palabra": bool(f.get("limite_palabra")),
+            "tolera_plural": bool(f.get("tolera_plural")),
         })
     return list(grupos.items())
+
+
+def _match_kw_tabla(texto_norm: str, d: dict) -> bool:
+    """Misma regla que backfill_categoria: tolera_plural o substring/\\b."""
+    kw = d["keyword"]
+    if d.get("tolera_plural"):
+        kn = _norm(kw)
+        words = kn.split()
+        if not words:
+            return False
+        parts = [re.escape(w) + r"e?s?" for w in words]
+        return bool(re.search(r"\b" + r"\s+".join(parts) + r"\b", texto_norm))
+    return _contiene(texto_norm, kw, bool(d.get("limite_palabra")))
 
 
 def clasificar_categoria_it(
@@ -202,6 +216,7 @@ def clasificar_categoria_it(
 
     tipo 'excluye': si matchea, esa categoria no gana y la cascada sigue.
     tipo 'incluye': si matchea, gana. limite_palabra True = \\b...\\b.
+    tolera_plural True = s/es opcional por palabra (solo keywords de tabla).
     """
     t = _texto_contrato(r)
     if cats is None:
@@ -211,12 +226,12 @@ def clasificar_categoria_it(
         return None
     for cat, kws in cats:
         if any(
-            _contiene(t, d["keyword"], bool(d.get("limite_palabra")))
+            _match_kw_tabla(t, d)
             for d in kws if d.get("tipo") == "excluye"
         ):
             continue
         if any(
-            _contiene(t, d["keyword"], bool(d.get("limite_palabra")))
+            _match_kw_tabla(t, d)
             for d in kws if d.get("tipo") != "excluye"
         ):
             return cat
