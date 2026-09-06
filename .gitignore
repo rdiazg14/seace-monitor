@@ -13,6 +13,9 @@ data/muestra_2026.parquet
 /supabase/
 data/rag_pruebas.json
 
+# CUBSO oficial OECE (~12 MB). No versionar el XLS.
+data/cubso/
+
 # Evals / auditorías locales (no son fuente)
 data/eval_*.json
 data/auditoria_rag.json
