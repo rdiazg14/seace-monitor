@@ -22,6 +22,7 @@ Uso:
   uv run python descargar_requerimiento.py --sync-meta
   uv run python descargar_requerimiento.py --solo-ocr --rpm 8 --limit 50
   uv run python descargar_requerimiento.py --solo-ocr --solo-ti --max-segundos 7200
+  uv run python descargar_requerimiento.py --solo-ocr --solo-ti --incluir-por-abrir
 """
 from __future__ import annotations
 
@@ -996,13 +997,25 @@ def _parse_dt(val) -> datetime | None:
     return dt.astimezone(timezone.utc)
 
 
-def ventana_cotizacion_abierta(row: dict, now: datetime | None = None) -> bool:
-    """fecha_fin NOT NULL y > now. NULL no habilita Flash."""
+def ventana_cotizacion_abierta(
+    row: dict,
+    now: datetime | None = None,
+    *,
+    incluir_por_abrir: bool = False,
+) -> bool:
+    """Misma apertura que es_postulable; fin NOT NULL (NULL no gasta Flash).
+
+    Default: (fecha_ini IS NULL OR fecha_ini <= now) AND fecha_fin > now.
+    --incluir-por-abrir: solo exige fecha_fin > now (adelantar OCR).
+    """
     now = now or datetime.now(timezone.utc)
     fin = _parse_dt(row.get("fecha_fin_cotizacion"))
-    if fin is None:
+    if fin is None or fin <= now:
         return False
-    return fin > now
+    if incluir_por_abrir:
+        return True
+    ini = _parse_dt(row.get("fecha_ini_cotizacion"))
+    return ini is None or ini <= now
 
 
 def es_ti(row: dict) -> bool:
@@ -1039,12 +1052,15 @@ def ocr_sin_margen_contrato(t0: float, max_segundos: int) -> bool:
 
 
 def contrato_ocr_sigue_elegible(
-    supa, cid: int, *, solo_ti: bool
+    supa, cid: int, *, solo_ti: bool, incluir_por_abrir: bool = False
 ) -> tuple[bool, str]:
     """SELECT fresco: Vigente + ventana abierta (+ TI si aplica)."""
     res = (
         supa.table("contratos")
-        .select("id,estado,fecha_fin_cotizacion,categoria_it,relevancia_ia")
+        .select(
+            "id,estado,fecha_ini_cotizacion,fecha_fin_cotizacion,"
+            "categoria_it,relevancia_ia"
+        )
         .eq("id", cid)
         .limit(1)
         .execute()
@@ -1054,9 +1070,16 @@ def contrato_ocr_sigue_elegible(
     r = res.data[0]
     if (r.get("estado") or "") != "Vigente":
         return False, f"estado={r.get('estado')}"
-    if not ventana_cotizacion_abierta(r):
-        fin = r.get("fecha_fin_cotizacion")
-        return False, "ventana_null" if fin in (None, "") else "vencido"
+    now = datetime.now(timezone.utc)
+    if not ventana_cotizacion_abierta(
+        r, now, incluir_por_abrir=incluir_por_abrir
+    ):
+        fin = _parse_dt(r.get("fecha_fin_cotizacion"))
+        if fin is None:
+            return False, "ventana_null"
+        if fin <= now:
+            return False, "vencido"
+        return False, "por_abrir"
     if solo_ti and not es_ti(r):
         return False, "no_ti"
     return True, "ok"
@@ -1067,6 +1090,7 @@ def filtrar_ordenar_cola_ocr(
     *,
     solo_ti: bool,
     exigir_ventana: bool = True,
+    incluir_por_abrir: bool = False,
 ) -> tuple[list[dict], dict]:
     now = datetime.now(timezone.utc)
     stats = {
@@ -1074,6 +1098,7 @@ def filtrar_ordenar_cola_ocr(
         "no_vigente": 0,
         "ventana_null": 0,
         "vencidos": 0,
+        "por_abrir": 0,
         "no_ti": 0,
         "ok": 0,
         "alta": 0,
@@ -1087,12 +1112,16 @@ def filtrar_ordenar_cola_ocr(
             stats["no_vigente"] += 1
             continue
         if exigir_ventana:
-            fin = _parse_dt(r.get("fecha_fin_cotizacion"))
-            if fin is None:
-                stats["ventana_null"] += 1
-                continue
-            if fin <= now:
-                stats["vencidos"] += 1
+            if not ventana_cotizacion_abierta(
+                r, now, incluir_por_abrir=incluir_por_abrir
+            ):
+                fin = _parse_dt(r.get("fecha_fin_cotizacion"))
+                if fin is None:
+                    stats["ventana_null"] += 1
+                elif fin <= now:
+                    stats["vencidos"] += 1
+                else:
+                    stats["por_abrir"] += 1
                 continue
         if solo_ti and not es_ti(r):
             stats["no_ti"] += 1
@@ -1119,7 +1148,10 @@ def _enriquecer_cola_ocr(supa, filas: list[dict]) -> list[dict]:
         lote = ids[i:i + 80]
         res = (
             supa.table("contratos")
-            .select("id,estado,fecha_fin_cotizacion,categoria_it,relevancia_ia")
+            .select(
+                "id,estado,fecha_ini_cotizacion,fecha_fin_cotizacion,"
+                "categoria_it,relevancia_ia"
+            )
             .in_("id", lote)
             .execute()
         )
@@ -1127,7 +1159,13 @@ def _enriquecer_cola_ocr(supa, filas: list[dict]) -> list[dict]:
             extra[int(row["id"])] = row
     for r in filas:
         e = extra.get(int(r["id"])) or {}
-        for k in ("estado", "fecha_fin_cotizacion", "categoria_it", "relevancia_ia"):
+        for k in (
+            "estado",
+            "fecha_ini_cotizacion",
+            "fecha_fin_cotizacion",
+            "categoria_it",
+            "relevancia_ia",
+        ):
             if r.get(k) in (None, "") and e.get(k) not in (None, ""):
                 r[k] = e.get(k)
             elif k not in r:
@@ -1141,6 +1179,7 @@ def pendientes_ocr_paginas(
     *,
     solo_ti: bool = False,
     exigir_ventana: bool = True,
+    incluir_por_abrir: bool = False,
 ) -> tuple[list[dict], dict]:
     """Vigentes+ventana+TI (opcional) con páginas imagen pendientes.
 
@@ -1152,7 +1191,7 @@ def pendientes_ocr_paginas(
     cols = (
         "id,nro_contratacion,descripcion_contrato,entidad,fecha_publica,"
         "pdf_descargado,req_url,pdf_es_imagen,tdr_texto,pdf_archivo_id,pdf_nombre,"
-        "estado,fecha_fin_cotizacion,categoria_it,relevancia_ia"
+        "estado,fecha_ini_cotizacion,fecha_fin_cotizacion,categoria_it,relevancia_ia"
     )
     if columnas_extraccion_ok(supa):
         cols += (
@@ -1212,7 +1251,10 @@ def pendientes_ocr_paginas(
         ]
         if not ids:
             return [], filtrar_ordenar_cola_ocr(
-                [], solo_ti=solo_ti, exigir_ventana=exigir_ventana
+                [],
+                solo_ti=solo_ti,
+                exigir_ventana=exigir_ventana,
+                incluir_por_abrir=incluir_por_abrir,
             )[1]
         filas = contratos_por_ids(supa, ids)
         by = {int(r["id"]): r for r in filas}
@@ -1220,7 +1262,8 @@ def pendientes_ocr_paginas(
             supa.table("contratos")
             .select(
                 "id,tdr_texto,pdf_archivo_id,pdf_nombre,pdf_es_imagen,"
-                "estado,fecha_fin_cotizacion,categoria_it,relevancia_ia"
+                "estado,fecha_ini_cotizacion,fecha_fin_cotizacion,"
+                "categoria_it,relevancia_ia"
             )
             .in_("id", ids[:800])
             .execute()
@@ -1249,7 +1292,10 @@ def pendientes_ocr_paginas(
         out = merged
     out = _enriquecer_cola_ocr(supa, out)
     filtradas, stats = filtrar_ordenar_cola_ocr(
-        out, solo_ti=solo_ti, exigir_ventana=exigir_ventana
+        out,
+        solo_ti=solo_ti,
+        exigir_ventana=exigir_ventana,
+        incluir_por_abrir=incluir_por_abrir,
     )
     return filtradas[:limit], stats
 
@@ -1428,6 +1474,7 @@ def run_ocr_selectivo(
     dry_run: bool,
     solo_ti: bool = False,
     max_segundos: int = OCR_MAX_SEGUNDOS_DEFAULT,
+    incluir_por_abrir: bool = False,
 ) -> None:
     cuota = cargar_cuota_ocr()
     t0 = time.monotonic()
@@ -1439,12 +1486,19 @@ def run_ocr_selectivo(
         f"usd_est={cuota['usd_est']:.4f}  "
         f"S/{float(cuota['usd_est']) * USD_PEN:.2f}  "
         f"rpm={OCR_RPM or '-'}  "
-        f"solo_ti={exigir_ti}  max_segundos={max_segundos or 'off'}",
+        f"solo_ti={exigir_ti}  incluir_por_abrir={incluir_por_abrir}  "
+        f"max_segundos={max_segundos or 'off'}",
         flush=True,
     )
     print(
         "  filtros: estado=Vigente AND fecha_fin_cotizacion IS NOT NULL "
-        "AND fecha_fin_cotizacion > now()  (NULL no gasta Flash)",
+        "AND fecha_fin_cotizacion > now() "
+        + (
+            "(incluye por-abrir)"
+            if incluir_por_abrir
+            else "AND (fecha_ini_cotizacion IS NULL OR fecha_ini_cotizacion <= now())"
+        )
+        + "  (NULL no gasta Flash)",
         flush=True,
     )
     if not columnas_extraccion_ok(supa):
@@ -1484,6 +1538,7 @@ def run_ocr_selectivo(
             "descartados_no_ti": cs.get("no_ti", ""),
             "descartados_ventana_null": cs.get("ventana_null", ""),
             "descartados_vencidos": cs.get("vencidos", ""),
+            "descartados_por_abrir": cs.get("por_abrir", ""),
             "ocr_contratos": ok_c,
             "ocr_paginas": pags_ok,
             "err": err,
@@ -1520,6 +1575,7 @@ def run_ocr_selectivo(
         10**9 if ids else limit,
         solo_ti=exigir_ti,
         exigir_ventana=True,
+        incluir_por_abrir=incluir_por_abrir,
     )
     if ids:
         want = set(ids)
@@ -1538,6 +1594,7 @@ def run_ocr_selectivo(
         f"  descartados: no_ti={cola_stats.get('no_ti')} "
         f"ventana_null={cola_stats.get('ventana_null')} "
         f"vencidos={cola_stats.get('vencidos')} "
+        f"por_abrir={cola_stats.get('por_abrir')} "
         f"no_vigente={cola_stats.get('no_vigente')}",
         flush=True,
     )
@@ -1545,6 +1602,7 @@ def run_ocr_selectivo(
         print(
             f"    id={r['id']} ia={r.get('relevancia_ia') or '-'} "
             f"cat={r.get('categoria_it') or '-'} "
+            f"ini={r.get('fecha_ini_cotizacion')} "
             f"fin={r.get('fecha_fin_cotizacion')} "
             f"tipo={r.get('tdr_tipo_extraccion')} "
             f"pend={len(r.get('paginas_ocr_pendientes') or [])}",
@@ -1595,7 +1653,8 @@ def run_ocr_selectivo(
                         motivo="tiempo",
                     )
                 ok_el, razon = contrato_ocr_sigue_elegible(
-                    supa, cid, solo_ti=exigir_ti
+                    supa, cid, solo_ti=exigir_ti,
+                    incluir_por_abrir=incluir_por_abrir,
                 )
                 if not ok_el:
                     print(f"  skip id={cid} {razon}", flush=True)
@@ -2019,6 +2078,11 @@ def main() -> None:
         help="OCR solo categoria_it o relevancia_ia (ambos NULL = no gasta Flash)",
     )
     ap.add_argument(
+        "--incluir-por-abrir",
+        action="store_true",
+        help="OCR también contratos con fecha_ini futura (default: solo postulables)",
+    )
+    ap.add_argument(
         "--max-segundos",
         type=int,
         default=OCR_MAX_SEGUNDOS_DEFAULT,
@@ -2101,6 +2165,7 @@ def main() -> None:
             dry_run=args.dry_run,
             solo_ti=args.solo_ti,
             max_segundos=args.max_segundos,
+            incluir_por_abrir=args.incluir_por_abrir,
         )
         return
 
