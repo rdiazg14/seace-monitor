@@ -1,5 +1,5 @@
 {
-  "actualizado_utc": "2026-09-05T04:43:00+00:00",
+  "actualizado_utc": "2026-09-06T22:50:00+00:00",
   "items": [
     {
       "id": 90331,
@@ -33,7 +33,7 @@
       "p2": "ninguna",
       "escrita": null,
       "titulo": "ADQUISICION DE ANALIZADOR DE REDES EN EL MARCO DE LA IOARR 2537265 ADQUISICION DE EQUIPAMIENTO DE AULA, EQUIPAMIENTO...",
-      "artefacto": "propuestas_it_20260903-041553.json",
+      "artefacto": "propuestas_it_20260906-030714.json",
       "estado": "pendiente"
     },
     {
@@ -98,7 +98,7 @@
       "p2": "Redes/cableado",
       "escrita": null,
       "titulo": "SERVICIO DE MONTAJE DE CÁMARAS DE VIGILANCIA EN EL ALMACÉN DE LA UGEL CAJAMARCA - La contratación del servicio de...",
-      "artefacto": "propuestas_it_20260903-041553.json",
+      "artefacto": "propuestas_it_20260906-030335.json",
       "estado": "pendiente"
     },
     {
@@ -108,7 +108,7 @@
       "p2": "ninguna",
       "escrita": null,
       "titulo": "SERVICIO ESPECIALIZADO EN LA FORMULACION DEL ANALISIS DE IMPACTO DE NEGOCIO",
-      "artefacto": "propuestas_it_20260903-041553.json",
+      "artefacto": "propuestas_it_20260906-030335.json",
       "estado": "pendiente"
     },
     {
@@ -118,7 +118,7 @@
       "p2": "ninguna",
       "escrita": null,
       "titulo": "SERVICIO DE PROCESAMIENTO DE DATOS",
-      "artefacto": "propuestas_it_20260903-041553.json",
+      "artefacto": "propuestas_it_20260906-030714.json",
       "estado": "pendiente"
     },
     {
@@ -138,23 +138,18 @@
       "p2": "IA/analytics",
       "escrita": null,
       "titulo": "SUSCRIPCION ANUAL A UNA PLATAFORMA EN LA NUBE",
-      "artefacto": "propuestas_it_20260903-041553.json",
+      "artefacto": "propuestas_it_20260906-030335.json",
       "estado": "pendiente"
     },
     {
       "id": 70370,
-      "origen": "consenso_inestable",
-      "p1": "Licencias",
-      "p2": "ninguna",
-      "escrita": null,
+      "origen": "discrepa_intra_it",
+      "p1": "Desarrollo software",
+      "p2": "Licencias",
+      "escrita": "Desarrollo software",
       "titulo": "SERVICIO DE FACTURACION ELECTRONICA DE 75000 FOLIOS PARA LA DIGA",
-      "artefacto": "consenso_it_20260903-043502.json",
-      "estado": "pendiente",
-      "votos": {
-        "propuestas_it_20260903-040545.json": "Desarrollo software",
-        "propuestas_it_20260903-041040.json": "Licencias",
-        "propuestas_it_20260903-041553.json": "ninguna"
-      }
+      "artefacto": "propuestas_it_20260906-030714.json",
+      "estado": "pendiente"
     },
     {
       "id": 18635,
@@ -188,18 +183,13 @@
     },
     {
       "id": 78271,
-      "origen": "consenso_inestable",
+      "origen": "discrepa_es_it",
       "p1": "Correo electronico",
       "p2": "ninguna",
       "escrita": null,
       "titulo": "Servicio de envío de mensajes de texto a través de SMS",
-      "artefacto": "consenso_it_20260903-043502.json",
-      "estado": "pendiente",
-      "votos": {
-        "propuestas_it_20260903-040545.json": "Correo electronico",
-        "propuestas_it_20260903-041040.json": "Correo electronico",
-        "propuestas_it_20260903-041553.json": "ninguna"
-      }
+      "artefacto": "propuestas_it_20260906-030714.json",
+      "estado": "pendiente"
     },
     {
       "id": 34405,
@@ -245,6 +235,74 @@
         "propuestas_it_20260903-041040.json": "Hardware",
         "propuestas_it_20260903-041553.json": "Hardware"
       }
+    },
+    {
+      "id": 92055,
+      "origen": "discrepa_intra_it",
+      "p1": "Desarrollo software",
+      "p2": "Licencias",
+      "escrita": "Desarrollo software",
+      "titulo": "Servicio de renovación del Sistema informático denominado \"Sistema para la gestion de riego - modulo POMDIH...",
+      "artefacto": "propuestas_it_20260906-030714.json",
+      "estado": "pendiente"
+    },
+    {
+      "id": 87248,
+      "origen": "discrepa_es_it",
+      "p1": "Cloud/hosting",
+      "p2": "ninguna",
+      "escrita": null,
+      "titulo": "REQ 2026004275 (21834) - Servicio especializado de Limpieza Técnica de Gabinetes de comunicaciones y Centros de Datos...",
+      "artefacto": "propuestas_it_20260906-030335.json",
+      "estado": "pendiente"
+    },
+    {
+      "id": 86911,
+      "origen": "c2_fase5b_limite_conocido",
+      "keyword": "equipo multifuncional",
+      "p1": "Hardware",
+      "p2": null,
+      "escrita": null,
+      "titulo": "ADQUISICION DE 01 ESTABILIZADOR DE 3KVA PARA EQUIPO MULTIFUNCIONAL KYOCERA TASKALFA 6004i",
+      "artefacto": "c2_fase5b_ajustes",
+      "estado": "observacion",
+      "nota": "mezcla impresoras con estabilizadores/repuestos; queda activa a proposito"
+    },
+    {
+      "id": 87001,
+      "origen": "c2_fase5b_limite_conocido",
+      "keyword": "microforma",
+      "p1": "Soporte tecnico",
+      "p2": null,
+      "escrita": null,
+      "titulo": "Servicio de almacenamiento y custodia de microformas",
+      "artefacto": "c2_fase5b_ajustes",
+      "estado": "observacion",
+      "nota": "roza digitalizacion/archivo, que excluimos a proposito; queda activa a proposito"
+    },
+    {
+      "id": 7326,
+      "origen": "c2_fase5b_limite_conocido",
+      "keyword": "sistema de gestion documental",
+      "p1": "Desarrollo software",
+      "p2": null,
+      "escrita": null,
+      "titulo": "SERVICIO DE APOYO EN EL PROCESAMIENTO DE LA DOCUMENTACION QUE INGRESA POR EL SISTEMA DE GESTION DOCUMENTAL: MESA DE PARTES VIRTUAL Y FISICA.",
+      "artefacto": "c2_fase5b_ajustes",
+      "estado": "observacion",
+      "nota": "el caso 7326 es locacion/apoyo de archivo, no desarrollo; queda activa a proposito"
+    },
+    {
+      "id": 2989,
+      "origen": "c2_fase5b_limite_conocido",
+      "keyword": "transformacion digital",
+      "p1": "Soporte tecnico",
+      "p2": null,
+      "escrita": null,
+      "titulo": "Servicio de evaluacion estructural para la verificacion de la capacidad de carga para la adecuada Implementacion de mejoras en el centro de datos",
+      "artefacto": "c2_fase5b_ajustes",
+      "estado": "observacion",
+      "nota": "el caso 2989 es evaluacion estructural; queda activa a proposito"
     }
   ]
 }
