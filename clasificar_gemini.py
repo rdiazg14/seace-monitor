@@ -34,6 +34,12 @@ from pathlib import Path
 import httpx
 from supabase import create_client
 
+from clasificacion_capa import (
+    diff_clasificacion_contratos,
+    map_confianza,
+    upsert_gemini,
+)
+
 _env = Path(__file__).parent / ".env"
 if _env.exists():
     for line in _env.read_text(encoding="utf-8").splitlines():
@@ -848,11 +854,61 @@ def parse_p2_item(item: dict) -> dict | None:
     return {"categoria": cat, "senal": senal}
 
 
+def _dsn() -> str:
+    dsn = (os.getenv("DATABASE_URL") or "").strip()
+    if not dsn:
+        raise RuntimeError("DATABASE_URL no encontrado (necesario para capa 3)")
+    return dsn
+
+
+def _conectar_pg():
+    import psycopg
+    from psycopg.rows import dict_row
+    return psycopg.connect(_dsn(), row_factory=dict_row)
+
+
 def flush_upsert(supa, lote: list[dict]) -> None:
+    """DEPRECATED camino directo: redirige a clasificacion_contrato."""
+    del supa
     if not lote:
         return
-    supa.table("contratos").upsert(lote, on_conflict="id").execute()
-    print(f"    upsert lote {len(lote)} filas OK", flush=True)
+    filas = [
+        {
+            "contrato_id": int(p["id"]),
+            "categoria_it": p["categoria_it"],
+            "consenso_n": 0,
+            "artefacto": "camino_directo",
+        }
+        for p in lote
+    ]
+    with _conectar_pg() as conn:
+        conn.autocommit = False
+        n, s = upsert_gemini(conn, filas)
+        diff = diff_clasificacion_contratos(conn)
+        if diff != 0:
+            conn.rollback()
+            raise RuntimeError(f"diff clasificacion/contratos={diff} tras write")
+        conn.commit()
+    print(f"    clasificacion gemini lote={len(lote)} escritos={n} saltados={s}",
+          flush=True)
+
+
+def _fila_aplicar_gemini(it: dict, *, artefacto: str, consenso_n: int) -> dict:
+    cat = categoria_propuesta_escritura(it)
+    if it.get("origen") == "desempate_ok" and isinstance(it.get("p2"), dict):
+        src = it["p2"]
+    else:
+        src = it.get("p1") or {}
+    return {
+        "contrato_id": int(it["id"]),
+        "categoria_it": cat,
+        "senal": (src.get("senal") or None),
+        "senal_fuente": (src.get("senal_fuente") or None),
+        "confianza": map_confianza(src.get("confianza")),
+        "consenso_n": consenso_n,
+        "revisar": bool(it.get("revisar")),
+        "artefacto": artefacto,
+    }
 
 
 def cargar_ledger() -> list[dict]:
@@ -1497,10 +1553,7 @@ def reselect_ids(supa, ids: list[int]) -> dict[int, dict]:
 def comando_aplicar(ruta: str) -> int:
     # Acepta artefactos --proponer y --consenso sin cambiar la logica:
     # solo mira decision=="escribir" + categoria_propuesta_escritura.
-    # consenso_unanime no es desempate_ok, asi que usa p1 del ULTIMO
-    # artefacto; por construccion esa p1 coincide con el voto unanime
-    # (si el ultimo escribia, p1 es esa categoria; si era desempate_ok,
-    # p1==p2). Ledger se aplica en --proponer/--consenso, no aqui.
+    # Escribe clasificacion_contrato (capa=gemini); el eco copia a contratos.
     path = Path(ruta)
     if not path.is_file():
         print(f"ERROR: no existe el artefacto {path}", flush=True)
@@ -1530,6 +1583,7 @@ def comando_aplicar(ruta: str) -> int:
         )
         return 4
 
+    consenso_n = int(meta.get("n_corridas") or 0)
     items = payload.get("items") or []
     a_escribir: list[dict] = []
     for it in items:
@@ -1542,11 +1596,12 @@ def comando_aplicar(ruta: str) -> int:
                 flush=True,
             )
             continue
-        a_escribir.append({"id": int(it["id"]), "categoria_it": cat})
+        a_escribir.append(it)
 
     n_propuestos = len(a_escribir)
     print(
-        f"  --aplicar {path.name}  decision=escribir {n_propuestos}",
+        f"  --aplicar {path.name}  decision=escribir {n_propuestos} "
+        f"(clasificacion_contrato capa=gemini)",
         flush=True,
     )
 
@@ -1554,11 +1609,11 @@ def comando_aplicar(ruta: str) -> int:
     if supa is None:
         return 1
 
-    actuales = reselect_ids(supa, [p["id"] for p in a_escribir])
+    actuales = reselect_ids(supa, [int(it["id"]) for it in a_escribir])
     pendientes: list[dict] = []
     descartados: list[int] = []
-    for p in a_escribir:
-        cid = p["id"]
+    for it in a_escribir:
+        cid = int(it["id"])
         row = actuales.get(cid)
         if row is None:
             print(
@@ -1567,32 +1622,52 @@ def comando_aplicar(ruta: str) -> int:
             )
             descartados.append(cid)
             continue
-        ya = row.get("categoria_it") or row.get("relevancia_ia")
         if row.get("categoria_it") or row.get("relevancia_ia"):
+            ya = row.get("categoria_it") or row.get("relevancia_ia")
             print(
                 f"[skip] id={cid} ya etiquetado como {ya} desde el SELECT original",
                 flush=True,
             )
             descartados.append(cid)
             continue
-        pendientes.append(p)
+        pendientes.append(
+            _fila_aplicar_gemini(
+                it, artefacto=path.name, consenso_n=consenso_n
+            )
+        )
 
     escritos_ids: list[int] = []
-    lote: list[dict] = []
-    for p in pendientes:
-        lote.append(p)
-        if len(lote) >= BATCH_DB:
-            flush_upsert(supa, lote)
-            escritos_ids.extend(int(x["id"]) for x in lote)
-            lote.clear()
-    if lote:
-        flush_upsert(supa, lote)
-        escritos_ids.extend(int(x["id"]) for x in lote)
+    try:
+        with _conectar_pg() as conn:
+            conn.autocommit = False
+            for i in range(0, len(pendientes), BATCH_DB):
+                lote = pendientes[i: i + BATCH_DB]
+                n, s = upsert_gemini(conn, lote)
+                print(
+                    f"    clasificacion gemini lote={len(lote)} "
+                    f"escritos={n} saltados={s}",
+                    flush=True,
+                )
+                escritos_ids.extend(int(x["contrato_id"]) for x in lote)
+            diff = diff_clasificacion_contratos(conn)
+            if diff != 0:
+                conn.rollback()
+                print(
+                    f"ERROR: diff clasificacion/contratos={diff} tras aplicar. "
+                    "Rollback.",
+                    flush=True,
+                )
+                return 1
+            conn.commit()
+    except Exception as e:
+        print(f"ERROR escribiendo clasificacion_contrato: {e}", flush=True)
+        return 1
 
     payload["aplicado"] = {
         "utc": datetime.now(timezone.utc).isoformat(),
         "escritos": escritos_ids,
         "descartados": descartados,
+        "destino": "clasificacion_contrato",
     }
     escribir_json(path, payload)
 
@@ -1600,6 +1675,7 @@ def comando_aplicar(ruta: str) -> int:
     print(f"  propuestos={n_propuestos}", flush=True)
     print(f"  descartados por re-select={len(descartados)}", flush=True)
     print(f"  escritos={len(escritos_ids)}", flush=True)
+    print("  diff clasificacion/contratos=0", flush=True)
     return 0
 
 

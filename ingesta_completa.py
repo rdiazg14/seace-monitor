@@ -386,7 +386,12 @@ def preparar_fila_db(
     r: dict,
     cats: list[tuple[str, list[dict]]] | None = None,
 ) -> dict:
-    """Convierte un registro de la API SEACE al esquema de la tabla contratos."""
+    """Convierte un registro API SEACE → hechos de contratos (sin inferencia).
+
+    categoria_it / relevancia_ia viven en clasificacion_contrato (capa 3).
+    El argumento cats se ignora aqui; la clasificacion se calcula aparte.
+    """
+    del cats  # la inferencia no entra en el upsert de contratos
     return {
         "id":                   r["idContrato"],
         "nro_contratacion":     str(r.get("nroContratacion", "")),
@@ -400,9 +405,38 @@ def preparar_fila_db(
         "fecha_fin_cotizacion": parsear_fecha(r.get("fecFinCotizacion")),
         "tipo_cotizacion":      str(r.get("idTipoCotizacion", "")),
         "cotizar":              bool(r.get("cotizar", False)),
-        "categoria_it":         clasificar_categoria_it(r, cats),
-        "relevancia_ia":        clasificar_relevancia_ia(r),
     }
+
+
+def escribir_clasificacion_keyword(
+    filas_cls: list[dict],
+) -> tuple[int, int]:
+    """Tras el upsert de contratos: capa=keyword. Eco copia a contratos."""
+    if not filas_cls:
+        return 0, 0
+    import psycopg
+    from psycopg.rows import dict_row
+
+    from clasificacion_capa import diff_clasificacion_contratos, upsert_keyword
+
+    dsn = (os.getenv("DATABASE_URL") or "").strip()
+    if not dsn:
+        print(
+            "[clasificacion] DATABASE_URL ausente; no se escribio capa 3",
+            flush=True,
+        )
+        return 0, 0
+    with psycopg.connect(dsn, row_factory=dict_row) as conn:
+        conn.autocommit = False
+        n, s = upsert_keyword(conn, filas_cls, artefacto="ingesta")
+        diff = diff_clasificacion_contratos(conn)
+        if diff != 0:
+            conn.rollback()
+            raise RuntimeError(
+                f"diff clasificacion/contratos={diff} tras ingesta keyword"
+            )
+        conn.commit()
+    return n, s
 
 
 # ── Supabase ────────────────────────────────────────────────────────────────
@@ -535,8 +569,9 @@ def main():
     ap.add_argument("--forzar-completa", action="store_true",
                     help=(
                         "ignora max_id y re-descarga todo el corpus. "
-                        "MORATORIA hasta fase 6: pisa categoria_it (C1). "
-                        "Requiere SEACE_FORZAR_COMPLETA=1."
+                        "Ya no pisa categoria_it: la inferencia vive en "
+                        "clasificacion_contrato (capa 3) y keywords no pisan "
+                        "gemini/humano."
                     ))
     ap.add_argument("--headed", action="store_true",
                     help="navegador visible (útil para depurar)")
@@ -553,13 +588,6 @@ def main():
         ),
     )
     args = ap.parse_args()
-    if args.forzar_completa and os.environ.get("SEACE_FORZAR_COMPLETA", "").strip() != "1":
-        raise SystemExit(
-            "MORATORIA: --forzar-completa reescribe categoria_it con keywords "
-            "y pisaria las 54 clasificaciones de C1. Bloqueado hasta completar "
-            "la fase 6 (docs/ARQUITECTURA_DATOS.md). Para anular en staging: "
-            "SEACE_FORZAR_COMPLETA=1"
-        )
     os.makedirs("data", exist_ok=True)
 
     # ── 1. Iniciar Supabase ────────────────────────────────────────────
@@ -716,11 +744,12 @@ def main():
 
     # ── 4. Validar (G2) + clasificar ───────────────────────────────────
     n_rech = 0
+    filas_cls: list[dict] = []
     if nuevas_raw:
         print("Validando esquema (G2)...", flush=True)
         nuevas_raw, n_rech = filtrar_validos(nuevas_raw, supa)
         print(f"  aceptados={len(nuevas_raw):,}  rechazados={n_rech:,}", flush=True)
-        print("Clasificando registros...")
+        print("Clasificando registros (capa 3, no en upsert contratos)...")
         filas_db: list[dict] = []
         n_kw_diff = 0
         for r in nuevas_raw:
@@ -730,33 +759,44 @@ def main():
                 n_rech += 1
                 registrar_rechazo(supa, r, f"preparar_fila_db: {e}")
                 continue
+            cat = clasificar_categoria_it(r, cats)
+            ia = clasificar_relevancia_ia(r)
             if args.verificar_keywords:
                 codigo = clasificar_categoria_it(r)
-                if fila["categoria_it"] != codigo:
+                if cat != codigo:
                     print(
                         f"[keywords DIFF] id={fila['id']} "
-                        f"tabla={fila['categoria_it']} codigo={codigo}",
+                        f"tabla={cat} codigo={codigo}",
                         flush=True,
                     )
                     n_kw_diff += 1
             filas_db.append(fila)
-        n_it = sum(1 for f in filas_db if f["categoria_it"])
-        n_ia = sum(1 for f in filas_db if f["relevancia_ia"])
+            if cat or ia:
+                filas_cls.append({
+                    "contrato_id": int(fila["id"]),
+                    "categoria_it": cat,
+                    "relevancia_ia": ia,
+                })
+        n_it = sum(1 for f in filas_cls if f.get("categoria_it"))
+        n_ia = sum(1 for f in filas_cls if f.get("relevancia_ia"))
         print(f"  categoria_it asignada: {n_it:,}  |  relevancia_ia: {n_ia:,}")
         if args.verificar_keywords:
-            print(
-                f"[keywords] diffs tabla vs codigo: {n_kw_diff} / {len(filas_db)}",
-                flush=True,
-            )
+            print(f"  [keywords] diffs tabla vs IT_CATS: {n_kw_diff}", flush=True)
     else:
         filas_db = []
         print("Sin registros nuevos. Corpus al día.")
         if args.verificar_keywords:
             print("[keywords] diffs tabla vs codigo: 0 / 0", flush=True)
 
-    # ── 5. Upsert a Supabase ───────────────────────────────────────────
+    # ── 5. Upsert a Supabase (hechos SEACE, sin inferencia) ────────────
     if supa and filas_db:
         upsert_supabase(supa, filas_db)
+        if filas_cls:
+            n_w, n_s = escribir_clasificacion_keyword(filas_cls)
+            print(
+                f"[clasificacion] keyword escritos={n_w} saltados_protegidos={n_s}",
+                flush=True,
+            )
 
     # ── 6. Guardar parquet + CSV (backup local) ────────────────────────
     df_nuevo = pd.DataFrame(nuevas_raw) if nuevas_raw else pd.DataFrame()
