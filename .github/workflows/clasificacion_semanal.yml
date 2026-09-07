@@ -3,13 +3,13 @@
 # y por abrir). Sin --incluir-ventana-cerrada. No corre sobre En Evaluacion ni
 # Culminado (~73k). Keywords diarias viven en pipeline.yml.
 #
-# Cron COMENTADO hasta validar con workflow_dispatch (decision del operador).
+# Lunes 10:00 Lima (15:00 UTC), despues del pipeline diario (14:00 UTC).
 name: Clasificacion semanal Gemini (C4)
 
 on:
   workflow_dispatch:
-  # schedule:
-  #   - cron: "0 15 * * 1"   # lunes 10:00 America/Lima (UTC-5), post-pipeline
+  schedule:
+    - cron: "0 15 * * 1"   # lunes 10:00 America/Lima (UTC-5), post-pipeline
 
 permissions:
   issues: write

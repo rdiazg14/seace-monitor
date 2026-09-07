@@ -4,7 +4,7 @@
 > `categoria_it` con keywords y pisaría las 54 clasificaciones de C1.
 > El flag está además bloqueado en código salvo `SEACE_FORZAR_COMPLETA=1`.
 
-**Estado:** diseño vigente. **Fase 0 + fase 1 aplicadas** (6 sep 2026): snapshot + tablas nuevas vacías. **No avanzar a fase 2** hasta nuevo ok. Fases 3–6, dual-write y front: no.
+**Estado:** diseño vigente. **Fases 0–3 aplicadas** (6 sep 2026): snapshot, DDL, `clasificacion_contrato` poblada, `contrato_items` (**7370** filas / 3977 contratos) y `documentos` (**3796** filas, **925** con `storage_path`). **Fases 4–6** (dual-write, lectores, DROP de `categoria_it`/`relevancia_ia`): **no**. Moratoria `--forzar-completa` vigente (`SEACE_FORZAR_COMPLETA`).
 
 **Principio:** cada capa escribe solo sus tablas. Hoy la ingesta (`preparar_fila_db` en `ingesta_completa.py`) mete en el mismo upsert el dato declarado de SEACE y la inferencia (`categoria_it`, `relevancia_ia`). `--forzar-completa` reescribe esas columnas y pisa las 54 etiquetas de C1 (consenso Gemini) y el id `90331`.
 
@@ -143,7 +143,7 @@ No se mueven en v1 (siguen en `contratos`): `tdr_texto` (caché para Gemini), `p
 
 ## 4. DDL propuesto
 
-> Fase 0 y fase 1: `docs/capas_fase0_snapshot.sql`, `docs/capas_fase1_tablas.sql` (aplicados). El SQL de esta sección es la referencia; si diverge, gana el archivo en `docs/`. No hace DROP de columnas de `contratos`. Fases 2+ **no** aplicadas.
+> Fase 0–3: SQL en `docs/capas_fase*.sql` (aplicados). El SQL de esta sección es la referencia; si diverge, gana el archivo en `docs/`. No hace DROP de columnas de `contratos`. Fases 4–6 **no** aplicadas.
 
 Convención RLS (la de prod hoy):
 
@@ -672,25 +672,19 @@ CREATE de las 5 tablas nuevas + índices + RLS + grants. Sin backfill. Sin vista
 
 Rollback: `DROP TABLE … CASCADE` de las cinco. No hay datos.
 
-**Aplicada** (`docs/capas_fase1_tablas.sql`, marcador `capas_fase1_tablas`). **Stop aquí hasta nuevo ok.**
+**Aplicada** (`docs/capas_fase1_tablas.sql`, marcador `capas_fase1_tablas`).
 
 ### Fase 2 — Backfill capa 3
 
 INSERT clasificación (§6). Lectores siguen en `contratos`.
 
-**Validar:** checks §6.2. Ruta / Dashboard / Buscador sin cambio de números (aún no leen la tabla nueva).
-
-Rollback: `TRUNCATE clasificacion_contrato`. Las columnas viejas siguen.
+**Aplicada** (`9c7528b`, marcador capas fase 2).
 
 ### Fase 3 — Backfill ítems y documentos
 
-Copia. Columnas viejas siguen. Front no las usa todavía.
+**Aplicada** (`151adc5`): `contrato_items` **7370** filas de 3977 contratos (índice `cod_cubso`); `documentos` **3796** filas, **925** con `storage_path`. Columnas viejas siguen. Front no las usa todavía.
 
-**Validar:** counts §6.3. Un JOIN muestra de 20 contratos: JSON vs filas byte-equivalente en `cod_cubso` / `descripcion`.
-
-Rollback: `TRUNCATE contrato_items, documentos`.
-
-### Fase 4 — Dual-write (código; no este doc)
+### Fase 4 — Dual-write (código; no este doc) — PENDIENTE
 
 Orden estricto:
 
@@ -810,11 +804,13 @@ No es bloqueante. Duplicar 4 000 JSON y ~2 000 PDFs es barato frente a rompe
 6. Fases 0→6 (§7) y moratoria de `--forzar-completa`.
 7. Aprendizaje autónomo de vocabulario (§11): umbrales, pistas Gemini, UI admin.
 
-**Hecho (6 sep 2026):** fase 0 + fase 1. Siguiente paso cuando se pida: fase 2 (backfill clasificación), no el job de aprendizaje.
+**Hecho (6 sep 2026):** fases 0–3. Pendiente cuando se pida: fase 4 (dual-write), no el job de aprendizaje (§11 diseñado, **no** implementado). C4 Gemini semanal ya corre; historial append-on-change (§2) sigue opcional.
 
 ---
 
 ## 11. Aprendizaje autónomo de vocabulario
+
+**Estado: diseñado, no implementado** (pendiente 6 sep).
 
 **Principio:** el sistema es autosuficiente. No pide aprobación humana para funcionar. El admin puede revisar y editar; es opcional y esporádico.
 

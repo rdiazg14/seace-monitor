@@ -1,10 +1,10 @@
 # Changelog de iteraciones — asesor SEACE
 
-Resumen para retomar **sin chat previo**. Detalle de cómo/por qué: [ARQUITECTURA_TECNICA.md](./ARQUITECTURA_TECNICA.md). Foto de prod iter. 1–11: [ESTADO_CIERRE_2026-08-29.md](./ESTADO_CIERRE_2026-08-29.md) (histórico 1–9: [ESTADO_CIERRE_2026-08-20.md](./ESTADO_CIERRE_2026-08-20.md)). Clasificación IT 1 sep y cierre 3–5 sep: [TRASPASO_MAESTRO_SEACE.md](./TRASPASO_MAESTRO_SEACE.md) §6.
+Resumen para retomar **sin chat previo**. Detalle de cómo/por qué: [ARQUITECTURA_TECNICA.md](./ARQUITECTURA_TECNICA.md). Foto de prod iter. 1–11: [ESTADO_CIERRE_2026-08-29.md](./ESTADO_CIERRE_2026-08-29.md) (histórico 1–9: [ESTADO_CIERRE_2026-08-20.md](./ESTADO_CIERRE_2026-08-20.md)). Clasificación IT y cierres: [TRASPASO_MAESTRO_SEACE.md](./TRASPASO_MAESTRO_SEACE.md) §6.
 
-Corte: **5 sep 2026** (Perú). Contratos de calibración: **87880** SEDAPAR, **87502** CENEPRED. Clasificación IT: **90432** (keywords), **90331** (Gemini).
+Corte: **6 sep 2026** (Perú). Contratos de calibración: **87880** SEDAPAR, **87502** CENEPRED. Clasificación IT: **90432** (keywords), **90331** (Gemini). C4: **92081/92070/91928/91674**.
 
-Repos: `seace-monitor` · `seace-web` · `seace-ai-proxy`.
+Repos: `seace-monitor` · `seace-web` · `seace-ai-proxy` · `seace-pipeline-trigger`.
 
 | # | Título | Qué resolvió | Archivos | Commit(s) | Estado |
 |---|---|---|---|---|---|
@@ -25,11 +25,12 @@ Repos: `seace-monitor` · `seace-web` · `seace-ai-proxy`.
 | 11 | Funnel KV → PG + conversión 30d | Marcas permanentes `funnel:analizado/cotizado:{id}` (HIT y MISS; independiente de `esCacheable`; 409/502 no marcan). `GET /funnel-pendientes` con `FUNNEL_TOKEN`. Cron `reconciliar_funnel.py` copia ISO del KV. Columnas + vistas `v_kpis_conversion` (cobertura vs ejecución). Dashboard: `fmtTasa(null)` → "—" | Worker `funnel.ts`; monitor `reconciliar_funnel.py`, `docs/migracion_funnel_conversion.sql`, `docs/vista_kpis_conversion.sql`; web `capaSemantica.ts`, `Dashboard.tsx` | Worker `d1832cc`; monitor `cc75cf3`, `a060d2a`; web `6f1a2f9` | **prod** (SQL aplicado a mano; GRANT anon) |
 | — | Clasificación IT Fase A | Keyword `implementacion de software` → Desarrollo software. `reclasificar_categoria.py` reaplica keywords sobre ambas columnas NULL (no Gemini, no pisa etiquetas). Tapa 3 vigentes: **28275**, **31625**, **90432** | `ingesta_completa.py` `IT_CATS`; `reclasificar_categoria.py` | `1004b02`, `24a2a3b` | **prod** |
 | — | Clasificación IT Fase B | Gemini Flash batch + enum 13 + `ninguna` sobre nulls. Por objeto, no por área. **Manual:** dry-run vigentes 1 ≠ write 3; FP Hardware 90592/90386 revertidos. `temperature: 0` no elimina drift. No en `pipeline.yml` | `clasificar_gemini.py` | `d430272` | **prod** (manual; no automatizar sin Arquitectura C) |
-| — | Cierre 3–5 sep | C1 (Arquitectura C fase 1): clasificador con `--proponer`/`--aplicar`/`--consenso`, verificación de señal literal, desempate ciego, ledger de rechazos. 54 contratos escritos por consenso de 3 corridas sobre 1802. Manual; no entra al cron hasta C4. B21: `fecha_publica`, `fecha_ini_cotizacion` y `fecha_fin_cotizacion` estaban 5h atrasadas (SEACE entrega hora de pared de Lima; `parsear_fecha` pegaba `+00:00`). Backfill de 77485 filas. pct horario hábil 48.9% → 78.1%. B12 re-medido con fechas corregidas: 17.5% inalcanzable (78/445), no el 27.4% del proxy «ventana &lt;24h». Detección temprana: workflow de 2m16s cada 2h (ingesta + detalle). B20 cuantificado: `schedule` de GHA con 4h04m de atraso medio; el cron del Worker llega con ~26s. C2 en 4 fases: keywords a tabla `it_keywords`, ingesta consumiéndola, 6 includes + 15 exclusiones, backfill del corpus (697 altas, 53 cambios, 222 desetiquetadas). Hardware 1475 → 1231. Scripts nuevos: `run_sql.py`, `validar_keywords_tabla.py`, `backfill_categoria.py` | Monitor `clasificar_gemini.py`, `ingesta_completa.py`, `docs/b21_fix_timezone.sql`, `docs/c2_keywords_*.sql`, `docs/c2_fase4_snapshot.sql`, `.github/workflows/deteccion_temprana.yml`, `scripts/run_sql.py`, `scripts/validar_keywords_tabla.py`, `scripts/backfill_categoria.py` | `6de09f9`, `dd084c2`, `ba27371`, `cbca110`, `e4f238a`, `666f108`, `d10051d`, `17ea24e`, `e677c1f`, `c7d5b7c` | **prod** (C1 manual; C2 en tabla + backfill; C3/C4 no hechos) |
+| — | Cierre 3–5 sep | C1 (Arquitectura C fase 1): clasificador con `--proponer`/`--aplicar`/`--consenso`, verificación de señal literal, desempate ciego, ledger de rechazos. 54 contratos escritos por consenso de 3 corridas sobre 1802. Manual; no entra al cron hasta C4. B21: `fecha_publica`, `fecha_ini_cotizacion` y `fecha_fin_cotizacion` estaban 5h atrasadas (SEACE entrega hora de pared de Lima; `parsear_fecha` pegaba `+00:00`). Backfill de 77485 filas. pct horario hábil 48.9% → 78.1%. B12 re-medido con fechas corregidas: 17.5% inalcanzable (78/445), no el 27.4% del proxy «ventana &lt;24h». Detección temprana: workflow de 2m16s cada 2h (ingesta + detalle). B20 cuantificado: `schedule` de GHA con 4h04m de atraso medio; el cron del Worker llega con ~26s. C2 en 4 fases: keywords a tabla `it_keywords`, ingesta consumiéndola, 6 includes + 15 exclusiones, backfill del corpus (697 altas, 53 cambios, 222 desetiquetadas). Hardware 1475 → 1231. Scripts nuevos: `run_sql.py`, `validar_keywords_tabla.py`, `backfill_categoria.py` | Monitor `clasificar_gemini.py`, `ingesta_completa.py`, `docs/b21_fix_timezone.sql`, `docs/c2_keywords_*.sql`, `docs/c2_fase4_snapshot.sql`, `.github/workflows/deteccion_temprana.yml`, `scripts/run_sql.py`, `scripts/validar_keywords_tabla.py`, `scripts/backfill_categoria.py` | `6de09f9`, `dd084c2`, `ba27371`, `cbca110`, `e4f238a`, `666f108`, `d10051d`, `17ea24e`, `e677c1f`, `c7d5b7c` | **prod** (C1 base; C2 en tabla + backfill; C4 llegó el 6 sep) |
+| — | Cierre 6 sep | **C4:** keywords diario en pipeline (`reclasificar` 16481→1 en 68s) + Gemini semanal ×3 (universo 264, 4 unánimes, ~USD 0,19; ids 92081/92070/91928/91674); cupo `clasificacion_cuota.json`. **Score enriquecido:** `analisis_contrato` manda; techos califica=no→35 y margen&lt;1000→55; 91688=93, 92065=92, 91696=35; select 37 KiB. **Capas fase 3:** contrato_items 7370 / documentos 3796 (925 con storage). **CUBSO** 2026-07-02: huérfanos 1772→30, BD 290115. **Seguridad:** RLS snapshots; Worker `requireSesion`; SEGURIDAD.md; trigger versionado. **Data lake:** 925 PDFs / 1,04 GB | Monitor C4/workflows/capas/CUBSO/seguridad; web `rutaDia.ts`; worker JWT; trigger repo | monitor `916d865`/`151adc5`/`c3002bd`/`2f08dbc`; web `1ffe8b0`; worker `6e62b74`; trigger `060a215` | **prod** |
 
 ## Qué no cubren estas iteraciones
 
-Siguen fuera (backlog real; ver TRASPASO §6 cierre 3–5 sep):
+Siguen fuera (backlog real; ver TRASPASO §6 cierre 6 sep):
 
 - Home de la app = Ruta del día (`/` sigue siendo Dashboard).
 - Tarea #4 chunking (overlap / tamaño vs baseline 63%).
@@ -39,4 +40,9 @@ Siguen fuera (backlog real; ver TRASPASO §6 cierre 3–5 sep):
 - Retry de `/analizar` / no cobrar cupo si Gemini falla (el 502 amable **no** tocó el cupo).
 - Caché semántica de `/cotizar` (solo exacta + `esCacheable`).
 - Chat que responda KPIs de la capa semántica.
-- C3 (cola de revisión admin) y C4 (integrar Gemini al cron). **No** meter `clasificar_gemini.py` en el cron.
+- C3 (cola de revisión admin: 13 items + 4 observaciones).
+- Capas fases 4–6 (dual-write / DROP); moratoria `--forzar-completa`.
+- Aprendizaje de vocabulario (ARQUITECTURA_DATOS §11, diseño sin código).
+- Vista admin de keywords.
+- Data lake histórico (946 vigentes &gt;90 días).
+- PAT fine-grained del trigger; B20 (atraso GHA); 30 códigos CUBSO huérfanos.

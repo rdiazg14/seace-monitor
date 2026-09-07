@@ -48,20 +48,20 @@ El front **no** llama a Gemini. Lee Supabase (anon + RLS) y pega al Worker. El p
 - **Puntos de control:** Rolando aprueba antes de cron, deploy masivo u OCR caro.
 - **Calibración vs código:** el asistente (Rolando) define criterio de negocio; Cursor implementa. Criterios ENERTRONIC mandan sobre ocurrencias del LLM.
 
-Al retomar: leé **§6 (cierre 30–31 ago + clasificación 1 sep + cierre 3–5 sep)** + §7 (gotchas) + [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md). No reabras retrieval v2 ni Auth salvo pedido explícito. C1 y C2 están hechos; C3 y C4 **no**. **No** metas `clasificar_gemini.py` en el cron (eso es C4).
+Al retomar: leé **§6 (cierres hasta 6 sep)** + §7 (gotchas) + [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md) + [SEGURIDAD.md](./SEGURIDAD.md). No reabras retrieval v2 salvo pedido. C1/C2/C4 hechos; C3 (cola admin) **no**. Gemini semanal en `clasificacion_semanal.yml`, **no** en el pipeline diario.
 
 ---
 
 ## 1. Mapa de los 4 repos
 
-Hashes de este corte (HEAD `origin/main` al 5 sep 2026):
+Hashes de este corte (HEAD `origin/main` al 6 sep 2026):
 
 | Repo | GitHub | Visibilidad | Rama | HEAD |
 |---|---|---|---|---|
-| seace-monitor | https://github.com/rdiazg14/seace-monitor | **público** | `main` | `c7d5b7c` |
-| seace-web | https://github.com/rdiazg14/seace-web | **público** | `main` | `8a0b596` (sin cambios en esta sesion; no re-verificado el 5 sep) |
-| seace-ai-proxy | https://github.com/rdiazg14/seace-ai-proxy | **privado** | `main` | `da3caf8` (sin cambios en esta sesion; no re-verificado el 5 sep) · Worker CF `cbf31b49-e3e7-44b0-a8cf-6cd4f5113ad4` |
-| seace-pipeline-trigger | carpeta local (mismo account CF) | — | — | Worker `seace-pipeline-trigger.rdiazg14.workers.dev` |
+| seace-monitor | https://github.com/rdiazg14/seace-monitor | **público** | `main` | `916d865` (C4; docs de cierre en el commit siguiente) |
+| seace-web | https://github.com/rdiazg14/seace-web | **público** | `main` | `1ffe8b0` (score enriquecido) |
+| seace-ai-proxy | https://github.com/rdiazg14/seace-ai-proxy | **privado** | `main` | `6e62b74` (`requireSesion`) · [POR-CONFIRMAR] deploy CF vivo |
+| seace-pipeline-trigger | https://github.com/rdiazg14/seace-pipeline-trigger | **privado** | `main` | `060a215` · Worker `seace-pipeline-trigger.rdiazg14.workers.dev` |
 
 ### 1.1 seace-monitor
 
@@ -72,8 +72,8 @@ Hashes de este corte (HEAD `origin/main` al 5 sep 2026):
 | Path | Rol |
 |---|---|
 | `ingesta_completa.py` | Altas incrementales; lee `it_keywords` (fallback `IT_CATS`); `relevancia_ia` |
-| `reclasificar_categoria.py` | Backfill keywords sobre ambas columnas NULL (no Gemini; **no** desetiqueta) |
-| `clasificar_gemini.py` | C1: `--proponer` / `--consenso` / `--aplicar`. `categoria_it` con Flash sobre nulls. **No** está en el cron |
+| `reclasificar_categoria.py` | C4 diario: NULL Vigente/En Evaluación con `it_keywords` (no Gemini; **no** desetiqueta) |
+| `clasificar_gemini.py` | C1/C4: `--proponer` / `--consenso` / `--aplicar`. Semanal en `clasificacion_semanal.yml`; cupo `clasificacion_cuota.json` |
 | `scripts/backfill_categoria.py` | C2 fase 4: backfill histórico `--proponer`/`--aplicar` (puede desetiquetar) |
 | `scripts/run_sql.py` | Ejecuta un `.sql` completo (DDL/DO) vía `DATABASE_URL` |
 | `scripts/validar_keywords_tabla.py` | Equivalencia tabla vs `IT_CATS` (fase 1: 0/77662) |
@@ -310,7 +310,7 @@ Detalle, números y «por qué»: [ARQUITECTURA_TECNICA.md](./ARQUITECTURA_TECNI
 
 **RAG v2 (prod `RAG_BACKEND=v2`):** extraer filtros (1 Flash) → embed query 1536 L2 → paralelo `buscar_tdr_v2` (20, umbral 0.20) + FTS (20) → RRF k=60 a **nivel contrato** → ≤2 chunks/contrato → rerank `-base` top 5 → Flash. Eval G4: **27% → 63% success@10 sin reranker**.
 
-**Pipeline diario (09:00 Perú):** el disparo que se pretende honrar es Cloudflare Cron → `workflow_dispatch`. El `schedule:` de GHA **se atrasó ~9 h 20 m** el 27 y 28 ago (contrato **90383** perdió ventana). Pasos del job: ingesta (keywords IT) → G1 **sin `--gc`** → detalle → PDF `--solo-nativo` → OCR `--solo-ti` 2 h / rpm 6 → chunk api + pdf `--solo-nuevos` → embed Gemini `WHERE embedding_v2 IS NULL` → **reconciliar funnel** (`continue-on-error`) → G3. **`clasificar_gemini.py` no está en el yaml** (manual; hueco post-detalle / pre-OCR). Escala ancla (~76k contratos): si crece 10×, reabrir índice/umbral/chunk/OCR/FLASH_RPD.
+**Pipeline diario (09:00 Perú):** disparo primario Cloudflare Cron → `workflow_dispatch`. Pasos: ingesta → G1 **sin `--gc`** → detalle → **keywords C4** (`reclasificar_categoria.py`) → PDF `--solo-nativo` (sube a Storage) → OCR `--solo-ti` 2 h / rpm 6 → chunk → embed → funnel → G3. Gemini IT: `clasificacion_semanal.yml` lun 10:00 Lima (no en el diario). Escala ancla (~76k contratos): si crece 10×, reabrir índice/umbral/chunk/OCR/FLASH_RPD.
 
 ---
 
@@ -324,7 +324,7 @@ Tres sistemas **aislados** (un flujo no descuenta al otro). Periodo RPD = **UTC*
 | `/analizar` | `analyze:ip:{ip}` | `analyze:ip:{ip}:{day}` **15** | `analyze:{day}` **40** | 1 generate si MISS; HIT/422 = 0 |
 | `/cotizar` | `cotizar:ip:{ip}` | `cotizar:ip:{ip}:{day}` **20** (1 pregunta) | `cotizar:{day}` **80 Δ1** | HIT=0 Gemini; MISS=1 generate; 409=0 |
 
-**Qué gasta Gemini además:** OCR del cron (rpm 6, tope 2 h, `--max-ocr-dia 6000`); embeddings del pipeline; `clasificar_gemini.py` si se corre a mano (misma API key, **sin** cupo KV ni `flash_ocr_cuota.json`).
+**Qué gasta Gemini además:** OCR del cron (rpm 6, tope 2 h, `--max-ocr-dia 6000`); embeddings; C4 semanal (cupo `clasificacion_cuota.json`, no `flash_ocr_cuota.json`). Misma API key.
 
 **Backstop:** S/10/mes AI Studio. Si el Worker no corta, la consola sí.
 
@@ -383,13 +383,13 @@ Cascada en prod. Detalle: [ARQUITECTURA_TECNICA.md](./ARQUITECTURA_TECNICA.md) �
 
 **Lección (leer antes de tocar clasificación):** Gemini **no** es determinista. `--dry-run` y la escritura eran dos inferencias distintas (1 sep: 1 vs 3). El consenso C1 elimina varianza, no sesgo. Revisión humana del SELECT **obligatoria** antes de `--aplicar`. **No** automatizar sin C4.
 
-**Arquitectura C:** C1 y C2 **implementados** (3–5 sep). C3 (cola de revisión admin) y C4 (integrar al cron) **no** hechos. Hasta C4, `clasificar_gemini.py` queda **manual**.
+**Arquitectura C:** C1, C2 y **C4 implementados**. C3 (cola admin) **no**. Gemini semanal; keywords diarias en el pipeline.
 
 ### Cierre 3–5 sep 2026
 
 C1 + B21 + B12 re-medido + detección temprana + B20 cuantificado + C2 (4 fases + 3b). Detalle: [ARQUITECTURA_TECNICA.md](./ARQUITECTURA_TECNICA.md) §C.
 
-**C1 (Arquitectura C fase 1) — IMPLEMENTADO, manual, NO en el cron**
+**C1 (Arquitectura C fase 1) — IMPLEMENTADO** (base de C4 semanal)
 
 `clasificar_gemini.py`: `--proponer` (Gemini, sin escritura) / `--aplicar` (escritura, sin Gemini) / `--consenso` (interseca N artefactos). Pasada 1: señal literal + confianza declarada. Pasada 2: ciega, sin entidad, área_usuaria ni cubso. `verificar_senal()`: la señal debe existir literal en el texto; sin match → confianza baja; solo en cubso → máximo media. `items_desc`/`items_cubso`: `nom_cubso` ya no tapa la descripción del ítem. Ledger `data/clasificacion_rechazadas.json` (par id+categoría): 90592 tóner, 90386 CPU autómata diésel, 91327 biblioteca virtual. Cola `data/revisar_categoria.json` (commiteada; los artefactos van a `.gitignore`): los 9 inestables de C1 + **90331**. Medición 1802 contratos × 3 corridas: 54 unánimes escritos, 1738 ninguna estable, 9 inestables (4 son el mismo texto «colector de datos»). Aplicado: 54 escritos, 0 descartados por re-SELECT. Commits `6de09f9`, `dd084c2`.
 
@@ -419,10 +419,10 @@ Tabla `it_keywords` (`id`, `categoria`, `keyword`, `prioridad`, `tipo` incluye/e
 
 Medición que motivó C2: `impresora` sola producía 769 de 3240 etiquetas (24%); 220 filas Hardware contenían toner/cartucho/tinta. En el otro extremo, 1622 nulls contenían palabras claramente TI que `IT_CATS` no cubría.
 
-**Pendientes (sin plan)**
+**Pendientes (sin plan) — ver también cierre 6 sep abajo**
 
-- C3 (cola de revisión admin) y C4 (integrar al cron): **no** hechos.
-- 9 inestables de C1 + **90331** en `data/revisar_categoria.json` (ese es el contenido de la cola; no hay más ids ahí).
+- C3 (cola de revisión admin): **no** hecho. Cola: 13 items + 4 observaciones.
+- C4: **hecho** (keywords diario + Gemini semanal).
 - `data center` sigue con ruido de planta física pese a las exclusiones.
 - `licencia` tiene ~2/10 de ruido municipal (licencia de funcionamiento).
 - `videovigilancia` incluye capacitaciones y locación de personal de monitoreo.
@@ -432,6 +432,61 @@ Medición que motivó C2: `impresora` sola producía 769 de 3240 etiquetas (24%)
 - B12 residual: 17.5 % inalcanzable; más frecuencia no lo resuelve.
 - B4 fase 2 (tokens reales de Gemini), B15 (búsqueda web), reranker y chunking: sin cambios.
 
+### Cierre 6 sep 2026
+
+C4 + score enriquecido + capas fase 3 + CUBSO 2026 + seguridad + data lake. Detalle: [ARQUITECTURA_TECNICA.md](./ARQUITECTURA_TECNICA.md) §C/§D; [ARQUITECTURA_DATOS.md](./ARQUITECTURA_DATOS.md); [SEGURIDAD.md](./SEGURIDAD.md).
+
+**C4 — IMPLEMENTADO**
+
+- Keywords en pipeline diario (gratis): `reclasificar_categoria.py` sobre NULL Vigente/En Evaluación leyendo `it_keywords`. Primera corrida: **16 481** evaluados, **1** etiquetado, **68 s**.
+- `clasificacion_semanal.yml`, lunes 10:00 Lima: 3× `--proponer --filtro vigentes` + `--consenso` + `--aplicar`. Nunca aplica consenso de menos de 3.
+- Primera corrida: universo **264**, 4 unánimes, 0 inestables, 30 llamadas, 215 548 tokens, ~USD 0,19.
+- Los 4: **92081** adaptador USB-RJ45, **92070** memoria USB, **91928** SIEM Banco de la Nación, **91674** dispositivos informáticos (keywords descartadas por ruido `usb`/`informatic`; Gemini por contexto).
+- Cupo propio `data/clasificacion_cuota.json`; no toca `flash_ocr_cuota.json`.
+
+**Score enriquecido — IMPLEMENTADO** (`seace-web` `1ffe8b0`)
+
+- Antes `puntuar()` usaba rubro 50/100: keyword a Núcleo dominaba. Medido: margen −500 primero; único `recomendado` de Gemini octavo.
+- Ahora `analisis_contrato`: `encaje.califica`, margen relativo al valor (techo 8 UIT), modalidad, armadas, plazo, riesgo. Urgencia = reloj en el front.
+- Techos sin ocultar: `califica='no'` → max 35; margen &lt; S/1000 → max 55.
+- Resultado: **91688** primero (93), **92065** segundo (92, único recomendado), **91696** último (35).
+- Sin análisis: fallback heurística, marcado en la card. Select JSON path: 37 KiB vs 128.
+
+**Capas fase 3 — APLICADA** (`151adc5`; fase 2 `9c7528b`)
+
+- `contrato_items`: **7370** filas de 3977 contratos, índice en `cod_cubso`.
+- `documentos`: **3796** filas, **925** con `storage_path` (= bucket).
+- Fases 4–6 (dual-write y DROP de `categoria_it`/`relevancia_ia`): **pendientes**. Moratoria `--forzar-completa` vigente (guard env).
+
+**CUBSO actualizado** (`c3002bd`)
+
+- Dump viejo 2016: 1772 de 4213 códigos de nuestros contratos no existían (42%). Versión **2026-07-02**, multi-hoja, **85 711** items.
+- Tras cargar: huérfanos 1772 → **30**. Total BD **290 115** (se conservan históricos).
+
+**Seguridad — CERRADA** (`2f08dbc`, `087c765`; Worker `6e62b74`; front `a7b0023`)
+
+- `categoria_it_snapshot_c2` y `migraciones_datos` sin RLS con grants a anon. La anon key viaja en el bundle: cualquiera podía borrar el marcador `b21_timezone_lima` y provocar otro +5h sobre 77 485 fechas.
+- Worker: chat, `/analizar` y `/cotizar` con `requireSesion`; el pipeline pasa con `X-Service-Token`. Cupos por usuario, no por IP.
+- Inventario y rotación: [SEGURIDAD.md](./SEGURIDAD.md).
+- `seace-pipeline-trigger` versionado (repo privado, rama `main`). Antes solo en el disco de Rolando.
+
+**Data lake**
+
+- 14 → **925** PDFs, **1,04 GB**, árbol `tdr/{YYYY}/{MM}/{id}/{aid}.pdf`.
+- Promedio real **1,15 MB** (muestra de 14 daba 695 KB). ~45 meses hasta 100 GB.
+- El cron sube el binario que ya tiene en memoria antes de descartarlo.
+
+**Pendientes (sin inventar plan)**
+
+- Capas fases 4–6: dual-write y DROP. Moratoria `--forzar-completa`.
+- Aprendizaje de vocabulario: diseñado en ARQUITECTURA_DATOS §11, **no** implementado.
+- C3 cola de revisión: 13 items + 4 observaciones.
+- Vista admin de keywords.
+- Data lake histórico: 946 vigentes de más de 90 días.
+- PAT del trigger: sigue classic; conviene fine-grained.
+- B20: schedule GHA atraso medio 4h; cron Cloudflare ~26 s.
+- 30 códigos CUBSO sin aparecer en el catálogo vigente.
+
 ### Backlog (todo opcional)
 
 | Ítem | Esfuerzo | Valor | Notas |
@@ -440,7 +495,7 @@ Medición que motivó C2: `impresora` sola producía 769 de 3240 etiquetas (24%)
 | B13 / B14 | Medio | Ventanas cortas | B12 residual 17.5 % inalcanzable; más frecuencia no lo resuelve. Detección temprana (2 h) ya está |
 | B4 fase 2 | Medio | Costo real | Instrumentar Gemini; no mezclar con observabilidad de KV. **Sin cambios** el 3–5 sep |
 | B15 / búsqueda web | Alto (dimensionar) | Economía #10 | Fusionado; no tabla estática. **Sin cambios** el 3–5 sep |
-| C3 / C4 | Alto | Anti-drift + cron | C1 y C2 hechos. C3 cola admin y C4 cron: **no** hechos. No cablear Gemini al yaml |
+| C3 cola admin | Alto | Anti-drift | C4 hecho. Cola 13+4 observaciones |
 | B17 auto-postulación | Alto | Producto | Análisis profundo; **alto riesgo legal**. No tocado |
 | B18 firma blockchain | Investigar | Mercado | Medir corpus antes de construir. No tocado |
 | B19 2ª fuente SEACE | Alto | Cobertura | prod4 / OpenEgocio; hay bot-detection. No tocado |
@@ -489,8 +544,8 @@ Medición que motivó C2: `impresora` sola producía 769 de 3240 etiquetas (24%)
 27. **B20 no está cerrado al 100 %.** Un run `workflow_dispatch` (33319218551) prueba el mecanismo, no la serie de horarios. No diseñar B13/B14 encima todavía.
 28. **`GITHUB_PAT` / `TRIGGER_TEST_TOKEN`:** los carga Rolando. Cursor no hace `wrangler secret put` de esos valores.
 29. **`categoria_it` es cascada, no un job único.** La ingesta lee `it_keywords` (C2; fallback `IT_CATS`). C2 fase 4 (`scripts/backfill_categoria.py`) ya aplicó la cascada nueva al corpus histórico (puede desetiquetar). `reclasificar_categoria.py` sigue existiendo pero solo mira ambas columnas NULL y **no** desetiqueta. C1 Gemini **solo** si ambas columnas siguen NULL (no pisa los 54 escritos ni 90331). El incremental **no** re-etiqueta ids viejos. Keywords **no** leen `tdr_texto` / `items_json` / `nom_area_usuaria`.
-30. **`clasificar_gemini.py` es herramienta manual (C1 hecho, C4 no).** `--proponer` / `--consenso` / `--aplicar`. `temperature: 0` no lo vuelve determinista: `--dry-run` y la escritura eran dos inferencias (1 sep: 1 vs 3). El consenso elimina varianza, no sesgo (91327 unánime y rechazado a mano). Ledger `clasificacion_rechazadas.json`. No descuenta cupos KV ni `flash_ocr_cuota.json`. Clasifica por objeto, no por área. `ninguna` → NULL. **No** meterlo en el cron (C4).
-31. **OCR `--solo-ti` exige etiqueta previa** (`es_ti` = `categoria_it` OR `relevancia_ia`). Huevo-gallina: un IT que keywords no vio nunca entra a Flash OCR. C2 redujo nulls (74513 → 74206) pero no rompe el ciclo. `enriquecer_detalle.py` puede pisar `descripcion`, de donde C1 saca la señal. C3/C4 no hechos.
+30. **`clasificar_gemini.py` es C4 semanal** (`clasificacion_semanal.yml`, lun 10:00 Lima). Keywords diarias en `pipeline.yml`. `--proponer` / `--consenso` / `--aplicar`. Consenso ×3 obligatorio. Cupo `clasificacion_cuota.json` (no `flash_ocr_cuota.json`). `ninguna` → NULL. **No** meter Gemini en el diario (~49 min).
+31. **OCR `--solo-ti` exige etiqueta previa.** Keywords diario + C4 reducen el huevo-gallina. `enriquecer_detalle.py` puede pisar `descripcion`. C3 no hecho.
 32. **Admin JWT no UPDATE `categoria_it`.** RLS de `contratos` es SELECT. Correcciones a mano: service role / SQL Editor.
 33. **`categoria_it` y `relevancia_ia` son ejes independientes.** 13 categorías TI; solo IA/analytics es «tiene IA». Ruta pide **cualquiera** de las dos. No clasificar preguntando solo «¿tiene IA?».
 34. **Windows cp1252:** prints con `→` u otro no-ASCII revientan el pipeline. ASCII (`->`) o UTF-8 forzado en stdout. Fix: `24a2a3b`.

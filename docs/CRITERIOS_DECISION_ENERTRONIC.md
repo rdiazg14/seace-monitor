@@ -30,21 +30,21 @@ pone su IP y gana mejor margen. El hardware NUNCA se descarta; solo pesa menos.
 
 **Regla:** software (IA/cloud/ML/desarrollo) > hardware, **pero todo se evalúa y todo aparece en el ranking.**
 
-> **Cómo se asigna `categoria_it` (5 sep 2026):** este documento mapea las 13 líneas a Núcleo/Adyacente/Oportunista/Marginal; **no** las etiqueta. `categoria_it` (¿es TI?) y `relevancia_ia` (¿tiene IA?) son ejes **independientes**: de las 13 categorías, solo IA/analytics es «tiene IA». Ruta del día pide cualquiera de las dos. Pipeline: (1) keywords desde tabla `it_keywords` en la ingesta (fallback `IT_CATS`; C2); (2) `clasificar_gemini.py` **manual** con `--proponer` / `--consenso` / `--aplicar` sobre nulls (C1; por objeto, no por área; `ninguna` → NULL). C3 y C4 **no** hechos: no meter Gemini en el cron. Detalle: `ARQUITECTURA_TECNICA.md` §C.
+> **Cómo se asigna `categoria_it` (6 sep 2026):** este documento mapea las 13 líneas a Núcleo/Adyacente/Oportunista/Marginal; **no** las etiqueta. `categoria_it` (¿es TI?) y `relevancia_ia` (¿tiene IA?) son ejes **independientes**. Pipeline: (1) keywords desde `it_keywords` en la ingesta; (2) `reclasificar_categoria.py` diario sobre NULL Vigente/En Evaluación; (3) `clasificar_gemini.py` semanal con consenso ×3 sobre vigentes (`clasificacion_semanal.yml`). C3 (cola admin) **no** hecho. Detalle: `ARQUITECTURA_TECNICA.md` §C.
 
 ---
 
 ## 2. Factores de evaluación (qué pondera el score)
 
-La IA calcula un **score de conveniencia (0–100)** por contrato, ponderando en conjunto:
+La IA calcula un **score de conveniencia (0–100)** por contrato. En Ruta del día (6 sep), si existe `analisis_contrato`, el score usa ese análisis (`encaje.califica`, margen **relativo** al valor — techo 8 UIT —, modalidad, armadas, plazo, riesgo). Urgencia sigue el reloj en el front. Techos que no ocultan: `califica='no'` → max 35; margen &lt; S/1000 → max 55. Sin análisis: fallback a la heurística de rubro/vigencia/urgencia/señales.
 
 | Factor | Preferencia ENERTRONIC | Cómo influye en el score |
 |---|---|---|
 | **Encaje de rubro** | Núcleo > Adyacente > Oportunista > Marginal | Mayor peso si cae en el núcleo (IA/cloud/ML/desarrollo) |
-| **Encaje técnico** | Que ENERTRONIC califique (perfil, experiencia, RNP) | Si NO califica → marcar en rojo / bajar fuerte. Si califica justo → nota amarilla |
+| **Encaje técnico** | Que ENERTRONIC califique (perfil, experiencia, RNP) | Si NO califica → techo 35 (no se oculta). Si califica justo → nota amarilla |
 | **Modalidad** | Remoto preferido; presencial OK si paga muy bien | Remoto suma; presencial resta un poco — pero un margen alto lo compensa |
 | **Forma de pago** | 1 armada ideal; a más armadas, peor | Pago único y rápido suma; 13 armadas mensuales resta (caja amarrada) |
-| **Margen estimado** | Cuanto mayor, mejor. Techo del contrato: ≤ 8 UIT (~S/42,800 en 2026) | El gran contrapeso: margen alto perdona presencial o armadas |
+| **Margen estimado** | Cuanto mayor, mejor. Techo del contrato: ≤ 8 UIT (~S/42,800 en 2026) | Margen **relativo** al valor; absoluto engaña. Margen &lt; S/1000 → techo 55 |
 | **Plazo** | Proyectos que no amarren recursos de más | Plazo largo (ej. 365 días) resta algo si el pago también es lento |
 | **Vigencia / urgencia** | Que esté abierto y con tiempo para postular | Si cierra hoy/mañana → marcar URGENTE. Si ya cerró → fuera del ranking activo |
 | **Penalidades / riesgo** | Menor riesgo mejor | Penalidades duras o cláusulas riesgosas restan |
