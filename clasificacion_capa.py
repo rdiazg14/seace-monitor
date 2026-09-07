@@ -362,6 +362,24 @@ def conectar_pg():
     return psycopg.connect(dsn, row_factory=dict_row)
 
 
+def anunciar_backend_capa3(*, supa=None) -> str:
+    """Log explicito del camino de escritura (psycopg vs supabase-py)."""
+    if (os.getenv("DATABASE_URL") or "").strip():
+        msg = "[clasificacion] backend=psycopg (DATABASE_URL presente)"
+        print(msg, flush=True)
+        return "psycopg"
+    if supa is not None:
+        msg = (
+            "[clasificacion] backend=supabase-py "
+            "(DATABASE_URL ausente; fallback Actions)"
+        )
+        print(msg, flush=True)
+        return "supabase-py"
+    raise RuntimeError(
+        "capa 3: falta DATABASE_URL y cliente supabase"
+    )
+
+
 def escribir_keyword(
     filas: list[dict[str, Any]],
     *,
@@ -390,6 +408,11 @@ def escribir_keyword(
         raise RuntimeError(
             "capa 3 keyword: falta DATABASE_URL y cliente supabase"
         )
+    print(
+        "[clasificacion] DATABASE_URL ausente; escribiendo capa 3 via "
+        "supabase-py (fallback Actions)",
+        flush=True,
+    )
     n, s = upsert_keyword_supa(supa, filas, artefacto=artefacto)
     ids = [int(f["contrato_id"]) for f in filas]
     diff = diff_ids_supa(supa, ids)
@@ -427,6 +450,11 @@ def escribir_gemini(
         raise RuntimeError(
             "capa 3 gemini: falta DATABASE_URL y cliente supabase"
         )
+    print(
+        "[clasificacion] DATABASE_URL ausente; escribiendo capa 3 via "
+        "supabase-py (fallback Actions)",
+        flush=True,
+    )
     n, s = upsert_gemini_supa(supa, filas)
     ids = [int(f["contrato_id"]) for f in filas]
     diff = diff_ids_supa(supa, ids)
