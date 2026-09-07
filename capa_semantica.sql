@@ -206,6 +206,8 @@ SELECT
 FROM contratos c
 LEFT JOIN clasificacion_contrato cl ON cl.contrato_id = c.id;
 
+ALTER VIEW v_contratos SET (security_invoker = true);
+
 GRANT SELECT ON v_contratos TO anon, authenticated;
 
 CREATE OR REPLACE VIEW v_contratos_estado AS
