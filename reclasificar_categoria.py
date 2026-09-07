@@ -1,28 +1,36 @@
 #!/usr/bin/env python3
 """
-Backfill selectivo de categoria_it / relevancia_ia.
+Reclasificacion diaria por keywords (C4, gratis, cero tokens).
 
-Reaplica las keywords de ingesta_completa.py sobre contratos que quedaron
-con ambas columnas NULL. No usa Gemini. Idempotente: solo mira nulls;
-reejecutar no pisa etiquetas ya pobladas.
+Carga it_keywords (misma cascada que backfill_categoria / ingesta) y etiqueta
+contratos Vigente / En Evaluacion que siguen con categoria_it y relevancia_ia
+en NULL. Nunca desetiqueta.
+
+Motivo: la ingesta solo clasifica ids nuevos. Cada keyword que agregamos deja
+un goteo hasta que alguien re-evalua (caso 92056: 'tablet' valida, quedo NULL).
 
 Uso:
   python reclasificar_categoria.py --dry-run
   python reclasificar_categoria.py --dry-run --limit 200
-  python reclasificar_categoria.py            # escribe (no correr sin OK)
+  python reclasificar_categoria.py            # escribe
 """
 from __future__ import annotations
 
 import argparse
 import os
 import sys
+import time
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
 from supabase import create_client
 
-from ingesta_completa import clasificar_categoria_it, clasificar_relevancia_ia
+from ingesta_completa import (
+    cargar_keywords,
+    clasificar_categoria_it,
+    clasificar_relevancia_ia,
+)
 
 _env = Path(__file__).parent / ".env"
 if _env.exists():
@@ -40,6 +48,7 @@ COLS = (
     "id,descripcion,descripcion_contrato,objeto,entidad,"
     "categoria_it,relevancia_ia,estado,fecha_fin_cotizacion"
 )
+ESTADOS_ACCIONABLES = ("Vigente", "En Evaluación", "En Evaluacion")
 
 # Columna BD → clave API que espera clasificar_* (preparar_fila_db inverso).
 _API_DESDE_BD = (
@@ -93,7 +102,7 @@ def ventana_abierta(row: dict, now: datetime) -> bool:
 
 
 def paginar_nulls(supa, limit: int) -> list[dict]:
-    """categoria_it IS NULL AND relevancia_ia IS NULL. limit=0 → todos."""
+    """NULL en ambas columnas, solo Vigente / En Evaluacion. limit=0 → todos."""
     out: list[dict] = []
     offset = 0
     while True:
@@ -105,6 +114,7 @@ def paginar_nulls(supa, limit: int) -> list[dict]:
             .select(COLS)
             .is_("categoria_it", "null")
             .is_("relevancia_ia", "null")
+            .in_("estado", list(ESTADOS_ACCIONABLES))
             .order("id")
             .range(offset, offset + take - 1)
             .execute()
@@ -139,32 +149,49 @@ def flush_upsert(supa, lote: list[dict]) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="Backfill categoria_it / relevancia_ia (solo nulls, keywords)"
+        description="Reclasificar NULL Vigente/En Evaluacion con it_keywords"
     )
     ap.add_argument("--dry-run", action="store_true",
                     help="Clasifica y muestra; no escribe")
     ap.add_argument("--limit", type=int, default=0,
-                    help="Tope de filas a leer (0 = todas las null)")
+                    help="Tope de filas a leer (0 = todas las null del filtro)")
     args = ap.parse_args()
 
+    t0 = time.perf_counter()
     print("=" * 60, flush=True)
-    print("Backfill categoria_it / relevancia_ia (keywords)", flush=True)
+    print("Reclasificar categoria (it_keywords, C4 diario)", flush=True)
     print(f"  dry-run={args.dry_run}  limit={args.limit or 'all'}", flush=True)
+    print(f"  estados={list(ESTADOS_ACCIONABLES)}", flush=True)
     print("=" * 60, flush=True)
+
+    # Caso 92056: keyword 'tablet' valida en it_keywords, quedo NULL porque
+    # la ingesta solo clasifica ids nuevos. Este paso cierra ese goteo.
+    # No reescribimos reclasificar desde cero: el script ya era el lugar
+    # correcto; solo le faltaba la tabla (antes usaba IT_CATS hardcoded).
 
     supa = init_supabase()
     if supa is None:
         return 1
 
-    print("SELECT categoria_it IS NULL AND relevancia_ia IS NULL...",
+    cats = cargar_keywords(supa)
+    if not cats:
+        print("ERROR: it_keywords vacia o inaccesible; aborto.", flush=True)
+        return 1
+    n_kw = sum(len(kws) for _, kws in cats)
+    print(f"  cascada it_keywords: {len(cats)} categorias, {n_kw} keywords",
           flush=True)
+
+    print(
+        "SELECT NULL+NULL AND estado IN Vigente/En Evaluacion...",
+        flush=True,
+    )
     filas = paginar_nulls(supa, args.limit)
     n_sel = len(filas)
     n_pobladas = sum(
         1 for r in filas
         if r.get("categoria_it") or r.get("relevancia_ia")
     )
-    print(f"  candidatos={n_sel:,}  ya_poblados_en_lote={n_pobladas}",
+    print(f"  evaluados={n_sel:,}  ya_poblados_en_lote={n_pobladas}",
           flush=True)
     if n_pobladas:
         print("ERROR: el SELECT trajo filas con etiqueta; aborto.",
@@ -175,12 +202,12 @@ def main() -> int:
     cambios: list[tuple[dict, str | None, str | None]] = []
     n_vig_ventana = 0
     n_vig_ventana_hit = 0
-    cats = Counter()
+    cats_c = Counter()
     ias = Counter()
 
     for row in filas:
         api = fila_api(row)
-        cat = clasificar_categoria_it(api)
+        cat = clasificar_categoria_it(api, cats)
         ia = clasificar_relevancia_ia(api)
         vig = (
             (row.get("estado") or "") == "Vigente"
@@ -192,20 +219,20 @@ def main() -> int:
             continue
         cambios.append((row, cat, ia))
         if cat:
-            cats[cat] += 1
+            cats_c[cat] += 1
         if ia:
             ias[ia] += 1
         if vig:
             n_vig_ventana_hit += 1
 
-    print(f"\n  cambiarían={len(cambios):,}  "
+    print(f"\n  etiquetarian={len(cambios):,}  "
           f"siguen_null={n_sel - len(cambios):,}", flush=True)
     print(f"  vigente+ventana en lote={n_vig_ventana:,}  "
           f"de ellos reclasifican={n_vig_ventana_hit:,}  "
           f"siguen_null={n_vig_ventana - n_vig_ventana_hit:,}", flush=True)
-    if cats:
+    if cats_c:
         print("  categoria_it nueva:", flush=True)
-        for k, n in cats.most_common():
+        for k, n in cats_c.most_common():
             print(f"    {k}: {n:,}", flush=True)
     if ias:
         print("  relevancia_ia nueva:", flush=True)
@@ -222,8 +249,12 @@ def main() -> int:
         )
 
     if args.dry_run:
-        print(f"\n[dry-run] no se escribió. {len(cambios):,} UPDATE pendientes.",
-              flush=True)
+        dur = time.perf_counter() - t0
+        print(
+            f"\n[dry-run] no se escribió. evaluados={n_sel:,} "
+            f"etiquetarian={len(cambios):,} duracion={dur:.1f}s",
+            flush=True,
+        )
         return 0
 
     pendiente: list[dict] = []
@@ -233,7 +264,12 @@ def main() -> int:
             flush_upsert(supa, pendiente)
             pendiente.clear()
     flush_upsert(supa, pendiente)
-    print(f"escritos: {len(cambios):,}", flush=True)
+    dur = time.perf_counter() - t0
+    print(
+        f"evaluados={n_sel:,} etiquetados={len(cambios):,} "
+        f"duracion={dur:.1f}s",
+        flush=True,
+    )
     return 0
 
 
