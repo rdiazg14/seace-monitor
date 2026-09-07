@@ -28,7 +28,7 @@ WITH universo AS (
     c.analizado,
     c.cotizado,
     v.es_postulable
-  FROM contratos c
+  FROM v_contratos c
   INNER JOIN v_contratos_estado v ON v.id = c.id
   WHERE c.fecha_publica >= now() - interval '30 days'
 )
@@ -79,7 +79,7 @@ WITH universo AS (
     c.cotizado,
     v.es_postulable,
     coalesce(v.rubro, 'sin_clasificar') AS rubro
-  FROM contratos c
+  FROM v_contratos c
   INNER JOIN v_contratos_estado v ON v.id = c.id
   WHERE c.fecha_publica >= now() - interval '30 days'
 )

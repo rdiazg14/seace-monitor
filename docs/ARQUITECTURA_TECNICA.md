@@ -720,7 +720,7 @@ Lee claves UTC de hoy: `flash:`, `analyze:`, `cotizar:`, `cotizar_tipo:{texto|ta
 | Seguridad | RLS snapshots/migraciones; Worker `requireSesion`; `docs/SEGURIDAD.md`; trigger versionado | **MEDIDA** 6 sep | PAT fine-grained | anon key en bundle |
 | CUBSO | catálogo 2026-07-02 multi-hoja 85711; BD 290115; huérfanos 1772→30 | **MEDIDA** `c3002bd` | 30 códigos sin match | dump 2016 era 42% miss |
 | Data lake | 925 PDFs / 1,04 GB; `tdr/{YYYY}/{MM}/{id}/{aid}.pdf`; avg 1,15 MB | **MEDIDA** | históricos &gt;90d (946 vigentes) | ~45 meses a 100 GB |
-| Capas datos | fases 0–4 dual-write+eco; 5–6 lectores/DROP pendientes | **MEDIDA** items 7370 / docs 3796 | fase 5 | lectores aún en `contratos` |
+| Capas datos | fases 0–5 (`v_contratos`+vistas); 6 DROP pendiente | **MEDIDA** items 7370 / docs 3796 | fase 6 | front/Worker aún en `contratos`+eco |
 
 ### Discrepancias código vs PLAN
 

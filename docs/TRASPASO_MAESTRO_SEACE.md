@@ -455,7 +455,7 @@ C4 + score enriquecido + capas fase 3 + CUBSO 2026 + seguridad + data lake. Deta
 
 - `contrato_items`: **7370** filas de 3977 contratos, índice en `cod_cubso`.
 - `documentos`: **3796** filas, **925** con `storage_path` (= bucket).
-- Fases 5–6 (migrar lectores / DROP de `categoria_it`/`relevancia_ia`): **pendientes**. Fase 4 (dual-write + eco) **aplicada**; `--forzar-completa` ya no pisa C1.
+- Fase 6 (DROP de `categoria_it`/`relevancia_ia`): **pendiente** (requiere front+Worker en `v_contratos`). Fase 5 (`v_contratos` + vistas/RPC) **aplicada**; fase 4 dual-write+eco **aplicada**; `--forzar-completa` ya no pisa C1.
 
 **CUBSO actualizado** (`c3002bd`)
 
@@ -477,7 +477,7 @@ C4 + score enriquecido + capas fase 3 + CUBSO 2026 + seguridad + data lake. Deta
 
 **Pendientes (sin inventar plan)**
 
-- Capas fases 5–6 (lectores / DROP). Fase 4 dual-write aplicada.
+- Capas fase 6 (DROP). Fase 5 vistas SQL en `v_contratos`; front/Worker aún en eco.
 - Aprendizaje de vocabulario: diseñado en ARQUITECTURA_DATOS §11, **no** implementado.
 - C3 cola de revisión: 13 items + 4 observaciones.
 - Vista admin de keywords.

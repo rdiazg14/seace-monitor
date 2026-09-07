@@ -128,7 +128,7 @@ BEGIN
       WHEN tsq IS NOT NULL THEN ts_rank(c.texto_busqueda, tsq)
       ELSE 1.0::REAL
     END AS rank
-  FROM contratos c
+  FROM v_contratos c
   WHERE
     (tsq IS NULL OR c.texto_busqueda @@ tsq)
     AND (filtro_objeto  IS NULL OR c.objeto  = filtro_objeto)
@@ -157,7 +157,7 @@ SELECT
   categoria_it,
   DATE_TRUNC('month', fecha_publica)::DATE AS mes,
   COUNT(*)::INT                            AS total
-FROM contratos
+FROM v_contratos
 GROUP BY
   objeto,
   estado,
@@ -169,7 +169,7 @@ GRANT SELECT ON dashboard_resumen TO anon, authenticated;
 -- 8. Vista: contratos vigentes ordenados por urgencia de cierre
 CREATE OR REPLACE VIEW vigentes_urgentes AS
 SELECT *
-FROM contratos
+FROM v_contratos
 WHERE estado = 'Vigente'
 ORDER BY fecha_fin_cotizacion ASC NULLS LAST;
 

@@ -160,6 +160,54 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE VIEW v_contratos AS
+SELECT
+  c.id,
+  c.nro_contratacion,
+  c.descripcion_contrato,
+  c.objeto,
+  c.descripcion,
+  c.entidad,
+  c.estado,
+  c.fecha_publica,
+  c.fecha_ini_cotizacion,
+  c.fecha_fin_cotizacion,
+  c.tipo_cotizacion,
+  c.cotizar,
+  cl.categoria_it,
+  cl.relevancia_ia,
+  c.texto_busqueda,
+  c.created_at,
+  c.nom_area_usuaria,
+  c.items_json,
+  c.detalle_cargado,
+  c.req_url,
+  c.pdf_descargado,
+  c.pdf_procesado,
+  c.pdf_es_imagen,
+  c.tdr_texto,
+  c.pdf_hash,
+  c.estado_verificado_at,
+  c.pdf_archivo_id,
+  c.pdf_nombre,
+  c.tdr_tipo_extraccion,
+  c.paginas_ocr_pendientes,
+  c.paginas_ocr_hechas,
+  c.tdr_n_paginas,
+  c.tdr_n_paginas_nativas,
+  c.tdr_n_paginas_ocr,
+  c.analizado,
+  c.cotizado,
+  c.fecha_analisis,
+  c.fecha_cotizacion,
+  c.pdf_storage_path,
+  c.pdf_storage_at,
+  c.pdf_storage_bytes
+FROM contratos c
+LEFT JOIN clasificacion_contrato cl ON cl.contrato_id = c.id;
+
+GRANT SELECT ON v_contratos TO anon, authenticated;
+
 CREATE OR REPLACE VIEW v_contratos_estado AS
 SELECT
   c.id,
@@ -217,7 +265,7 @@ SELECT
     c.estado = 'Vigente'
     AND c.fecha_ini_cotizacion > now()
   ) AS es_por_abrir
-FROM contratos c
+FROM v_contratos c
 WHERE c.categoria_it IS NOT NULL OR c.relevancia_ia IS NOT NULL;
 
 CREATE OR REPLACE VIEW v_kpis_dashboard AS
@@ -229,7 +277,7 @@ it AS (
     c.*,
     seace_fecha_lima(c.fecha_fin_cotizacion) AS fin,
     seace_fecha_lima(c.fecha_publica) AS pub
-  FROM contratos c, hoy
+  FROM v_contratos c, hoy
   WHERE c.categoria_it IS NOT NULL OR c.relevancia_ia IS NOT NULL
 ),
 post AS (
@@ -286,7 +334,7 @@ SELECT
 CREATE OR REPLACE VIEW v_kpis_negocio AS
 WITH post AS (
   SELECT *
-  FROM contratos
+  FROM v_contratos
   WHERE (categoria_it IS NOT NULL OR relevancia_ia IS NOT NULL)
     AND estado = 'Vigente'
     AND (fecha_ini_cotizacion IS NULL OR fecha_ini_cotizacion <= now())
@@ -336,7 +384,7 @@ GRANT SELECT ON v_kpis_dashboard TO anon, authenticated;
 GRANT SELECT ON v_kpis_negocio TO anon, authenticated;
 
 COMMENT ON VIEW v_contratos_estado IS
-  'Universo IT/IA. es_postulable = instante (ini<=now<=fin). es_por_abrir = ini futura. cierran_hoy = now..fin dia Lima. rubro = mapeo linea.';
+  'Universo IT/IA desde v_contratos (capa 3). es_postulable = instante (ini<=now<=fin). es_por_abrir = ini futura. cierran_hoy = now..fin dia Lima. rubro = mapeo linea.';
 COMMENT ON VIEW v_kpis_dashboard IS
   'Agregados del tablero. total_postulables por instante. cierran_hoy = now..medianoche Lima; manana/semana por dias Lima (2-7).';
 COMMENT ON VIEW v_kpis_negocio IS

@@ -5,7 +5,7 @@
 > trigger `trg_clasificacion_echo` copia a `contratos`. Keywords no pisan
 > gemini/humano. `--forzar-completa` ya no pisa C1 (guard `SEACE_FORZAR_COMPLETA` retirado).
 
-**Estado:** **Fases 0–4 aplicadas**. Lectores siguen en `contratos` (eco). **Fases 5–6** (migrar lectores / DROP columnas): **no**.
+**Estado:** **Fases 0–5 aplicadas**. Lectores SQL (`v_contratos_*`, KPIs, RPC) leen capa 3 vía `v_contratos`. Front y Worker siguen en `contratos` (eco). **Fase 6** (DROP columnas): **no** hasta migrar front/Worker.
 
 **Principio:** cada capa escribe solo sus tablas. La ingesta upserta hechos SEACE en `contratos` (sin `categoria_it`/`relevancia_ia`) y, para altas con keyword, escribe capa 3; el eco mantiene `contratos` sincronizado para los lectores.
 
@@ -802,7 +802,7 @@ No es bloqueante. Duplicar 4 000 JSON y ~2 000 PDFs es barato frente a rompe
 6. Fases 0→6 (§7) y moratoria de `--forzar-completa`.
 7. Aprendizaje autónomo de vocabulario (§11): umbrales, pistas Gemini, UI admin.
 
-**Hecho (6 sep 2026):** fases 0–4 (dual-write + eco). Pendiente cuando se pida: fases 5–6 (lectores / DROP), no el job de aprendizaje (§11 diseñado, **no** implementado). C4 Gemini semanal ya corre; historial append-on-change (§2) sigue opcional.
+**Hecho (6–7 sep 2026):** fases 0–5 (`v_contratos` + vistas/RPC). Pendiente: fase 6 (DROP) tras migrar front/Worker; job de aprendizaje (§11) **no** implementado.
 
 ---
 
