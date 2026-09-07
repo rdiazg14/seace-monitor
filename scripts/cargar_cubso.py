@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """C5: carga el XLS/XLSX del CUBSO (OECE) a cubso_catalogo.
 
-El archivo publicado es XLSX con extension .xls (magic PK). Datos desde la
-fila 7. No toca it_keywords.
+El archivo publicado es XLSX (a veces dentro de ZIP). Datos desde la
+fila 7 de cada hoja (2016: una hoja; 2026+: BIENES/SERVICIOS/OBRAS/…).
+No toca it_keywords.
 
-    uv run python scripts/cargar_cubso.py data/cubso/cubso_oece.xls --version 2016-03-28
-    uv run python scripts/cargar_cubso.py data/cubso/cubso_oece.xls --version 2016-03-28 --dry-run
+    uv run python scripts/cargar_cubso.py data/cubso/cubso_oece_2026-07-02.xlsx --version 2026-07-02
+    uv run python scripts/cargar_cubso.py data/cubso/cubso_oece_2026-07-02.xlsx --version 2026-07-02 --dry-run
 """
 from __future__ import annotations
 
@@ -30,7 +31,7 @@ _ENV = _ROOT / ".env"
 
 FUENTE_DEFAULT = (
     "https://www.gob.pe/institucion/oece/informes-publicaciones/"
-    "5813164-anexo-catalogo-unico-de-bienes-servicios-y-obras-cubso"
+    "8337525-cubso-al-02-de-julio-de-2026-vigente"
 )
 
 TIPOS_OK = {
@@ -127,26 +128,32 @@ def _tipo(raw) -> str | None:
 
 
 def leer_filas(ruta: Path) -> tuple[list[dict], list[dict], int]:
-    """Datos desde la fila 7. pandas+openpyxl; codigo se lee celda a celda (no float)."""
+    """Datos desde la fila 7 de cada hoja. pandas+openpyxl; codigo celda a celda.
+
+    Dump 2016: una hoja (Hoja1) con todos los tipos.
+    Dump 2026+: una hoja por tipo (BIENES, SERVICIOS, OBRAS, CONSULTORIA DE OBRAS).
+    Columnas iguales: Nro | CODIGO | TITULO | Tipo (desde fila 7).
+    """
     xlsx, tmp = _ruta_xlsx(ruta)
     try:
-        # dtype=str no basta: un float IEEE redondea 16 digitos. openpyxl da int de Python.
         wb = load_workbook(xlsx, read_only=True, data_only=True)
-        ws = wb.active
         records: list[dict] = []
-        for excel_row, row in enumerate(
-            ws.iter_rows(min_row=7, max_col=4, values_only=True), start=7
-        ):
-            nro, codigo, titulo, tipo = (list(row) + [None, None, None, None])[:4]
-            if codigo is None and titulo is None and tipo is None:
-                continue
-            records.append({
-                "excel_row": excel_row,
-                "nro": nro,
-                "codigo": codigo,
-                "titulo": titulo,
-                "tipo": tipo,
-            })
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            for excel_row, row in enumerate(
+                ws.iter_rows(min_row=7, max_col=4, values_only=True), start=7
+            ):
+                nro, codigo, titulo, tipo = (list(row) + [None, None, None, None])[:4]
+                if codigo is None and titulo is None and tipo is None:
+                    continue
+                records.append({
+                    "excel_row": excel_row,
+                    "sheet": sheet_name,
+                    "nro": nro,
+                    "codigo": codigo,
+                    "titulo": titulo,
+                    "tipo": tipo,
+                })
         wb.close()
         df = pd.DataFrame.from_records(records)
     finally:
@@ -160,32 +167,34 @@ def leer_filas(ruta: Path) -> tuple[list[dict], list[dict], int]:
     for rec in df.to_dict("records"):
         n_leidos += 1
         excel_row = int(rec["excel_row"])
+        sheet = str(rec.get("sheet") or "")
         codigo = _codigo(rec["codigo"])
         tipo = _tipo(rec["tipo"])
         titulo_raw = rec["titulo"]
         titulo = "" if titulo_raw is None or (
             isinstance(titulo_raw, float) and pd.isna(titulo_raw)
         ) else str(titulo_raw).strip()
+        origen = f"{sheet}:{excel_row}" if sheet else str(excel_row)
         if not codigo:
             desc.append({
-                "fila": excel_row,
+                "fila": origen,
                 "motivo": "codigo_invalido",
                 "codigo": None if rec["codigo"] is None else str(rec["codigo"]),
             })
             continue
         if not titulo:
-            desc.append({"fila": excel_row, "motivo": "titulo_vacio", "codigo": codigo})
+            desc.append({"fila": origen, "motivo": "titulo_vacio", "codigo": codigo})
             continue
         if not tipo:
             desc.append({
-                "fila": excel_row,
+                "fila": origen,
                 "motivo": "tipo_invalido",
                 "codigo": codigo,
                 "tipo": None if rec["tipo"] is None else str(rec["tipo"]),
             })
             continue
         if codigo in vistos:
-            desc.append({"fila": excel_row, "motivo": "duplicado_archivo", "codigo": codigo})
+            desc.append({"fila": origen, "motivo": "duplicado_archivo", "codigo": codigo})
             continue
         vistos.add(codigo)
         ok.append({
