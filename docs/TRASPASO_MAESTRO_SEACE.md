@@ -10,12 +10,11 @@ Snapshot: **5 sep 2026** (Perú). Un solo punto de entrada; el detalle vive en l
 | [ESTADO_CIERRE_2026-08-20.md](./ESTADO_CIERRE_2026-08-20.md) | Foto histórica de iteraciones 1–9 + fixes |
 | [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md) | Iteraciones 1–11 + clasificación IT 1 sep: qué, archivos, commit, estado |
 | [CRITERIOS_DECISION_ENERTRONIC.md](./CRITERIOS_DECISION_ENERTRONIC.md) | Inteligencia de negocio. §3 «la IA busca» = intención, no implementación |
-| [ARQUITECTURA_DATOS.md](./ARQUITECTURA_DATOS.md) | Capas PG, snapshot, aprendizaje keywords, moratoria `--forzar-completa` |
-| [PLAN_DE_TRABAJO.md](./PLAN_DE_TRABAJO.md) | Plan v2 **parcialmente desactualizado** — ver §0 y §7 |
+| [ARQUITECTURA_DATOS.md](./ARQUITECTURA_DATOS.md) | Capas PG (fases 0–4 aplicadas; 5–6 pendientes) |
 
 **Regla:** el código gana al PLAN. Secretos solo por **nombre** (nunca JWT, API keys ni tokens).
 
-**Moratoria:** no usar `ingesta_completa.py --forzar-completa` hasta completar la fase 6 de [`ARQUITECTURA_DATOS.md`](./ARQUITECTURA_DATOS.md) (pisa las 54 de C1). Guard: `SEACE_FORZAR_COMPLETA=1`.
+**`--forzar-completa`:** desde fase 4 ya no pisa C1 (ingesta ciega a etiquetas; keywords no pisan `gemini`/`humano`). Sigue siendo una corrida cara.
 
 Este archivo + los enlaces de la tabla bastan para retomar. `DOCUMENTACION.md` y el README raíz del monitor describen el prototipo viejo (scrape 06:00, Llama); **no** empieces por ahí.
 
@@ -456,7 +455,7 @@ C4 + score enriquecido + capas fase 3 + CUBSO 2026 + seguridad + data lake. Deta
 
 - `contrato_items`: **7370** filas de 3977 contratos, índice en `cod_cubso`.
 - `documentos`: **3796** filas, **925** con `storage_path` (= bucket).
-- Fases 4–6 (dual-write y DROP de `categoria_it`/`relevancia_ia`): **pendientes**. Moratoria `--forzar-completa` vigente (guard env).
+- Fases 5–6 (migrar lectores / DROP de `categoria_it`/`relevancia_ia`): **pendientes**. Fase 4 (dual-write + eco) **aplicada**; `--forzar-completa` ya no pisa C1.
 
 **CUBSO actualizado** (`c3002bd`)
 
@@ -478,7 +477,7 @@ C4 + score enriquecido + capas fase 3 + CUBSO 2026 + seguridad + data lake. Deta
 
 **Pendientes (sin inventar plan)**
 
-- Capas fases 4–6: dual-write y DROP. Moratoria `--forzar-completa`.
+- Capas fases 5–6 (lectores / DROP). Fase 4 dual-write aplicada.
 - Aprendizaje de vocabulario: diseñado en ARQUITECTURA_DATOS §11, **no** implementado.
 - C3 cola de revisión: 13 items + 4 observaciones.
 - Vista admin de keywords.

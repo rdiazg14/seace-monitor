@@ -26,6 +26,7 @@ from pathlib import Path
 
 from supabase import create_client
 
+from clasificacion_capa import diff_clasificacion_contratos, upsert_keyword
 from ingesta_completa import (
     cargar_keywords,
     clasificar_categoria_it,
@@ -131,20 +132,44 @@ def paginar_nulls(supa, limit: int) -> list[dict]:
 
 
 def payload_update(row: dict, cat: str | None, ia: str | None) -> dict:
-    """Solo id + columnas que ahora tienen valor. No manda nulls."""
-    p: dict = {"id": int(row["id"])}
-    if cat:
+    """Fila para clasificacion_contrato (capa=keyword)."""
+    p: dict = {"contrato_id": int(row["id"])}
+    if cat is not None:
         p["categoria_it"] = cat
-    if ia:
+    if ia is not None:
         p["relevancia_ia"] = ia
+    # Si solo hay una etiqueta, la otra key no va → upsert_keyword conserva
+    # la previa (o NULL en insert).
+    if cat is None and ia is None:
+        p["categoria_it"] = None
+        p["relevancia_ia"] = None
     return p
 
 
 def flush_upsert(supa, lote: list[dict]) -> None:
+    """Escribe clasificacion_contrato; el eco actualiza contratos."""
+    del supa
     if not lote:
         return
-    supa.table("contratos").upsert(lote, on_conflict="id").execute()
-    print(f"    upsert lote {len(lote)} filas OK", flush=True)
+    import psycopg
+    from psycopg.rows import dict_row
+
+    dsn = (os.getenv("DATABASE_URL") or "").strip()
+    if not dsn:
+        raise RuntimeError("DATABASE_URL requerido para capa 3")
+    with psycopg.connect(dsn, row_factory=dict_row) as conn:
+        conn.autocommit = False
+        n, s = upsert_keyword(conn, lote, artefacto="reclasificar_diario")
+        diff = diff_clasificacion_contratos(conn)
+        if diff != 0:
+            conn.rollback()
+            raise RuntimeError(f"diff clasificacion/contratos={diff}")
+        conn.commit()
+    print(
+        f"    clasificacion keyword lote={len(lote)} "
+        f"escritos={n} saltados={s}",
+        flush=True,
+    )
 
 
 def main() -> int:
@@ -267,7 +292,7 @@ def main() -> int:
     dur = time.perf_counter() - t0
     print(
         f"evaluados={n_sel:,} etiquetados={len(cambios):,} "
-        f"duracion={dur:.1f}s",
+        f"duracion={dur:.1f}s destino=clasificacion_contrato",
         flush=True,
     )
     return 0

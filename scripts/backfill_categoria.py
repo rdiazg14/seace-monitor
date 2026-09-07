@@ -30,6 +30,10 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
 from ingesta_completa import _contiene, _norm, _texto_contrato  # noqa: E402
+from clasificacion_capa import (  # noqa: E402
+    diff_clasificacion_contratos,
+    upsert_keyword,
+)
 
 _ENV = _ROOT / ".env"
 DATA_DIR = _ROOT / "data"
@@ -505,15 +509,26 @@ def _reselect(conn, ids: list[int]) -> dict[int, str | None]:
 
 
 def _flush_update(conn, lote: list[dict]) -> None:
-    """UPDATE categoria_it; None -> NULL SQL. No toca otras columnas."""
+    """Escribe capa 3 (keyword). El eco copia a contratos.categoria_it."""
     if not lote:
         return
-    with conn.cursor() as cur:
-        cur.executemany(
-            "UPDATE contratos SET categoria_it = %(categoria_it)s WHERE id = %(id)s",
-            lote,
-        )
-    print(f"    update lote {len(lote)} filas OK", flush=True)
+    filas = [
+        {
+            "contrato_id": int(p["id"]),
+            "categoria_it": p.get("categoria_it"),
+            # relevancia_ia no la toca el backfill C2; conservar vigente.
+        }
+        for p in lote
+    ]
+    # Marca ausencia de relevancia_ia key → upsert_keyword conserva la previa.
+    escritos, saltados = upsert_keyword(
+        conn, filas, artefacto="backfill_categoria"
+    )
+    print(
+        f"    clasificacion keyword lote={len(lote)} "
+        f"escritos={escritos} saltados_protegidos={saltados}",
+        flush=True,
+    )
 
 
 def comando_aplicar(ruta: str) -> int:
@@ -588,7 +603,8 @@ def comando_aplicar(ruta: str) -> int:
         return 1
 
     print(
-        f"  --aplicar {path.name}  accion!=sin_cambio {len(a_escribir)}",
+        f"  --aplicar {path.name}  accion!=sin_cambio {len(a_escribir)} "
+        f"(escribe clasificacion_contrato capa=keyword)",
         flush=True,
     )
 
@@ -630,6 +646,15 @@ def comando_aplicar(ruta: str) -> int:
             if lote:
                 _flush_update(conn, lote)
                 escritos_ids.extend(int(x["id"]) for x in lote)
+            n_diff = diff_clasificacion_contratos(conn)
+            if n_diff != 0:
+                conn.rollback()
+                print(
+                    f"ERROR: tras aplicar, diff clasificacion vs contratos={n_diff}. "
+                    "Rollback.",
+                    flush=True,
+                )
+                return 1
             conn.commit()
         except Exception:
             conn.rollback()
@@ -639,6 +664,7 @@ def comando_aplicar(ruta: str) -> int:
         "utc": datetime.now(timezone.utc).isoformat(),
         "escritos": escritos_ids,
         "descartados": descartados,
+        "destino": "clasificacion_contrato",
     }
     path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
@@ -649,6 +675,7 @@ def comando_aplicar(ruta: str) -> int:
     print(f"  propuestos={len(a_escribir)}", flush=True)
     print(f"  descartados por re-select={len(descartados)}", flush=True)
     print(f"  escritos={len(escritos_ids)}", flush=True)
+    print("  diff clasificacion/contratos=0", flush=True)
     por_acc = Counter(
         pendientes_accion[i] for i in escritos_ids if i in pendientes_accion
     )

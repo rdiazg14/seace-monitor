@@ -1,10 +1,11 @@
 # Arquitectura de datos por capas
 
-> **NO usar `--forzar-completa` hasta completar la fase 6:** reescribe
-> `categoria_it` con keywords y pisaría las 54 clasificaciones de C1.
-> El flag está además bloqueado en código salvo `SEACE_FORZAR_COMPLETA=1`.
+> **Fase 4 (dual-write) aplicada:** la ingesta no manda `categoria_it` /
+> `relevancia_ia` en el upsert. Escritores → `clasificacion_contrato`;
+> trigger `trg_clasificacion_echo` copia a `contratos`. Keywords no pisan
+> gemini/humano. `--forzar-completa` ya no pisa C1 (guard `SEACE_FORZAR_COMPLETA` retirado).
 
-**Estado:** diseño vigente. **Fases 0–3 aplicadas** (6 sep 2026): snapshot, DDL, `clasificacion_contrato` poblada, `contrato_items` (**7370** filas / 3977 contratos) y `documentos` (**3796** filas, **925** con `storage_path`). **Fases 4–6** (dual-write, lectores, DROP de `categoria_it`/`relevancia_ia`): **no**. Moratoria `--forzar-completa` vigente (`SEACE_FORZAR_COMPLETA`).
+**Estado:** **Fases 0–4 aplicadas**. Lectores siguen en `contratos` (eco). **Fases 5–6** (migrar lectores / DROP columnas): **no**.
 
 **Principio:** cada capa escribe solo sus tablas. Hoy la ingesta (`preparar_fila_db` en `ingesta_completa.py`) mete en el mismo upsert el dato declarado de SEACE y la inferencia (`categoria_it`, `relevancia_ia`). `--forzar-completa` reescribe esas columnas y pisa las 54 etiquetas de C1 (consenso Gemini) y el id `90331`.
 
@@ -684,21 +685,18 @@ INSERT clasificación (§6). Lectores siguen en `contratos`.
 
 **Aplicada** (`151adc5`): `contrato_items` **7370** filas de 3977 contratos (índice `cod_cubso`); `documentos` **3796** filas, **925** con `storage_path`. Columnas viejas siguen. Front no las usa todavía.
 
-### Fase 4 — Dual-write (código; no este doc) — PENDIENTE
+### Fase 4 — Dual-write — APLICADA
 
-Orden estricto:
+Orden aplicado:
 
-1. Job keywords **después** de ingesta: escribe solo `clasificacion_contrato` con las reglas de no-pisar.
-2. Gemini y backfill apuntan a `clasificacion_contrato`.
-3. Activar trigger de eco → `contratos.categoria_it` se actualiza **desde** capa 3.
-4. Ingesta deja de enviar `categoria_it` / `relevancia_ia` en el upsert.
-5. `--forzar-completa` en staging (o dry-run) sobre un id C1: la fila `clasificacion` no cambia.
+1. Trigger `trg_clasificacion_echo` (`docs/capas_fase4_eco.sql`, marcador `capas_fase4_eco`).
+2. Escritores → `clasificacion_contrato`: `backfill_categoria.py`, `clasificar_gemini.py --aplicar`, `reclasificar_categoria.py`, `ingesta_completa.py` (solo altas, post-upsert).
+3. Ingesta **no** manda `categoria_it` / `relevancia_ia` en el upsert.
+4. Guard `SEACE_FORZAR_COMPLETA` retirado.
 
-**Riesgo PostgREST:** un `upsert` con JSON sin la clave a veces **NULLA** la columna. Hay que confirmar (staging) que omitir la clave = no tocar. Si NULLA: upsert por `columns=` explícitas o `UPDATE` SQL de campos declarados. **No se corta la ingesta en prod hasta verlo.**
+**Validar:** diff clasificacion vs contratos = 0; C1 (54) con `capa='gemini'`.
 
-**Validar:** altas del día tienen fila keyword; un C1 no se mueve; eco coincide (join igualdad = 0); front sin deploy.
-
-Rollback: reponer escritura de cat en ingesta; DROP trigger eco; capa 3 queda como copia.
+**Riesgo PostgREST (mitigado):** el upsert de contratos **omite** las claves de inferencia; PostgREST no las toca en UPDATE. Altas nuevas nacen con NULL en esas columnas hasta que el eco las rellena desde capa 3.
 
 ### Fase 5 — Lectores SQL a JOIN (sin DROP)
 
@@ -931,14 +929,9 @@ No se edita `clasificacion_contrato` desde esta pantalla (eso sería C3, `capa='
 
 ---
 
-## 12. Moratoria `--forzar-completa`
+## 12. `--forzar-completa` (post fase 4)
 
-Hasta **cerrar la fase 6** (columnas de inferencia fuera de `contratos`, ingesta ciega a ellas):
+Desde la fase 4 la ingesta **no** incluye `categoria_it` / `relevancia_ia` en el upsert de `contratos`. La inferencia va a `clasificacion_contrato` con `capa='keyword'` y **no pisa** `gemini`/`humano`. El guard `SEACE_FORZAR_COMPLETA` se retiró.
 
-```
-NO usar --forzar-completa hasta completar la fase 6: reescribe
-categoria_it con keywords y pisaria las 54 clasificaciones de C1.
-```
-
-Guard en `ingesta_completa.py`: si se pasa `--forzar-completa` y `SEACE_FORZAR_COMPLETA` no vale `1`, el proceso sale con error. El README y este banner lo repiten. Quitar el guard es parte del contract de fase 6, no antes.
+Sigue siendo una operación cara (re-descarga del corpus). No hace falta para backfill de keywords (`reclasificar_categoria.py` / `backfill_categoria.py`).
 )
