@@ -1,4 +1,4 @@
-ts=2026-09-07T05:12:10.707991+00:00
+ts=2026-09-07T11:58:43.084665+00:00
 modo=ocr_selectivo
 solo_ti=True
 max_segundos=7200
@@ -23,5 +23,5 @@ pendientes_contratos=0
 pendientes_paginas=0
 ids_tocados=
 motivo_parada=vacio
-elapsed_s=5
+elapsed_s=6
 exit=0
