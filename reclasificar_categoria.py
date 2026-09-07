@@ -26,7 +26,7 @@ from pathlib import Path
 
 from supabase import create_client
 
-from clasificacion_capa import escribir_keyword
+from clasificacion_capa import anunciar_backend_capa3, escribir_keyword
 from ingesta_completa import (
     cargar_keywords,
     clasificar_categoria_it,
@@ -183,6 +183,7 @@ def main() -> int:
     supa = init_supabase()
     if supa is None:
         return 1
+    anunciar_backend_capa3(supa=supa)
 
     cats = cargar_keywords(supa)
     if not cats:

@@ -774,6 +774,8 @@ def main():
     if supa and filas_db:
         upsert_supabase(supa, filas_db)
         if filas_cls:
+            from clasificacion_capa import anunciar_backend_capa3
+            anunciar_backend_capa3(supa=supa)
             n_w, n_s = escribir_clasificacion_keyword(filas_cls, supa=supa)
             print(
                 f"[clasificacion] keyword escritos={n_w} saltados_protegidos={n_s}",
