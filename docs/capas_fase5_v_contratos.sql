@@ -49,8 +49,10 @@ SELECT
 FROM public.contratos c
 LEFT JOIN public.clasificacion_contrato cl ON cl.contrato_id = c.id;
 
+ALTER VIEW public.v_contratos SET (security_invoker = true);
+
 COMMENT ON VIEW public.v_contratos IS
-  'Fase 5: mismos campos que contratos; categoria_it/relevancia_ia desde capa 3.';
+  'Fase 5: mismos campos que contratos; categoria_it/relevancia_ia desde capa 3; security_invoker=true.';
 
 GRANT SELECT ON public.v_contratos TO anon, authenticated;
 
