@@ -5,7 +5,7 @@
 > trigger `trg_clasificacion_echo` copia a `contratos`. Keywords no pisan
 > gemini/humano. `--forzar-completa` ya no pisa C1 (guard `SEACE_FORZAR_COMPLETA` retirado).
 
-**Estado:** **Fases 0–5 aplicadas**. Lectores SQL (`v_contratos_*`, KPIs, RPC) leen capa 3 vía `v_contratos`. Front y Worker siguen en `contratos` (eco). **Fase 6** (DROP columnas): **no** hasta migrar front/Worker.
+**Estado:** **Fases 0–5b aplicadas**. Front, Worker y vistas SQL leen `v_contratos` (capa 3). Eco sigue activo. **Fase 6** (DROP): **no** hasta ≥2 días de pipeline estable.
 
 **Principio:** cada capa escribe solo sus tablas. La ingesta upserta hechos SEACE en `contratos` (sin `categoria_it`/`relevancia_ia`) y, para altas con keyword, escribe capa 3; el eco mantiene `contratos` sincronizado para los lectores.
 

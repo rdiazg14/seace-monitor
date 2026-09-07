@@ -477,7 +477,7 @@ C4 + score enriquecido + capas fase 3 + CUBSO 2026 + seguridad + data lake. Deta
 
 **Pendientes (sin inventar plan)**
 
-- Capas fase 6 (DROP). Fase 5 vistas SQL en `v_contratos`; front/Worker aún en eco.
+- Capas fase 6 (DROP) solo tras ≥2 días de pipeline estable. Fase 5b: front+Worker en `v_contratos`; eco activo.
 - Aprendizaje de vocabulario: diseñado en ARQUITECTURA_DATOS §11, **no** implementado.
 - C3 cola de revisión: 13 items + 4 observaciones.
 - Vista admin de keywords.
