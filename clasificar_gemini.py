@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
 """
-Fase B / C1: clasifica categoria_it con Gemini sobre lo que keywords dejo en NULL.
+Fase B / C1 / C4: clasifica categoria_it con Gemini sobre lo que keywords
+dejo en NULL.
 
 Cascada: SELECT siempre categoria_it IS NULL AND relevancia_ia IS NULL.
 No pisa etiquetas de keywords. No toca relevancia_ia. No escribe
-flash_ocr_cuota.json.
+flash_ocr_cuota.json (cupo propio: data/clasificacion_cuota.json).
 
-HERRAMIENTA MANUAL. temperature:0 no es determinista: el dry-run del 1 sep
-dijo 1 y la escritura fueron 3 (2 FP Hardware revertidos). Revisar el
-SELECT a mano antes de confiar. No meter en pipeline.yml sin Arquitectura C.
+C4 semanal (clasificacion_semanal.yml): 3x --proponer + --consenso + --aplicar
+sobre --filtro vigentes (ventana abierta o futura). No va al pipeline diario.
+
+temperature:0 no es determinista: el consenso de 3 elimina varianza.
+Nunca aplicar un consenso de menos de 3 corridas.
 
 C1 (preferido):
     python clasificar_gemini.py --proponer --filtro vigentes
     python clasificar_gemini.py --consenso data/propuestas_it_A.json data/propuestas_it_B.json
     python clasificar_gemini.py --aplicar data/consenso_it_YYYYMMDD-HHMMSS.json
-
-Camino directo (deprecado, se elimina en C3):
-    python clasificar_gemini.py --dry-run --limit 30 --filtro vigentes
-    python clasificar_gemini.py --filtro vigentes            # escribe
 """
 from __future__ import annotations
 
@@ -49,6 +48,16 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_FLASH = (
     os.getenv("GEMINI_FLASH_MODEL", "").strip() or "gemini-3.7-flash"
 )
+# Cupo C4 propio. La API key es una sola: si C4 agota creditos, el OCR se
+# queda sin TDRs. Tope chico para que el OCR siempre tenga margen.
+CUOTA_C4_PATH = Path(__file__).parent / "data" / "clasificacion_cuota.json"
+MAX_LLAMADAS_DIA_DEFAULT = 150
+EXIT_CUPO_C4 = 8
+_MAX_LLAMADAS_DIA = MAX_LLAMADAS_DIA_DEFAULT
+
+
+class CupoClasificacion(Exception):
+    """Tope diario C4 alcanzado (exit 8). No confundir con HTTP 429."""
 GEMINI_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     f"{GEMINI_FLASH}:generateContent"
@@ -236,6 +245,89 @@ def acumular_tokens(body: dict) -> None:
     TOKEN_STATS["candidates"] += n("candidatesTokenCount")
     TOKEN_STATS["total"] += n("totalTokenCount")
     TOKEN_STATS["llamadas"] += 1
+
+
+def fecha_lima() -> str:
+    return datetime.now(timezone(timedelta(hours=-5))).date().isoformat()
+
+
+def set_max_llamadas_dia(n: int) -> None:
+    global _MAX_LLAMADAS_DIA
+    _MAX_LLAMADAS_DIA = max(0, int(n))
+
+
+def cargar_cuota_c4() -> dict:
+    """Mismo patron que flash_ocr_cuota: fecha Lima, reset a medianoche."""
+    hoy = fecha_lima()
+    if CUOTA_C4_PATH.exists():
+        try:
+            d = json.loads(CUOTA_C4_PATH.read_text(encoding="utf-8"))
+            if d.get("fecha") == hoy:
+                d.setdefault("requests", 0)
+                d.setdefault("prompt_tokens", 0)
+                d.setdefault("candidates_tokens", 0)
+                d.setdefault("total_tokens", 0)
+                return d
+        except (OSError, json.JSONDecodeError):
+            pass
+    return {
+        "fecha": hoy,
+        "requests": 0,
+        "prompt_tokens": 0,
+        "candidates_tokens": 0,
+        "total_tokens": 0,
+    }
+
+
+def guardar_cuota_c4(d: dict) -> None:
+    CUOTA_C4_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CUOTA_C4_PATH.write_text(
+        json.dumps(d, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def assert_cuota_c4() -> None:
+    """Antes de llamar Gemini. Exit path: CupoClasificacion → EXIT_CUPO_C4."""
+    cuota = cargar_cuota_c4()
+    usados = int(cuota.get("requests") or 0)
+    if usados >= _MAX_LLAMADAS_DIA:
+        raise CupoClasificacion(
+            f"tope diario C4 {_MAX_LLAMADAS_DIA} llamadas "
+            f"(usadas={usados}, archivo={CUOTA_C4_PATH.name})"
+        )
+
+
+def registrar_llamada_c4(body: dict) -> None:
+    """Tras respuesta OK. No toca flash_ocr_cuota.json. No lanza: el tope
+    se corta en assert_cuota_c4 de la siguiente llamada."""
+    um = body.get("usageMetadata") or {}
+
+    def n(key: str) -> int:
+        try:
+            return int(um.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    cuota = cargar_cuota_c4()
+    cuota["requests"] = int(cuota.get("requests") or 0) + 1
+    cuota["prompt_tokens"] = int(cuota.get("prompt_tokens") or 0) + n(
+        "promptTokenCount"
+    )
+    cuota["candidates_tokens"] = int(cuota.get("candidates_tokens") or 0) + n(
+        "candidatesTokenCount"
+    )
+    cuota["total_tokens"] = int(cuota.get("total_tokens") or 0) + n(
+        "totalTokenCount"
+    )
+    guardar_cuota_c4(cuota)
+    usados = int(cuota["requests"])
+    if usados >= _MAX_LLAMADAS_DIA:
+        print(
+            f"  [cupo C4] tope {_MAX_LLAMADAS_DIA} alcanzado "
+            f"(usadas={usados}); la siguiente llamada aborta",
+            flush=True,
+        )
 
 
 def init_supabase():
@@ -624,6 +716,7 @@ def clasificar_lote(
             print(f"    [gemini backoff {wait:.0f}s attempt={attempt}]", flush=True)
             time.sleep(wait)
         try:
+            assert_cuota_c4()
             r = client.post(
                 GEMINI_URL,
                 headers={
@@ -647,10 +740,13 @@ def clasificar_lote(
             r.raise_for_status()
             body = r.json()
             acumular_tokens(body)
+            registrar_llamada_c4(body)
             text = extract_gemini_text(body)
             if not text:
                 raise RuntimeError("gemini vacio")
             return parse_array(text)
+        except CupoClasificacion:
+            raise
         except httpx.HTTPStatusError as e:
             last_err = e
             code = e.response.status_code if e.response is not None else 0
@@ -1003,46 +1099,50 @@ def comando_proponer(supa, args, filas: list[dict]) -> int:
     p2_map: dict[int, dict] = {}
     sin_p2: set[int] = set()
 
-    with httpx.Client() as client:
-        if filas:
-            p1_map, sin_p1 = correr_pasada(
-                client,
-                filas,
-                args.batch,
-                etiqueta="P1",
-                system_prompt=SYSTEM_PROMPT_P1,
-                schema=RESPONSE_SCHEMA_P1,
-                armar_prompt=user_prompt,
-            )
-            for cid, p in p1_map.items():
-                degradar_p1(p, por_id[cid])
-            # 91197 salio Licencias en una corrida y Cloud/hosting en otra,
-            # ambas con confianza alta y senal verificada; la confianza
-            # declarada no predice estabilidad de CATEGORIA. Costo: ~5
-            # llamadas extra sobre 1802 contratos. La confianza degradada
-            # se guarda como diagnostico, no decide quien va a P2.
-            ids_p2 = [
-                cid
-                for cid, p in p1_map.items()
-                if p["categoria"] != CATEGORIA_NINGUNA
-            ]
-            rng = random.Random(SEED_P2)
-            rng.shuffle(ids_p2)
-            print(
-                f"  pasada 2 candidatos={len(ids_p2)} batch={BATCH_P2} seed={SEED_P2}",
-                flush=True,
-            )
-            filas_p2 = [por_id[cid] for cid in ids_p2]
-            if filas_p2:
-                p2_map, sin_p2 = correr_pasada(
+    try:
+        with httpx.Client() as client:
+            if filas:
+                p1_map, sin_p1 = correr_pasada(
                     client,
-                    filas_p2,
-                    BATCH_P2,
-                    etiqueta="P2",
-                    system_prompt=SYSTEM_PROMPT_P2,
-                    schema=RESPONSE_SCHEMA_P2,
-                    armar_prompt=user_prompt_p2,
+                    filas,
+                    args.batch,
+                    etiqueta="P1",
+                    system_prompt=SYSTEM_PROMPT_P1,
+                    schema=RESPONSE_SCHEMA_P1,
+                    armar_prompt=user_prompt,
                 )
+                for cid, p in p1_map.items():
+                    degradar_p1(p, por_id[cid])
+                # 91197 salio Licencias en una corrida y Cloud/hosting en otra,
+                # ambas con confianza alta y senal verificada; la confianza
+                # declarada no predice estabilidad de CATEGORIA. Costo: ~5
+                # llamadas extra sobre 1802 contratos. La confianza degradada
+                # se guarda como diagnostico, no decide quien va a P2.
+                ids_p2 = [
+                    cid
+                    for cid, p in p1_map.items()
+                    if p["categoria"] != CATEGORIA_NINGUNA
+                ]
+                rng = random.Random(SEED_P2)
+                rng.shuffle(ids_p2)
+                print(
+                    f"  pasada 2 candidatos={len(ids_p2)} batch={BATCH_P2} seed={SEED_P2}",
+                    flush=True,
+                )
+                filas_p2 = [por_id[cid] for cid in ids_p2]
+                if filas_p2:
+                    p2_map, sin_p2 = correr_pasada(
+                        client,
+                        filas_p2,
+                        BATCH_P2,
+                        etiqueta="P2",
+                        system_prompt=SYSTEM_PROMPT_P2,
+                        schema=RESPONSE_SCHEMA_P2,
+                        armar_prompt=user_prompt_p2,
+                    )
+    except CupoClasificacion as e:
+        print(f"ERROR cupo C4 (exit {EXIT_CUPO_C4}): {e}", flush=True)
+        return EXIT_CUPO_C4
 
     items: list[dict] = []
     for row in filas:
@@ -1589,7 +1689,21 @@ def main() -> int:
         default=False,
         help="Vigente sin filtrar fecha_fin_cotizacion (default off)",
     )
+    ap.add_argument(
+        "--max-llamadas-dia",
+        type=int,
+        default=MAX_LLAMADAS_DIA_DEFAULT,
+        help=(
+            f"Tope diario C4 en data/clasificacion_cuota.json "
+            f"(default {MAX_LLAMADAS_DIA_DEFAULT}; exit {EXIT_CUPO_C4})"
+        ),
+    )
     args = ap.parse_args()
+
+    if args.max_llamadas_dia < 0:
+        print("ERROR: --max-llamadas-dia debe ser >= 0", flush=True)
+        return 1
+    set_max_llamadas_dia(args.max_llamadas_dia)
 
     if args.consenso is not None and len(args.consenso) < 2:
         print("ERROR: --consenso requiere al menos 2 artefactos", flush=True)
@@ -1638,7 +1752,8 @@ def main() -> int:
         f"  proponer={args.proponer}  dry-run={args.dry_run}  "
         f"filtro={args.filtro}  limit={args.limit or 'all'}  "
         f"batch={args.batch}  incluir_ventana_cerrada="
-        f"{args.incluir_ventana_cerrada}  modelo={GEMINI_FLASH}",
+        f"{args.incluir_ventana_cerrada}  max_llamadas_dia="
+        f"{args.max_llamadas_dia}  modelo={GEMINI_FLASH}",
         flush=True,
     )
     print("=" * 60, flush=True)

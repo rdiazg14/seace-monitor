@@ -1,5 +1,7 @@
-# Pipeline diario unificado: ingesta → G1 → detalle → PDF nativo → OCR 2h → chunk + embed v2 → analizar postulables → funnel.
+# Pipeline diario unificado: ingesta → G1 → detalle → keywords → PDF nativo → OCR 2h → chunk + embed v2 → analizar postulables → funnel.
 # Cron 09:00 Perú (14:00 UTC). Solo alimenta embedding_v2; no llama al Worker /embed ni escribe embedding(768).
+# Keywords (C4): post-detalle, pre-OCR. Cierra el goteo de it_keywords nuevas
+# (caso 92056 tablet). Sin Gemini; Gemini semanal vive en clasificacion_semanal.yml.
 name: Pipeline diario SEACE
 
 on:
@@ -87,6 +89,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python alerta_g3.py --paso detalle --job-status failure
+
+      # C4 keywords: la ingesta solo clasifica ids nuevos; cada keyword nueva
+      # deja NULL hasta re-evaluar (92056 tablet). Solo escribe donde hay NULL.
+      - name: Reclasificar por keywords (sin costo)
+        id: keywords
+        if: ${{ success() && github.event.inputs.solo_ocr != 'true' }}
+        continue-on-error: true
+        run: python reclasificar_categoria.py
+
+      - name: G3 keywords
+        if: ${{ always() && !cancelled() && github.event.inputs.solo_ocr != 'true' && steps.keywords.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python alerta_g3.py --paso keywords --job-status failure
 
       - name: PDF nativo (PyMuPDF, sin Flash)
         id: pdf

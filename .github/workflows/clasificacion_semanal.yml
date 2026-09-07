@@ -1,0 +1,143 @@
+# C4 — Clasificacion Gemini semanal (consenso x3).
+# Universo: --filtro vigentes (Vigente + ventana abierta o futura = postulables
+# y por abrir). Sin --incluir-ventana-cerrada. No corre sobre En Evaluacion ni
+# Culminado (~73k). Keywords diarias viven en pipeline.yml.
+#
+# Cron COMENTADO hasta validar con workflow_dispatch (decision del operador).
+name: Clasificacion semanal Gemini (C4)
+
+on:
+  workflow_dispatch:
+  # schedule:
+  #   - cron: "0 15 * * 1"   # lunes 10:00 America/Lima (UTC-5), post-pipeline
+
+permissions:
+  issues: write
+  contents: read
+
+concurrency:
+  group: clasificacion-semanal-c4
+  cancel-in-progress: false
+
+jobs:
+  clasificar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      issues: write
+      contents: read
+    env:
+      PYTHONUNBUFFERED: "1"
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # Tres corridas independientes. Si una falla (429, cupo C4, etc.), NO
+      # consensuar ni aplicar: nunca consenso incompleto.
+      - name: Proponer corrida 1
+        id: p1
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python clasificar_gemini.py --proponer --filtro vigentes --limit 0
+          art=$(ls -t data/propuestas_it_*.json | head -1)
+          cp "$art" data/propuestas_it_run1.json
+          echo "artefacto=$art" >> "$GITHUB_OUTPUT"
+
+      - name: Proponer corrida 2
+        id: p2
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python clasificar_gemini.py --proponer --filtro vigentes --limit 0
+          art=$(ls -t data/propuestas_it_*.json | head -1)
+          cp "$art" data/propuestas_it_run2.json
+          echo "artefacto=$art" >> "$GITHUB_OUTPUT"
+
+      - name: Proponer corrida 3
+        id: p3
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python clasificar_gemini.py --proponer --filtro vigentes --limit 0
+          art=$(ls -t data/propuestas_it_*.json | head -1)
+          cp "$art" data/propuestas_it_run3.json
+          echo "artefacto=$art" >> "$GITHUB_OUTPUT"
+
+      - name: Verificar 3/3 corridas OK
+        id: check3
+        if: ${{ always() && !cancelled() }}
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          echo "p1=${{ steps.p1.outcome }} p2=${{ steps.p2.outcome }} p3=${{ steps.p3.outcome }}"
+          if [ "${{ steps.p1.outcome }}" != "success" ] \
+             || [ "${{ steps.p2.outcome }}" != "success" ] \
+             || [ "${{ steps.p3.outcome }}" != "success" ]; then
+            echo "tres_ok=false" >> "$GITHUB_OUTPUT"
+            echo "Faltan corridas: no se consensua ni aplica."
+            exit 1
+          fi
+          for f in data/propuestas_it_run1.json data/propuestas_it_run2.json data/propuestas_it_run3.json; do
+            test -f "$f" || { echo "falta $f"; exit 1; }
+          done
+          echo "tres_ok=true" >> "$GITHUB_OUTPUT"
+
+      - name: G3 consenso incompleto
+        if: ${{ always() && !cancelled() && steps.check3.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python alerta_g3.py --paso clasificacion_semanal --job-status failure
+
+      - name: Consenso (solo 3/3)
+        id: consenso
+        if: ${{ steps.check3.outcome == 'success' }}
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python clasificar_gemini.py --consenso \
+            data/propuestas_it_run1.json \
+            data/propuestas_it_run2.json \
+            data/propuestas_it_run3.json
+          art=$(ls -t data/consenso_it_*.json | head -1)
+          cp "$art" data/consenso_it_aplicar.json
+          echo "artefacto=$art" >> "$GITHUB_OUTPUT"
+
+      - name: Aplicar consenso
+        id: aplicar
+        if: ${{ steps.consenso.outcome == 'success' }}
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python clasificar_gemini.py --aplicar data/consenso_it_aplicar.json
+
+      - name: G3 aplicar
+        if: ${{ always() && !cancelled() && (steps.consenso.outcome == 'failure' || steps.aplicar.outcome == 'failure') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python alerta_g3.py --paso clasificacion_aplicar --job-status failure
+
+      - name: Subir artefactos C4 (retencion 30d)
+        if: ${{ always() && !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: clasificacion-c4-${{ github.run_id }}
+          path: |
+            data/propuestas_it_*.json
+            data/consenso_it_*.json
+            data/clasificacion_cuota.json
+          if-no-files-found: warn
+          retention-days: 30
