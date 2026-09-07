@@ -85,7 +85,13 @@ Los flags `analizado` / `cotizado` / `fecha_*` se quedan en `contratos` (funnel 
 
 ### 2.4 FK `contrato_items` → `cubso_catalogo`
 
-**No hay FK de base.** El catálogo cargado es el dump 2016 (~245 895 códigos). Un `cod_cubso` declarado por SEACE que no esté en ese dump haría fallar el INSERT del detalle. El join es `LEFT JOIN cubso_catalogo c ON c.codigo = i.cod_cubso`. Índice en `cod_cubso` para ese join.
+**No hay FK de base.** El catálogo se actualiza desde el XLSX vigente del OECE
+(`scripts/cargar_cubso.py`). Tras la carga del **02-jul-2026**, de los 4 213
+`cod_cubso` distintos en `contrato_items` solo **30** faltan en
+`cubso_catalogo` (antes, con el dump 2016, faltaban 1 772). El upsert por
+`codigo` agrega y actualiza sin borrar históricos. El join es
+`LEFT JOIN cubso_catalogo c ON c.codigo = i.cod_cubso`. Índice en `cod_cubso`
+para ese join.
 
 ### 2.5 `capa` en las 4 213
 
