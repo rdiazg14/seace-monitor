@@ -35,9 +35,8 @@ import httpx
 from supabase import create_client
 
 from clasificacion_capa import (
-    diff_clasificacion_contratos,
+    escribir_gemini,
     map_confianza,
-    upsert_gemini,
 )
 
 _env = Path(__file__).parent / ".env"
@@ -854,22 +853,8 @@ def parse_p2_item(item: dict) -> dict | None:
     return {"categoria": cat, "senal": senal}
 
 
-def _dsn() -> str:
-    dsn = (os.getenv("DATABASE_URL") or "").strip()
-    if not dsn:
-        raise RuntimeError("DATABASE_URL no encontrado (necesario para capa 3)")
-    return dsn
-
-
-def _conectar_pg():
-    import psycopg
-    from psycopg.rows import dict_row
-    return psycopg.connect(_dsn(), row_factory=dict_row)
-
-
 def flush_upsert(supa, lote: list[dict]) -> None:
     """DEPRECATED camino directo: redirige a clasificacion_contrato."""
-    del supa
     if not lote:
         return
     filas = [
@@ -881,14 +866,7 @@ def flush_upsert(supa, lote: list[dict]) -> None:
         }
         for p in lote
     ]
-    with _conectar_pg() as conn:
-        conn.autocommit = False
-        n, s = upsert_gemini(conn, filas)
-        diff = diff_clasificacion_contratos(conn)
-        if diff != 0:
-            conn.rollback()
-            raise RuntimeError(f"diff clasificacion/contratos={diff} tras write")
-        conn.commit()
+    n, s = escribir_gemini(filas, supa=supa)
     print(f"    clasificacion gemini lote={len(lote)} escritos={n} saltados={s}",
           flush=True)
 
@@ -1638,27 +1616,15 @@ def comando_aplicar(ruta: str) -> int:
 
     escritos_ids: list[int] = []
     try:
-        with _conectar_pg() as conn:
-            conn.autocommit = False
-            for i in range(0, len(pendientes), BATCH_DB):
-                lote = pendientes[i: i + BATCH_DB]
-                n, s = upsert_gemini(conn, lote)
-                print(
-                    f"    clasificacion gemini lote={len(lote)} "
-                    f"escritos={n} saltados={s}",
-                    flush=True,
-                )
-                escritos_ids.extend(int(x["contrato_id"]) for x in lote)
-            diff = diff_clasificacion_contratos(conn)
-            if diff != 0:
-                conn.rollback()
-                print(
-                    f"ERROR: diff clasificacion/contratos={diff} tras aplicar. "
-                    "Rollback.",
-                    flush=True,
-                )
-                return 1
-            conn.commit()
+        for i in range(0, len(pendientes), BATCH_DB):
+            lote = pendientes[i: i + BATCH_DB]
+            n, s = escribir_gemini(lote, supa=supa)
+            print(
+                f"    clasificacion gemini lote={len(lote)} "
+                f"escritos={n} saltados={s}",
+                flush=True,
+            )
+            escritos_ids.extend(int(x["contrato_id"]) for x in lote)
     except Exception as e:
         print(f"ERROR escribiendo clasificacion_contrato: {e}", flush=True)
         return 1

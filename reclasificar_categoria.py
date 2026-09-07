@@ -26,7 +26,7 @@ from pathlib import Path
 
 from supabase import create_client
 
-from clasificacion_capa import diff_clasificacion_contratos, upsert_keyword
+from clasificacion_capa import escribir_keyword
 from ingesta_completa import (
     cargar_keywords,
     clasificar_categoria_it,
@@ -148,23 +148,9 @@ def payload_update(row: dict, cat: str | None, ia: str | None) -> dict:
 
 def flush_upsert(supa, lote: list[dict]) -> None:
     """Escribe clasificacion_contrato; el eco actualiza contratos."""
-    del supa
     if not lote:
         return
-    import psycopg
-    from psycopg.rows import dict_row
-
-    dsn = (os.getenv("DATABASE_URL") or "").strip()
-    if not dsn:
-        raise RuntimeError("DATABASE_URL requerido para capa 3")
-    with psycopg.connect(dsn, row_factory=dict_row) as conn:
-        conn.autocommit = False
-        n, s = upsert_keyword(conn, lote, artefacto="reclasificar_diario")
-        diff = diff_clasificacion_contratos(conn)
-        if diff != 0:
-            conn.rollback()
-            raise RuntimeError(f"diff clasificacion/contratos={diff}")
-        conn.commit()
+    n, s = escribir_keyword(lote, artefacto="reclasificar_diario", supa=supa)
     print(
         f"    clasificacion keyword lote={len(lote)} "
         f"escritos={n} saltados={s}",

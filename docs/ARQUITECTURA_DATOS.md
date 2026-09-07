@@ -7,7 +7,7 @@
 
 **Estado:** **Fases 0–4 aplicadas**. Lectores siguen en `contratos` (eco). **Fases 5–6** (migrar lectores / DROP columnas): **no**.
 
-**Principio:** cada capa escribe solo sus tablas. Hoy la ingesta (`preparar_fila_db` en `ingesta_completa.py`) mete en el mismo upsert el dato declarado de SEACE y la inferencia (`categoria_it`, `relevancia_ia`). `--forzar-completa` reescribe esas columnas y pisa las 54 etiquetas de C1 (consenso Gemini) y el id `90331`.
+**Principio:** cada capa escribe solo sus tablas. La ingesta upserta hechos SEACE en `contratos` (sin `categoria_it`/`relevancia_ia`) y, para altas con keyword, escribe capa 3; el eco mantiene `contratos` sincronizado para los lectores.
 
 **Corpus de referencia (corte previo a este diseño):** ~77 963 contratos; **4 213** con `categoria_it`; ~73 746 con ambas etiquetas NULL.
 
@@ -35,7 +35,7 @@ Capa 4  ANÁLISIS/RAG  Worker + chunker               → analisis_contrato + ch
 
 Regla de escritura (invariante a imponer en código, no en RLS):
 
-- Ingesta **no** toca `clasificacion_contrato`.
+- Ingesta escribe capa 3 solo en altas nuevas con keyword (`capa='keyword'`); no pisa gemini/humano.
 - Keywords **no** pisan una fila con `capa IN ('gemini','humano')`.
 - Gemini **no** pisa `capa = 'humano'`.
 - El JWT admin **no** hace UPDATE de clasificación ni de `it_keywords` (RLS de solo lectura). Escritura admin: Worker con service_role (§11.5).
@@ -802,7 +802,7 @@ No es bloqueante. Duplicar 4 000 JSON y ~2 000 PDFs es barato frente a rompe
 6. Fases 0→6 (§7) y moratoria de `--forzar-completa`.
 7. Aprendizaje autónomo de vocabulario (§11): umbrales, pistas Gemini, UI admin.
 
-**Hecho (6 sep 2026):** fases 0–3. Pendiente cuando se pida: fase 4 (dual-write), no el job de aprendizaje (§11 diseñado, **no** implementado). C4 Gemini semanal ya corre; historial append-on-change (§2) sigue opcional.
+**Hecho (6 sep 2026):** fases 0–4 (dual-write + eco). Pendiente cuando se pida: fases 5–6 (lectores / DROP), no el job de aprendizaje (§11 diseñado, **no** implementado). C4 Gemini semanal ya corre; historial append-on-change (§2) sigue opcional.
 
 ---
 

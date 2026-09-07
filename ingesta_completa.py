@@ -410,33 +410,15 @@ def preparar_fila_db(
 
 def escribir_clasificacion_keyword(
     filas_cls: list[dict],
+    *,
+    supa=None,
 ) -> tuple[int, int]:
     """Tras el upsert de contratos: capa=keyword. Eco copia a contratos."""
     if not filas_cls:
         return 0, 0
-    import psycopg
-    from psycopg.rows import dict_row
+    from clasificacion_capa import escribir_keyword
 
-    from clasificacion_capa import diff_clasificacion_contratos, upsert_keyword
-
-    dsn = (os.getenv("DATABASE_URL") or "").strip()
-    if not dsn:
-        print(
-            "[clasificacion] DATABASE_URL ausente; no se escribio capa 3",
-            flush=True,
-        )
-        return 0, 0
-    with psycopg.connect(dsn, row_factory=dict_row) as conn:
-        conn.autocommit = False
-        n, s = upsert_keyword(conn, filas_cls, artefacto="ingesta")
-        diff = diff_clasificacion_contratos(conn)
-        if diff != 0:
-            conn.rollback()
-            raise RuntimeError(
-                f"diff clasificacion/contratos={diff} tras ingesta keyword"
-            )
-        conn.commit()
-    return n, s
+    return escribir_keyword(filas_cls, artefacto="ingesta", supa=supa)
 
 
 # ── Supabase ────────────────────────────────────────────────────────────────
@@ -792,7 +774,7 @@ def main():
     if supa and filas_db:
         upsert_supabase(supa, filas_db)
         if filas_cls:
-            n_w, n_s = escribir_clasificacion_keyword(filas_cls)
+            n_w, n_s = escribir_clasificacion_keyword(filas_cls, supa=supa)
             print(
                 f"[clasificacion] keyword escritos={n_w} saltados_protegidos={n_s}",
                 flush=True,

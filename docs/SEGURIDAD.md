@@ -84,10 +84,13 @@ actualización en el almacén, no auditoría de uso.
 | `TRIGGER_TEST_TOKEN` | token opaco | CF trigger only | `POST /` de prueba del trigger | no | sí | CF secret |
 | `GITHUB_TOKEN` | token Actions | inyectado por GH Actions | `alerta_g3.py` / `gh` en workflows | efímero | n/a | por run |
 
-**Brecha operativa:** `pipeline.yml` usa `secrets.DATABASE_URL`, pero
-`gh secret list` en `seace-monitor` **no lista** `DATABASE_URL`. Si el
-paso SQL/backfill en Actions falla por eso, crear el secret en
-Settings → Secrets and variables → Actions.
+**Brecha operativa:** `pipeline.yml` y `clasificacion_semanal.yml`
+referencian `secrets.DATABASE_URL`, pero `gh secret list` en
+`seace-monitor` **no lista** `DATABASE_URL`. DDL/`run_sql.py` en Actions
+siguen necesitando el secret. Los writers de capa 3
+(`clasificacion_capa.escribir_keyword` / `escribir_gemini`) **caen a
+supabase-py** con `SUPABASE_SERVICE_KEY` si el DSN falta; el trigger de
+eco sigue disparándose por PostgREST.
 
 ---
 
