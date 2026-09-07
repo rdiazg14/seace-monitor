@@ -707,7 +707,7 @@ def main():
                 if len(nuevos) < len(lote):
                     nuevas_raw.extend(nuevos)
                     print(f"  p{pagina}: {len(nuevos)} nuevos "
-                          f"({len(lote)-len(nuevos)} ya conocidos) → STOP")
+                          f"({len(lote)-len(nuevos)} ya conocidos) -> STOP")
                     stop = True
                     break
                 nuevas_raw.extend(nuevos)
@@ -837,7 +837,7 @@ def main():
     print(f"Total corpus local: {n_total:,}")
     print(f"Nuevos esta corrida: {len(nuevas_raw):,}")
     print(f"Rechazados (G2): {n_rech:,}")
-    print(f"Supabase: {'✓ upsert completado' if supa and filas_db else '✗ no configurado o sin datos nuevos'}")
+    print(f"Supabase: {'OK upsert' if supa and filas_db else 'sin upsert (no config o sin altas)'}")
     print("=========================")
 
 
