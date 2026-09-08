@@ -47,7 +47,7 @@ El front **no** llama a Gemini. Lee Supabase (anon + RLS) y pega al Worker. El p
 - **Puntos de control:** Rolando aprueba antes de cron, deploy masivo u OCR caro.
 - **Calibración vs código:** el asistente (Rolando) define criterio de negocio; Cursor implementa. Criterios ENERTRONIC mandan sobre ocurrencias del LLM.
 
-Al retomar: leé **§6 (cierres hasta 7–8 sep)** + §7 (gotchas) + [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md) + [SEGURIDAD.md](./SEGURIDAD.md). No reabras retrieval v2 salvo pedido. C1/C2/C4 hechos; C3 (cola admin) **no**. Gemini semanal en `clasificacion_semanal.yml`, **no** en el pipeline diario.
+Al retomar: leé **§6 (cierres hasta 7–8 sep)** + §7 (gotchas) + [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md) + [SEGURIDAD.md](./SEGURIDAD.md). No reabras retrieval v2 salvo pedido. C1/C2/C3/C4 hechos. Gemini semanal en `clasificacion_semanal.yml`, **no** en el pipeline diario.
 
 ---
 
@@ -382,7 +382,7 @@ Cascada en prod. Detalle: [ARQUITECTURA_TECNICA.md](./ARQUITECTURA_TECNICA.md) �
 
 **Lección (leer antes de tocar clasificación):** Gemini **no** es determinista. `--dry-run` y la escritura eran dos inferencias distintas (1 sep: 1 vs 3). El consenso C1 elimina varianza, no sesgo. Revisión humana del SELECT **obligatoria** antes de `--aplicar`. **No** automatizar sin C4.
 
-**Arquitectura C:** C1, C2 y **C4 implementados**. C3 (cola admin) **no**. Gemini semanal; keywords diarias en el pipeline.
+**Arquitectura C:** C1, C2, **C3** y **C4 implementados**. Gemini semanal; keywords diarias en el pipeline. C3: tabla `clasificacion_pendiente`, UI `/keywords`, escritura `admin-keywords` `/cola/aprobar` y `/cola/rechazar`.
 
 ### Cierre 3–5 sep 2026
 
@@ -420,7 +420,7 @@ Medición que motivó C2: `impresora` sola producía 769 de 3240 etiquetas (24%)
 
 **Pendientes (sin plan) — ver también cierre 6 sep abajo**
 
-- C3 (cola de revisión admin): **no** hecho. Cola: 13 items + 4 observaciones.
+- C3 (cola de revisión admin): **hecho.** Tabla `clasificacion_pendiente` (SELECT `es_admin`; escritura service_role / Edge Function). Semilla del JSON: **22** pendientes + **4** observaciones (el archivo había crecido respecto de los 13+4 del cierre anterior). Aprobar → `clasificacion_contrato.capa='humano'`. Rechazar → sin clasificar + ledger.
 - C4: **hecho** (keywords diario + Gemini semanal).
 - `data center` sigue con ruido de planta física pese a las exclusiones.
 - `licencia` tiene ~2/10 de ruido municipal (licencia de funcionamiento).
@@ -513,7 +513,7 @@ Capas 4–5b + verificar_capas en el cron + bug de paginación PostgREST. Detall
 
 - Capas fase 6 (DROP) **no antes del 9 sep ~07:00 Lima**: ≥2 días desde 5b + ≥2 pipelines OK post-5b con `[capas] diff=0` en el log + migrar lectores del pipeline (reclasificar/gemini/validadores) el día del DROP.
 - Aprendizaje de vocabulario: **implementado, no activado**. Extrae núcleo (no oración). 119 candidatas históricas → 71 tipo B únicos; 9 pasarían umbrales (varias dudosas). Activar cuando C4 lleve meses.
-- C3 cola de revisión: 13 items + 4 observaciones.
+- C3 cola de revisión: tabla + `/keywords`; 22 pendientes + 4 observaciones.
 - Vista admin de keywords.
 - Data lake histórico: 946 vigentes de más de 90 días.
 - PAT del trigger: sigue classic; conviene fine-grained.
@@ -528,7 +528,7 @@ Capas 4–5b + verificar_capas en el cron + bug de paginación PostgREST. Detall
 | B13 / B14 | Medio | Ventanas cortas | B12 residual 17.5 % inalcanzable; más frecuencia no lo resuelve. Detección temprana (2 h) ya está |
 | B4 fase 2 | Medio | Costo real | Instrumentar Gemini; no mezclar con observabilidad de KV. **Sin cambios** el 3–5 sep |
 | B15 / búsqueda web | Alto (dimensionar) | Economía #10 | Fusionado; no tabla estática. **Sin cambios** el 3–5 sep |
-| C3 cola admin | Alto | Anti-drift | C4 hecho. Cola 13+4 observaciones |
+| C3 cola admin | Hecho 8 sep | Anti-drift | `/keywords` + `admin-keywords` `/cola/*`. Semilla 22+4 |
 | B17 auto-postulación | Alto | Producto | Análisis profundo; **alto riesgo legal**. No tocado |
 | B18 firma blockchain | Investigar | Mercado | Medir corpus antes de construir. No tocado |
 | B19 2ª fuente SEACE | Alto | Cobertura | prod4 / OpenEgocio; hay bot-detection. No tocado |
@@ -578,7 +578,7 @@ Capas 4–5b + verificar_capas en el cron + bug de paginación PostgREST. Detall
 28. **`GITHUB_PAT` / `TRIGGER_TEST_TOKEN`:** los carga Rolando. Cursor no hace `wrangler secret put` de esos valores.
 29. **`categoria_it` es cascada, no un job único.** La ingesta lee `it_keywords` (C2; fallback `IT_CATS`). C2 fase 4 (`scripts/backfill_categoria.py`) ya aplicó la cascada nueva al corpus histórico (puede desetiquetar). `reclasificar_categoria.py` sigue existiendo pero solo mira ambas columnas NULL y **no** desetiqueta. C1 Gemini **solo** si ambas columnas siguen NULL (no pisa los 54 escritos ni 90331). El incremental **no** re-etiqueta ids viejos. Keywords **no** leen `tdr_texto` / `items_json` / `nom_area_usuaria`.
 30. **`clasificar_gemini.py` es C4 semanal** (`clasificacion_semanal.yml`, lun 10:00 Lima). Keywords diarias en `pipeline.yml`. `--proponer` / `--consenso` / `--aplicar`. Consenso ×3 obligatorio. Cupo `clasificacion_cuota.json` (no `flash_ocr_cuota.json`). `ninguna` → NULL. **No** meter Gemini en el diario (~49 min).
-31. **OCR `--solo-ti` exige etiqueta previa.** Keywords diario + C4 reducen el huevo-gallina. `enriquecer_detalle.py` puede pisar `descripcion`. C3 no hecho.
+31. **OCR `--solo-ti` exige etiqueta previa.** Keywords diario + C4 reducen el huevo-gallina. `enriquecer_detalle.py` puede pisar `descripcion`. C3: `/keywords` + `clasificacion_pendiente`.
 32. **Admin JWT no UPDATE `categoria_it`.** RLS de `contratos` es SELECT. Correcciones a mano: service role / SQL Editor.
 33. **`categoria_it` y `relevancia_ia` son ejes independientes.** 13 categorías TI; solo IA/analytics es «tiene IA». Ruta pide **cualquiera** de las dos. No clasificar preguntando solo «¿tiene IA?».
 34. **Windows cp1252:** prints con `→` u otro no-ASCII revientan el pipeline. ASCII (`->`) o UTF-8 forzado en stdout. Fix: `24a2a3b`.

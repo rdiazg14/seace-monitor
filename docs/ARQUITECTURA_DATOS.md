@@ -912,7 +912,7 @@ Contrato del endpoint (una acción por request):
 
 Respuestas: 401/403 igual que `/admin/stats`; 409 si UNIQUE `(categoria, keyword, tipo)` choca. El browser nunca ve service_role.
 
-No se edita `clasificacion_contrato` desde esta pantalla (eso sería C3, `capa='humano'`).
+C3: `/cola/aprobar` y `/cola/rechazar` en la misma Edge Function `admin-keywords`. El browser no escribe `clasificacion_contrato`; la función sí, con `capa='humano'`.
 
 ### 11.6 Qué no se implementa ahora
 

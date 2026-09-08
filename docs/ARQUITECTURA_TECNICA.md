@@ -40,7 +40,7 @@ Cierre: tabla de decisiones · discrepancias vs PLAN · commits
 
 Worker vivo: `https://seace-ai-proxy.rdiazg14.workers.dev`. Front: `AI_PROXY` = esa URL (`seace-web/src/lib/supabase.ts`).
 
-Fecha de este corte: **7–8 sep 2026** (Perú). Capas **5b** + verificación en cron + paginación PostgREST. C3 (cola admin) **no** hecho. Foto previa: [ESTADO_CIERRE_2026-08-29.md](./ESTADO_CIERRE_2026-08-29.md).
+Fecha de este corte: **8 sep 2026** (Perú). Capas **5b** + verificación en cron + paginación PostgREST. C3 (cola admin) **hecho**. Foto previa: [ESTADO_CIERRE_2026-08-29.md](./ESTADO_CIERRE_2026-08-29.md).
 
 Etiquetas de «por qué»:
 
@@ -204,7 +204,7 @@ Orden (`pipeline.yml`):
 
 **G2:** inválidos → `ingesta_rechazados` (`ingesta_rechazados.sql`), no a `contratos`.
 
-**Clasificación IT (cascada, 6 sep 2026):** `categoria_it` no se pinta a mano. Keywords desde tabla (ingesta + paso diario `reclasificar_categoria.py`) + C1/C4 Gemini con consenso semanal. C3 (cola admin) **no** hecho.
+**Clasificación IT (cascada, 6 sep 2026):** `categoria_it` no se pinta a mano. Keywords desde tabla (ingesta + paso diario `reclasificar_categoria.py`) + C1/C4 Gemini con consenso semanal. C3 (cola admin) en `/keywords`.
 
 **Síntoma de la fuga (1 sep):** IT en el Buscador (FTS) y ausente de Ruta del día. Caso **90432** / CM-6-2026-HNSEB. Causa: keywords substring **una vez** en la ingesta. El OCR **no** clasifica (hipótesis descartada). Ruta exige `categoria_it` OR `relevancia_ia` NOT NULL.
 
@@ -213,7 +213,7 @@ Orden (`pipeline.yml`):
 1. **Keywords** (`ingesta_completa.py` lee `it_keywords` activa, C2 fase 2). `clasificar_categoria_it(r, cats)`. Única escritura en **altas nuevas**: `preparar_fila_db`. Concatena API `desObjetoContrato`, `desContratacion`, `nomObjetoContrato`, `nomEntidad`. **No** lee `tdr_texto`, `items_json` ni `nom_area_usuaria`. Primera categoría por `prioridad` gana. `tipo=excluye` salta esa categoría y sigue la cascada. `limite_palabra` → `\b...\b`. `tolera_plural` en tabla. `IT_CATS` en código queda como **FALLBACK**. `relevancia_ia` es independiente (`KW_ALTA` / `KW_GENERICOS`).
 2. **Reclasificar diario C4** (`reclasificar_categoria.py` en `pipeline.yml`, post-detalle / pre-OCR): misma cascada `it_keywords` sobre NULL de **Vigente** y **En Evaluación**. Solo escribe donde hay NULL; nunca desetiqueta. Motivo: la ingesta solo clasifica ids nuevos (caso **92056** `tablet` quedó NULL hasta re-evaluar). Primera corrida medida: **16 481** evaluados, **1** etiquetado, **68 s**.
 3. **Backfill keywords histórico** (`scripts/backfill_categoria.py`, C2 fase 4): cascada de la tabla sobre **todas** las filas; puede **desetiquetar**. No reutiliza `reclasificar_categoria.py`. Snapshot previo `categoria_it_snapshot_c2` (3255 filas). Aplicado: 697 altas, 53 cambios, 222 desetiquetadas. Excluidos: los 54 ids de C1 y **90331**.
-4. **C1 / C4 Gemini** (`clasificar_gemini.py`): `--proponer` / `--consenso` / `--aplicar`. SELECT siempre `categoria_it IS NULL AND relevancia_ia IS NULL`. `--filtro vigentes` = Vigente + ventana abierta o futura (postulables y por abrir). `ninguna` → NULL. **No** escribe `relevancia_ia`. **No** toca `flash_ocr_cuota.json`; cupo propio `data/clasificacion_cuota.json` + `--max-llamadas-dia` (default 150, exit 8). Semanal: `clasificacion_semanal.yml` (3 corridas; aborta si &lt;3 OK). Ledger `data/clasificacion_rechazadas.json`. Cola `data/revisar_categoria.json` (13 items + 4 observaciones — C3 pendiente).
+4. **C1 / C4 Gemini** (`clasificar_gemini.py`): `--proponer` / `--consenso` / `--aplicar`. SELECT siempre `categoria_it IS NULL AND relevancia_ia IS NULL`. `--filtro vigentes` = Vigente + ventana abierta o futura (postulables y por abrir). `ninguna` → NULL. **No** escribe `relevancia_ia`. **No** toca `flash_ocr_cuota.json`; cupo propio `data/clasificacion_cuota.json` + `--max-llamadas-dia` (default 150, exit 8). Semanal: `clasificacion_semanal.yml` (3 corridas; aborta si &lt;3 OK). Ledger `data/clasificacion_rechazadas.json` + filas `clasificacion_pendiente.estado='rechazada'`. Cola `clasificacion_pendiente` (C3; también se sigue el JSON).
 
 **Medición C1 (1802 contratos × 3 corridas):** 54 unánimes escritos, 1738 ninguna estable, 9 inestables (4 son el mismo texto «colector de datos»). `--aplicar`: 54 escritos, 0 descartados por re-SELECT. Commits `6de09f9`, `dd084c2`.
 
@@ -225,7 +225,7 @@ Orden (`pipeline.yml`):
 
 **Medición que motivó C2:** `impresora` sola producía 769 de 3240 etiquetas (24%); 220 filas Hardware contenían toner/cartucho/tinta. En el otro extremo, 1622 nulls contenían palabras claramente TI que `IT_CATS` no cubría.
 
-**Arquitectura C:** C1, C2 y **C4 implementados**. C3 (cola de revisión admin) **no** hecho. Defensa anti-drift = artefacto + consenso ×3 + ledger. Gemini **no** está en el pipeline diario (ya dura ~49 min); solo semanal.
+**Arquitectura C:** C1, C2, **C3** y **C4 implementados**. Defensa anti-drift = artefacto + consenso ×3 + ledger + cola admin. Gemini **no** está en el pipeline diario (ya dura ~49 min); solo semanal.
 
 Huevo-gallina OCR: `--solo-ti` exige etiqueta; el paso keywords diario + C4 semanal reducen el agujero. `enriquecer_detalle.py` puede pisar `descripcion`. RLS de `contratos`: SELECT anon/authenticated; writes service role / pipeline.
 
@@ -245,7 +245,7 @@ Huevo-gallina OCR: `--solo-ti` exige etiqueta; el paso keywords diario + C4 sema
 
 ### Alternativas
 
-Encender `--gc` cuando se acepte borrar chunks de culminados. OCR más amplio si hay cuota. Reabrir 2 h / rpm 6 si la cola imagen no baja. C3 (cola admin): **no** hecho. No meter Gemini en el pipeline diario.
+Encender `--gc` cuando se acepte borrar chunks de culminados. OCR más amplio si hay cuota. Reabrir 2 h / rpm 6 si la cola imagen no baja. No meter Gemini en el pipeline diario.
 
 **B21 (confirmado y corregido, 3–5 sep):** `parsear_fecha` pegaba `+00:00` a un string naive de SEACE (`dd/mm/yyyy HH:MM:SS`). SEACE entrega hora de pared de Lima. Perú no tiene DST: `-05:00` constante. Evidencia: 78 % de los cierres caen en horario hábil peruano tal como estaban grabados; como UTC, 28 % caían de madrugada. Pico de 1001 cierres a las 23:59 (fin de día civil) que como UTC serían las 18:59. Afectaba `fecha_publica`, `fecha_ini_cotizacion`, `fecha_fin_cotizacion`. Backfill `docs/b21_fix_timezone.sql`: 77485 filas +5h, idempotente, guardia `id<=91374`, marcador en `migraciones_datos`. `pct_habil_8_17`: 48.9 % → 78.1 %. Consumidores de **instante** (afectados): `ventana_cotizacion_abierta` del OCR, `pasa_filtro` de `clasificar_gemini`. Consumidores de **día Lima** (casi no afectados): `esPostulable`, `seace_fecha_lima`, chips y KPIs del front. Commits `ba27371`, `cbca110`. Ejecutor: `scripts/run_sql.py` (PostgREST no ejecuta DDL ni bloques DO; lee `DATABASE_URL` del `.env`).
 
@@ -705,7 +705,7 @@ Lee claves UTC de hoy: `flash:`, `analyze:`, `cotizar:`, `cotizar_tipo:{texto|ta
 | Chunk | 800/500, **sin** overlap | **POR-DEFECTO**; ≠ PLAN 200–400. Medición ya diseñada: Tarea #4 vs 63% success@10 | #4 overlap/tamaño (eval offline) | Tras #4 |
 | Embed PDF | cuerpo sin header | **MEDIDA** A/B 87164 | — | Headers API largos si molestan |
 | OCR | vigentes+ventana+TI, 2 h, por página | **HEREDADA** cupo | Más cola imagen | Si 1398 no baja |
-| Clasificación IT | keywords diario (`reclasificar`) + C1/C4 Gemini semanal ×3 + C2 tabla | **MEDIDA** C4 6 sep: 264 / 4 unánimes / ~USD 0,19; keywords 16481→1 | C3 cola admin | C3 **no** hecho |
+| Clasificación IT | keywords diario (`reclasificar`) + C1/C4 Gemini semanal ×3 + C2 tabla + C3 cola | **MEDIDA** C4 6 sep: 264 / 4 unánimes / ~USD 0,19; keywords 16481→1 | C3 UI | C3 **hecho** 8 sep (`clasificacion_pendiente`, `/keywords`) |
 | C1 | `--proponer` / `--consenso` / `--aplicar`; ledger | **MEDIDA** 54/1802 | — | base del semanal |
 | C4 | `clasificacion_semanal.yml` lun 10:00 Lima; cupo `clasificacion_cuota.json` | **MEDIDA** 6 sep | ajustar tope | no meter Gemini al diario |
 | C2 | `it_keywords` + backfill | **MEDIDA** 3–5 sep | vista admin keywords | ruido residual |

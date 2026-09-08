@@ -41,7 +41,6 @@ Siguen fuera (backlog real; ver TRASPASO §6 cierre 7–8 sep):
 - Retry de `/analizar` / no cobrar cupo si Gemini falla (el 502 amable **no** tocó el cupo).
 - Caché semántica de `/cotizar` (solo exacta + `esCacheable`).
 - Chat que responda KPIs de la capa semántica.
-- C3 (cola de revisión admin: 13 items + 4 observaciones).
 - Capas fase 6 (DROP `categoria_it`/`relevancia_ia`); eco sigue. No antes del 9 sep.
 - Activar aprendizaje de vocabulario (código listo, `--dry-run` en el semanal).
 - Vista admin de keywords.
