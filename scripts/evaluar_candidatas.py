@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Evalua keyword_candidatas (tipo A / tipo B). ARQUITECTURA_DATOS §11.
 
---dry-run: mide y lista; no INSERT it_keywords ni cambia estado.
-Sin flag: activa solo las que pasan umbral (tipo A; tipo B con las 3).
+--dry-run: extrae nucleo, mide y lista; no INSERT it_keywords ni cambia estado.
+Sin flag: no activa tipo A (es confirmacion → ya_cubierta). Tipo B solo si
+universo_a<=50, cambios==0, veces>=3, <=4 palabras, no vacia de licitacion,
+ratio_predictivo>=0.30.
 """
 from __future__ import annotations
 
@@ -34,9 +36,12 @@ from ingesta_completa import (  # noqa: E402
 from clasificacion_capa import conectar_pg  # noqa: E402
 from vocabulario import (  # noqa: E402
     MIN_VECES,
+    RATIO_PREDICTIVO_MIN,
     UMBRAL_AUTO,
-    es_tipo_a,
+    clasificar_cobertura,
+    extraer_termino,
     keywords_incluye_activas,
+    termino_valido_activar,
 )
 
 PAGE = 1000
@@ -190,23 +195,6 @@ def _cats_con_candidata(cats, senal: str, categoria: str):
     return out
 
 
-def madre_tipo_a(senal: str, categoria: str, kws: list[dict]) -> tuple[dict | None, dict]:
-    best = None
-    best_ev: dict = {}
-    for kw in kws:
-        if kw.get("categoria") != categoria:
-            continue
-        ok, ev = es_tipo_a(senal, kw.get("keyword") or "")
-        if not ok:
-            continue
-        # Preferir Levenshtein mas chico, luego keyword mas corta
-        score = (ev.get("levenshtein", 99), len(kw.get("keyword") or ""))
-        if best is None or score < best[0]:
-            best = (score, kw)
-            best_ev = ev
-    return (best[1] if best else None), best_ev
-
-
 def prioridad_categoria(supa, categoria: str) -> int:
     rows = (
         supa.table("it_keywords")
@@ -261,7 +249,8 @@ def main() -> int:
     cands = cargar_candidatas(supa)
     print(
         f"evaluar_candidatas dry_run={args.dry_run} n={len(cands)} "
-        f"UMBRAL_AUTO={UMBRAL_AUTO} MIN_VECES={MIN_VECES}",
+        f"UMBRAL_AUTO={UMBRAL_AUTO} MIN_VECES={MIN_VECES} "
+        f"RATIO_MIN={RATIO_PREDICTIVO_MIN}",
         flush=True,
     )
     if not cands:
@@ -302,7 +291,8 @@ def main() -> int:
 
     tipo_a: list[dict] = []
     tipo_b: list[dict] = []
-    activar_a: list[dict] = []
+    ya_cubierta: list[dict] = []
+    no_extraible: list[dict] = []
     activar_b: list[dict] = []
     medida: list[dict] = []
     quedan_nueva: list[dict] = []
@@ -312,30 +302,56 @@ def main() -> int:
         senal = (c.get("senal") or "").strip()
         cat = (c.get("categoria_propuesta") or "").strip()
         veces = int(c.get("veces_vista") or 0)
-        madre, ev_a = madre_tipo_a(senal, cat, kws)
-        if madre:
-            rec = {
-                **c,
-                "tipo_eval": "a",
+        termino = extraer_termino(senal, categoria=cat, keywords=kws)
+        rec = {
+            **c,
+            "senal_original": senal,
+            "termino": termino or "",
+        }
+        if not termino:
+            rec.update({
+                "tipo_eval": "no_extraible",
+                "activaria": False,
+                "universo_a": None,
+                "cambios_categoria": None,
+            })
+            no_extraible.append(rec)
+            continue
+        cob, madre, ev_a = clasificar_cobertura(termino, cat, kws)
+        if cob in ("exact", "tipo_a"):
+            rec.update({
+                "tipo_eval": "ya_cubierta" if cob == "exact" else "a",
                 "madre": madre,
                 "evidencia": ev_a,
-                "activaria": True,
-            }
-            tipo_a.append(rec)
-            activar_a.append(rec)
+                "activaria": False,
+                "universo_a": None,
+                "cambios_categoria": None,
+            })
+            if cob == "exact":
+                ya_cubierta.append(rec)
+            else:
+                tipo_a.append(rec)
             continue
-        met = medir_b(senal, cat, corpus, cats)
-        rec = {**c, "tipo_eval": "b", **met}
+        met = medir_b(termino, cat, corpus, cats)
+        rec.update({"tipo_eval": "b", **met})
         tipo_b.append(rec)
+        ratio = met.get("ratio_predictivo")
         ok = (
-            met["universo_a"] <= UMBRAL_AUTO
+            termino_valido_activar(termino)
+            and met["universo_a"] <= UMBRAL_AUTO
             and met["cambios_categoria"] == 0
             and veces >= MIN_VECES
+            and ratio is not None
+            and ratio >= RATIO_PREDICTIVO_MIN
         )
         if ok:
             rec["activaria"] = True
             activar_b.append(rec)
-        elif met["universo_a"] > UMBRAL_AUTO or met["cambios_categoria"] > 0:
+        elif (
+            met["universo_a"] > UMBRAL_AUTO
+            or met["cambios_categoria"] > 0
+            or (ratio is not None and ratio < RATIO_PREDICTIVO_MIN)
+        ):
             rec["activaria"] = False
             rec["destino"] = "medida"
             medida.append(rec)
@@ -344,16 +360,31 @@ def main() -> int:
             rec["destino"] = "nueva"
             quedan_nueva.append(rec)
 
-    print(f"\ntipo_a={len(tipo_a)} tipo_b={len(tipo_b)}", flush=True)
-    print(f"activarian_a={len(activar_a)} activarian_b={len(activar_b)}", flush=True)
+    print(
+        f"\ntipo_a={len(tipo_a)} tipo_b={len(tipo_b)} "
+        f"ya_cubierta={len(ya_cubierta)} no_extraible={len(no_extraible)}",
+        flush=True,
+    )
+    print(
+        f"activarian_a=0 activarian_b={len(activar_b)} "
+        f"(tipo A ya no activa: es confirmacion)",
+        flush=True,
+    )
     print(f"pasarian_a_medida={len(medida)} quedan_nueva={len(quedan_nueva)}", flush=True)
-    print("\nid | tipo | senal | cat | veces | A | cambios | activaria", flush=True)
-    for rec in tipo_a + tipo_b:
+    print(
+        "\nsenal (60) | termino | cat | tipo | A | cambios | activaria",
+        flush=True,
+    )
+    filas = tipo_a + ya_cubierta + tipo_b + no_extraible
+    filas.sort(key=lambda r: int(r.get("id") or 0))
+    for rec in filas:
+        orig = (rec.get("senal_original") or rec.get("senal") or "")[:60]
         print(
-            f"  {rec.get('id')} | {rec['tipo_eval']} | {rec.get('senal')} | "
-            f"{rec.get('categoria_propuesta')} | {rec.get('veces_vista')} | "
-            f"{rec.get('universo_a', '-')} | {rec.get('cambios_categoria', '-')} | "
-            f"{rec.get('activaria')}"
+            f"  {orig} -> {rec.get('termino') or '-'} | "
+            f"{rec.get('categoria_propuesta')} | {rec['tipo_eval']} | "
+            f"{rec.get('universo_a') if rec.get('universo_a') is not None else '-'} | "
+            f"{rec.get('cambios_categoria') if rec.get('cambios_categoria') is not None else '-'} | "
+            f"{'si' if rec.get('activaria') else 'no'}"
             + (
                 f" madre={rec['madre'].get('keyword')}"
                 if rec.get("madre")
@@ -369,34 +400,10 @@ def main() -> int:
         return 0
 
     n_act = 0
-    for rec in activar_a:
-        kid = insertar_keyword(
-            supa,
-            senal=rec["senal"],
-            categoria=rec["categoria_propuesta"],
-            madre=rec["madre"],
-        )
-        ev = {
-            **(rec.get("evidencia") or {}),
-            "UMBRAL_AUTO": UMBRAL_AUTO,
-            "MIN_VECES": MIN_VECES,
-            "keyword_madre_id": rec["madre"]["id"],
-        }
-        marcar_candidata(supa, rec["id"], {
-            "estado": "auto_activada",
-            "tipo_eval": "a",
-            "keyword_madre_id": rec["madre"]["id"],
-            "keyword_id": kid,
-            "evaluada_utc": now,
-            "activada_utc": now,
-            "activada_por": "evaluar_candidatas.py",
-            "evidencia": ev,
-        })
-        n_act += 1
     for rec in activar_b:
         kid = insertar_keyword(
             supa,
-            senal=rec["senal"],
+            senal=rec["termino"] or rec["senal"],
             categoria=rec["categoria_propuesta"],
             madre=None,
         )
@@ -407,6 +414,8 @@ def main() -> int:
             "ratio_predictivo": rec["ratio_predictivo"],
             "UMBRAL_AUTO": UMBRAL_AUTO,
             "MIN_VECES": MIN_VECES,
+            "RATIO_PREDICTIVO_MIN": RATIO_PREDICTIVO_MIN,
+            "termino": rec.get("termino"),
         }
         marcar_candidata(supa, rec["id"], {
             "estado": "auto_activada",
