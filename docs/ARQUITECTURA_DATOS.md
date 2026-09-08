@@ -5,7 +5,7 @@
 > trigger `trg_clasificacion_echo` copia a `contratos`. Keywords no pisan
 > gemini/humano. `--forzar-completa` ya no pisa C1 (guard `SEACE_FORZAR_COMPLETA` retirado).
 
-**Estado:** **Fases 0–5b aplicadas**. Front, Worker y vistas SQL leen `v_contratos` (capa 3). Eco sigue activo. **Fase 6** (DROP): **no** hasta ≥2 días de pipeline estable.
+**Estado:** **Fases 0–5b aplicadas**. Front, Worker y vistas SQL leen `v_contratos` (capa 3). Eco sigue activo. **Fase 6** (DROP): **no** antes del **9 sep ~07:00 Lima** (≥2 días + pipelines OK + `[capas] diff=0` por corrida).
 
 **Principio:** cada capa escribe solo sus tablas. La ingesta upserta hechos SEACE en `contratos` (sin `categoria_it`/`relevancia_ia`) y, para altas con keyword, escribe capa 3; el eco mantiene `contratos` sincronizado para los lectores.
 
@@ -39,7 +39,7 @@ Regla de escritura (invariante a imponer en código, no en RLS):
 - Keywords **no** pisan una fila con `capa IN ('gemini','humano')`.
 - Gemini **no** pisa `capa = 'humano'`.
 - El JWT admin **no** hace UPDATE de clasificación ni de `it_keywords` (RLS de solo lectura). Escritura admin: Worker con service_role (§11.5).
-- Vocabulario: el sistema **activa solo** variantes (tipo A) y términos nuevos chicos y no colisionantes (tipo B bajo umbral). El admin puede revisar; no es un paso del flujo (§11).
+- Vocabulario: extrae el **núcleo** de la señal Gemini (no la oración). Tipo A = confirmación (`ya_cubierta`), no INSERT. Tipo B solo bajo umbral **y** ratio ≥0.30; **hoy no se auto-activa** (semanal `--dry-run`). El admin puede revisar; no es un paso del flujo (§11).
 
 ---
 
@@ -714,7 +714,7 @@ Rollback: restaurar definiciones viejas de vistas (guardar el SQL actual en el P
 
 ### Fase 6 — Contract: DROP en `contratos`
 
-Solo si fase 5 lleva ≥1 ciclo diario de pipeline + front ya no selecciona `contratos.categoria_it` **o** el eco sigue (entonces hay que migrar front primero).
+Solo si fase 5b lleva ≥2 días de pipeline estable **y** `[capas] diff=0` por corrida. Front y Worker ya leen `v_contratos` (7–8 sep). El eco sigue: hay que migrar lectores del pipeline (reclasificar/gemini/validadores) **el día del DROP**. No antes del **9 sep ~07:00 Lima**.
 
 1. Front + Worker leen `v_contratos` / JOIN.
 2. `DROP TRIGGER trg_clasificacion_echo`.
@@ -802,13 +802,13 @@ No es bloqueante. Duplicar 4 000 JSON y ~2 000 PDFs es barato frente a rompe
 6. Fases 0→6 (§7) y moratoria de `--forzar-completa`.
 7. Aprendizaje autónomo de vocabulario (§11): umbrales, pistas Gemini, UI admin.
 
-**Hecho (6–7 sep 2026):** fases 0–5 (`v_contratos` + vistas/RPC). Pendiente: fase 6 (DROP) tras migrar front/Worker; job de aprendizaje (§11) **no** implementado.
+**Hecho (7–8 sep 2026):** fases 0–5b (`v_contratos` + front/Worker). `verificar_capas.py` en el cron. Paginación PostgREST con `.order("id")`. Job §11 implementado **sin auto-activar**. Actions 34184376852: chunker 1,945 vigentes; `sin_chunks` vía supabase-py no puede leer `tdr_*` de `v_contratos_estado` (fix: `contratos`). Pendiente: fase 6 (DROP) el 9 sep; `[capas]` en un log de Actions post-fix.
 
 ---
 
 ## 11. Aprendizaje autónomo de vocabulario
 
-**Estado: implementado (7–8 sep 2026), sin auto-activar hasta revisar lista.** Job `scripts/evaluar_candidatas.py`; registro en `--proponer`/`--aplicar`; pistas en P2.
+**Estado: implementado (7–8 sep 2026), sin auto-activar.** Job `scripts/evaluar_candidatas.py` (semanal `--dry-run`). Registro en `--proponer`/`--aplicar` guarda el **núcleo** extraído, no la oración. Pistas en P2. Medido sobre 119 candidatas históricas: 71 tipo B únicos, 16 ya cubiertas, 5 no extraíbles, 4 tipo A; 9 pasarían umbrales (varias dudosas). No se activa hasta que C4 lleve meses de repeticiones.
 
 **Principio:** el sistema es autosuficiente. No pide aprobación humana para funcionar. El admin puede revisar y editar; es opcional y esporádico.
 
@@ -817,20 +817,11 @@ Hoy Gemini entiende un título truncado (`desarro`) y las keywords no. Esa seña
 ### 11.1 Flujo
 
 1. Gemini clasifica un contrato que las keywords dejaron en NULL. Copia la señal literal: `verificar_senal()` / `verificar_senal_p2()` ya exigen que el substring exista en descripción, objeto o ítem. Sin match → confianza baja; no entra como candidata.
-2. Si esa señal (normalizada: minúsculas, sin tildes, recortada) **no** está como `it_keywords.keyword` activa de tipo `incluye` en esa categoría, se registra en `keyword_candidatas`: `estado='nueva'`, se incrementa `veces_vista`, se agrega el `contrato_id` al array, se actualiza `ultima_vez_utc`. **Nunca** se auto-aprueba en este paso.
-3. Job de evaluación (pipeline, no browser; **no existe aún** — diseño). Sobre cada fila `nueva` o `medida` desactualizada:
+2. `extraer_termino()` saca el núcleo (quita preámbulo de licitación, cola administrativa, máximo 4 palabras, 4–40 caracteres). Si no sale un término → no se guarda la oración (`no_extraible`). Si el núcleo es keyword activa o variante tipo A de la misma categoría → `ya_cubierta` (confirmación; **no** INSERT). Si no, se registra el núcleo en `keyword_candidatas`: `estado='nueva'`, se incrementa `veces_vista`, se agrega el `contrato_id` al array, se actualiza `ultima_vez_utc`. **Nunca** se auto-aprueba en este paso.
+3. Job de evaluación (`scripts/evaluar_candidatas.py`; semanal en `--dry-run`). Sobre cada fila `nueva` o `medida`:
 
 **Tipo A — variante de una keyword existente.**  
-La señal es prefijo o sufijo de una `incluye` activa, o dista ≤2 caracteres (Levenshtein), **en la misma categoría propuesta**. Ejemplos: `desarro` vs `desarrollo`, `hostin` vs `hosting`, `escanner` vs `escaner`.
-
-Guardas (sin ellas, C2 midió basura `nas`→`na` y ` ups `→PICK UP):
-
-- Levenshtein: `min(len(madre), len(señal)) >= 6`.
-- Prefijo/sufijo: el más corto tiene ≥5 caracteres **y** ≥60 % de la longitud de la madre (`des` no es variante de `desarrollo`).
-- Solo se compara contra `tipo='incluye'` y `activa=true` de **la misma** `categoria_propuesta`. No se cruza de categoría.
-- No se auto-crean `excluye`.
-
-→ se inserta en `it_keywords` (misma categoría y `prioridad` que la madre; `limite_palabra` copiado; `tipo='incluye'`). Candidata → `estado='auto_activada'`, `tipo_eval='a'`, `keyword_madre_id`, `keyword_id`. **No** se mide universo A: es la misma palabra mal escrita.
+Confirmación de que la keyword funciona (`desarro` / `desarrollo`, `ineternet` / `internet`). **No** se inserta en `it_keywords`. Candidata → no se trata como nueva.
 
 **Tipo B — término nuevo.**  
 No se parece a ninguna keyword activa. **Antes** de activar se mide contra el corpus (misma receta que las auditorías de candidatas):
@@ -842,17 +833,20 @@ No se parece a ninguna keyword activa. **Antes** de activar se mide contra el co
 | `ya_etiquetados` | Ya etiquetados donde aparece la señal. |
 | `ratio_predictivo` | `ya_etiquetados / universo_a` (NULL si A=0). |
 
-Regla de activación automática (las tres):
+Regla de activación automática (código; **hoy el semanal corre `--dry-run`**):
 
 ```
 universo_a <= UMBRAL_AUTO
 AND cambios_categoria == 0
 AND veces_vista >= MIN_VECES
+AND palabras <= 4
+AND no empieza con vacía de licitación
+AND ratio_predictivo >= RATIO_PREDICTIVO_MIN (0.30)
 AND la misma categoria_propuesta en esas vistas
 ```
 
 Si se cumple: INSERT `it_keywords` + `estado='auto_activada'`, `tipo_eval='b'`.  
-Si `universo_a > UMBRAL_AUTO` **o** `cambios_categoria > 0`: `estado='medida'`. **No** se activa. Sirve de pista para Gemini (§11.3).  
+Si `universo_a > UMBRAL_AUTO` **o** `cambios_categoria > 0` **o** ratio &lt; 0.30: `estado='medida'`. **No** se activa. Sirve de pista para Gemini (§11.3).  
 Si aún no llega a `MIN_VECES`: se queda `nueva` (sigue contando).
 
 4. Las candidatas **no** activadas (`nueva` con `veces_vista>=2`, y todas las `medida`) se inyectan en el prompt de desambiguación como vocabulario, no como reglas (§11.3).
@@ -864,10 +858,11 @@ Si aún no llega a `MIN_VECES`: se queda `nueva` (sigue contando).
 |---|---|---|
 | `UMBRAL_AUTO` | **50** | Las candidatas limpias que ya aceptamos a mano rondaban 2–50 (`equipos de computo` → 45). Por encima empiezan los términos anchos que **no** deben volverse regla: digitalización ~210 (mezcla TEC/locación), trámite documentario ~154. El contraejemplo de C2: **`impresora` sola = 769 de 3240 etiquetas (24 %)**. 50 es ~15× más chico que esa keyword tóxica y coincide con el techo de lo que ya dimos por bueno. |
 | `MIN_VECES` | **3** | Mismo listón que C1 (consenso de 3 corridas Gemini). Una sola vista puede ser un contrato raro o una señal recortada de un lote. Tres vistas **con la misma categoría** no son un empate entre categorías: si Gemini dijo Hardware dos veces y Redes una, no se activa (hay que partir la candidata por `(senal, categoria_propuesta)`; el UNIQUE ya es ese par). |
+| `RATIO_PREDICTIVO_MIN` | **0.30** | Palabra que aparece igual en etiquetados y no etiquetados no discrimina. Auditoría: `sistema` ratio 0.19 y etiquetaría carreteras. |
 
 No se sube `UMBRAL_AUTO` “para cubrir digitalización”: ese término tiene que quedarse `medida` y entrar al prompt como pista. Activarlo como keyword reabre el ruido de locación de personal.
 
-Constantes de código (cuando se implemente el job), no de SQL. Cambiarlas no es migración.
+Constantes de código, no de SQL. Cambiarlas no es migración.
 
 ### 11.3 Dónde entra en `clasificar_gemini.py` (sin inflar el prompt)
 
@@ -875,7 +870,7 @@ No tocar `SYSTEM_PROMPT_REGLAS` ni `DEF_CATEGORIAS`: el prefijo del system se ca
 
 La desambiguación es la **pasada 2** (`comando_proponer` → `user_prompt_p2`, ~L583–595): ciega a entidad/área/CUBSO, solo objeto + descripción + ítem. Ahí Gemini decide categoría sin el sesgo del área. Las pistas de vocabulario **no** son sesgo de entidad; son palabras que el propio modelo ya usó como señal.
 
-Inyección (diseño, no código ahora):
+Inyección (código: `cargar_pistas` al final de `user_prompt_p2`):
 
 - Función `bloque_pistas_vocabulario(candidatas) -> str` al **final** de `user_prompt_p2`, después de los contratos del lote.
 - Tope **20 líneas**, ~800 caracteres. Orden: `medida` primero (ya medidas, A grande), luego `nueva` con `veces_vista >= 2`. `ORDER BY veces_vista DESC`.

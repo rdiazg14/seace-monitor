@@ -1,7 +1,7 @@
 # Traspaso maestro — SEACE Monitor
 
 Contexto completo para retomar el proyecto **sin chat previo**.
-Snapshot: **5 sep 2026** (Perú). Un solo punto de entrada; el detalle vive en los docs enlazados.
+Snapshot: **7–8 sep 2026** (Perú). Un solo punto de entrada; el detalle vive en los docs enlazados.
 
 | Doc | Para qué |
 |---|---|
@@ -10,7 +10,7 @@ Snapshot: **5 sep 2026** (Perú). Un solo punto de entrada; el detalle vive en l
 | [ESTADO_CIERRE_2026-08-20.md](./ESTADO_CIERRE_2026-08-20.md) | Foto histórica de iteraciones 1–9 + fixes |
 | [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md) | Iteraciones 1–11 + clasificación IT 1 sep: qué, archivos, commit, estado |
 | [CRITERIOS_DECISION_ENERTRONIC.md](./CRITERIOS_DECISION_ENERTRONIC.md) | Inteligencia de negocio. §3 «la IA busca» = intención, no implementación |
-| [ARQUITECTURA_DATOS.md](./ARQUITECTURA_DATOS.md) | Capas PG (fases 0–4 aplicadas; 5–6 pendientes) |
+| [ARQUITECTURA_DATOS.md](./ARQUITECTURA_DATOS.md) | Capas PG (fases 0–5b aplicadas; 6 DROP pendiente) |
 
 **Regla:** el código gana al PLAN. Secretos solo por **nombre** (nunca JWT, API keys ni tokens).
 
@@ -47,19 +47,19 @@ El front **no** llama a Gemini. Lee Supabase (anon + RLS) y pega al Worker. El p
 - **Puntos de control:** Rolando aprueba antes de cron, deploy masivo u OCR caro.
 - **Calibración vs código:** el asistente (Rolando) define criterio de negocio; Cursor implementa. Criterios ENERTRONIC mandan sobre ocurrencias del LLM.
 
-Al retomar: leé **§6 (cierres hasta 6 sep)** + §7 (gotchas) + [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md) + [SEGURIDAD.md](./SEGURIDAD.md). No reabras retrieval v2 salvo pedido. C1/C2/C4 hechos; C3 (cola admin) **no**. Gemini semanal en `clasificacion_semanal.yml`, **no** en el pipeline diario.
+Al retomar: leé **§6 (cierres hasta 7–8 sep)** + §7 (gotchas) + [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md) + [SEGURIDAD.md](./SEGURIDAD.md). No reabras retrieval v2 salvo pedido. C1/C2/C4 hechos; C3 (cola admin) **no**. Gemini semanal en `clasificacion_semanal.yml`, **no** en el pipeline diario.
 
 ---
 
 ## 1. Mapa de los 4 repos
 
-Hashes de este corte (HEAD `origin/main` al 6 sep 2026):
+Hashes de este corte (HEAD `origin/main` al 8 sep 2026):
 
 | Repo | GitHub | Visibilidad | Rama | HEAD |
 |---|---|---|---|---|
-| seace-monitor | https://github.com/rdiazg14/seace-monitor | **público** | `main` | `916d865` (C4; docs de cierre en el commit siguiente) |
-| seace-web | https://github.com/rdiazg14/seace-web | **público** | `main` | `1ffe8b0` (score enriquecido) |
-| seace-ai-proxy | https://github.com/rdiazg14/seace-ai-proxy | **privado** | `main` | `6e62b74` (`requireSesion`) · [POR-CONFIRMAR] deploy CF vivo |
+| seace-monitor | https://github.com/rdiazg14/seace-monitor | **público** | `main` | `3631eee` (`sin_chunks` via contratos) · paginación `227f7ef` |
+| seace-web | https://github.com/rdiazg14/seace-web | **público** | `main` | `b1ffc2b` (RutaDia `.order('id')`) · Pages [34184368043](https://github.com/rdiazg14/seace-web/actions/runs/34184368043) **success** |
+| seace-ai-proxy | https://github.com/rdiazg14/seace-ai-proxy | **privado** | `main` | `16c50ff` fase 5b `v_contratos` · CF `46fec43a-6b9a-4ada-af27-df41c68ec3c4` |
 | seace-pipeline-trigger | https://github.com/rdiazg14/seace-pipeline-trigger | **privado** | `main` | `060a215` · Worker `seace-pipeline-trigger.rdiazg14.workers.dev` |
 
 ### 1.1 seace-monitor
@@ -475,10 +475,44 @@ C4 + score enriquecido + capas fase 3 + CUBSO 2026 + seguridad + data lake. Deta
 - Promedio real **1,15 MB** (muestra de 14 daba 695 KB). ~45 meses hasta 100 GB.
 - El cron sube el binario que ya tiene en memoria antes de descartarlo.
 
+### Cierre 7–8 sep 2026
+
+Capas 4–5b + verificar_capas en el cron + bug de paginación PostgREST. Detalle: [ARQUITECTURA_DATOS.md](./ARQUITECTURA_DATOS.md) §§7–11; [ARQUITECTURA_TECNICA.md](./ARQUITECTURA_TECNICA.md) tabla de estado.
+
+**Capas fases 4 y 5 — APLICADAS**
+
+- Fase 4: dual-write. Escritores → `clasificacion_contrato`; trigger `trg_clasificacion_echo` copia a `contratos` para los lectores viejos. La ingesta ya no manda `categoria_it`.
+- Actions **no** tiene secret `DATABASE_URL` (solo `SUPABASE_URL` / `SUPABASE_SERVICE_KEY`). Los writers con solo psycopg no escribían capa 3 (aviso silencioso). Fix: fallback supabase-py. Probado en Actions con id **92182** (log `backend=supabase-py`, `escritos=1`, `diff=0`).
+- Fase 5: `v_contratos` (41 columnas, `security_invoker=true` — sin eso, en PG 17.6 la vista corre con permisos del creador y puede saltar RLS). 7 vistas/RPC migradas. Fase 5b: front (11 archivos, `3b946b5`) y Worker (5 puntos, `16c50ff`) leen la vista.
+
+**Fase 6 — NO APLICADA.** Al verificar (7 sep ~20:00 Lima) habían pasado ~13 h desde 5b, no 48 h. Eco sigue como red. Retomar **9 sep**.
+
+**Verificar capas en el cron — NUEVA** (`9a75527`, paginado `c425ba9`, `sin_chunks` en `227f7ef`)
+
+- `scripts/verificar_capas.py` al final de `pipeline.yml` y `clasificacion_semanal.yml`.
+- Línea: `[capas] diff=N capa_null=N huerfanos=N c1=N sin_chunks=N`. Exit 1 si `diff>0` (G3).
+- Primera corrida Actions (antes del ORDER BY): `diff=2005` **falso**.
+- Dispatch [34184376852](https://github.com/rdiazg14/seace-monitor/actions/runs/34184376852) (8 sep, post-`.order`): job **success**. **No** imprimió `[capas]`: `via_supa` pidió `tdr_texto` en `v_contratos_estado` (la vista no la tiene; el SQL sí JOIN a `contratos`). G3 comentó en [issue #2](https://github.com/rdiazg14/seace-monitor/issues/2). Fix: ids desde la vista, `tdr_*` desde `contratos`. Local supabase-py (mismo backend que Actions): `[capas] diff=0 capa_null=0 huerfanos=0 c1=54 sin_chunks=0`. **[POR-CONFIRMAR]** esa línea en un log de Actions post-fix.
+
+**Paginación PostgREST — hallazgo 7 sep** (`227f7ef`, web `b1ffc2b`)
+
+- `.range()` sin `.order()`: la página 2 puede repetir filas de la 1 y omitir otras. Silencioso.
+- 8 casos. Críticos: `chunker_contratos.py` paginaba vigentes con `PAGE=1000` y ~36k chunks sin orden (7 sep: **1949** vigentes). Actions 34184376852: `Con detalle vigente : 1,945` (universo de esa noche; no el techo 1000). `RutaDia.tsx` pagina `v_contratos` (**864**/1000 el 7 sep, techo latente).
+- Daño medido: **0** vigentes con PDF y sin ninguna fila en `chunks_tdr`; **0** postulables en ese conjunto; **0** chunks de vigentes sin `embedding_v2`. El bug no perdía datos de forma permanente: cada corrida veía un subconjunto distinto y la unión de noches cubría el universo. Un contrato que cierra en 48 h y queda fuera esa noche sí se pierde.
+- Los 8 llevan `.order("id")` (PK de `contratos` / `chunks_tdr`) y un comentario de por qué no se quita.
+
+**Aprendizaje de vocabulario — IMPLEMENTADO, NO ACTIVADO** (`a7f74a1` + extracción `84b656c`)
+
+- La señal literal de Gemini son oraciones (`servicio de procesamiento de datos`). Como keyword solo pega si el próximo contrato la escribe idéntica.
+- `extraer_termino()`: quita preámbulo de licitación, cola administrativa, máximo 4 palabras, 4–40 caracteres.
+- 119 candidatas históricas: **71** términos únicos tipo B, **16** ya cubiertas, **5** no extraíbles, **4** tipo A. **9** pasarían umbrales (varias dudosas: `solucion informatica`, `construccion de software`).
+- Umbrales extra: ≤4 palabras, no empieza con vacía de licitación, `ratio_predictivo >= 0.30` (`sistema` midió 0.19 y etiquetaría carreteras). Tipo A = confirmación (`ya_cubierta`), no INSERT.
+- Semanal corre `evaluar_candidatas.py --dry-run`. No se activa hasta que haya más repeticiones (C4 meses).
+
 **Pendientes (sin inventar plan)**
 
-- Capas fase 6 (DROP) solo tras ≥2 días de pipeline estable. Fase 5b: front+Worker en `v_contratos`; eco activo.
-- Aprendizaje de vocabulario: diseñado en ARQUITECTURA_DATOS §11, **no** implementado.
+- Capas fase 6 (DROP) **no antes del 9 sep ~07:00 Lima**: ≥2 días desde 5b + ≥2 pipelines OK post-5b con `[capas] diff=0` en el log + migrar lectores del pipeline (reclasificar/gemini/validadores) el día del DROP.
+- Aprendizaje de vocabulario: **implementado, no activado**. Extrae núcleo (no oración). 119 candidatas históricas → 71 tipo B únicos; 9 pasarían umbrales (varias dudosas). Activar cuando C4 lleve meses.
 - C3 cola de revisión: 13 items + 4 observaciones.
 - Vista admin de keywords.
 - Data lake histórico: 946 vigentes de más de 90 días.

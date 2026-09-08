@@ -5,7 +5,7 @@ No sustituye al PLAN: si código y PLAN divergen, se anota aquí.
 
 - Foto de prod (iter. 1–11): [ESTADO_CIERRE_2026-08-29.md](./ESTADO_CIERRE_2026-08-29.md) (histórico 1–9: [ESTADO_CIERRE_2026-08-20.md](./ESTADO_CIERRE_2026-08-20.md))
 - Historia de sprints: [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md)
-- Punto de entrada / bitácora: [TRASPASO_MAESTRO_SEACE.md](./TRASPASO_MAESTRO_SEACE.md) — cierre **30–31 ago**, clasificación **1 sep**, cierre **3–5 sep** y cierre **6 sep 2026** (C4, score, capas, seguridad) en §6
+- Punto de entrada / bitácora: [TRASPASO_MAESTRO_SEACE.md](./TRASPASO_MAESTRO_SEACE.md) — cierre **30–31 ago**, clasificación **1 sep**, cierre **3–5 sep**, cierre **6 sep 2026** (C4, score, capas, seguridad) y cierre **7–8 sep** (fases 4–5b, verificar_capas, paginación) en §6
 
 ---
 
@@ -33,14 +33,14 @@ Cierre: tabla de decisiones · discrepancias vs PLAN · commits
 
 | Pieza | Path | HEAD documentado |
 |---|---|---|
-| Pipeline / SQL / evals | `seace-monitor` | `916d865` (C4) · capas `151adc5` / `9c7528b` · CUBSO `c3002bd` · seguridad `2f08dbc` |
-| Worker Gemini | `seace-ai-proxy` | `6e62b74` (`requireSesion` en chat/analizar/cotizar) · [POR-CONFIRMAR] deploy CF vivo vs este HEAD |
-| Front | `seace-web` | `1ffe8b0` (score enriquecido desde `analisis_contrato`) · Pages `https://seace.rdiaz-lab.xyz` |
+| Pipeline / SQL / evals | `seace-monitor` | `3631eee` (`sin_chunks` via contratos) · paginación `227f7ef` · C4 `916d865` |
+| Worker Gemini | `seace-ai-proxy` | `16c50ff` (Fase 5b `v_contratos`) · CF `46fec43a-6b9a-4ada-af27-df41c68ec3c4`. JWT: `6e62b74` |
+| Front | `seace-web` | `b1ffc2b` (paginación `ORDER BY` + `v_contratos`) · Pages `https://seace.rdiaz-lab.xyz` |
 | Trigger del cron | `seace-pipeline-trigger` | repo privado `main` `060a215` · Worker `https://seace-pipeline-trigger.rdiazg14.workers.dev` |
 
 Worker vivo: `https://seace-ai-proxy.rdiazg14.workers.dev`. Front: `AI_PROXY` = esa URL (`seace-web/src/lib/supabase.ts`).
 
-Fecha de este corte: **6 sep 2026** (Perú). Asesor #9/#10/#11 + C1/C2 + **C4** (keywords diario + Gemini semanal) + score enriquecido + capas fases 0–3 + seguridad (RLS snapshots + JWT Worker) + CUBSO 2026-07-02 + data lake R2. C3 (cola admin) **no** hecho. Foto previa: [ESTADO_CIERRE_2026-08-29.md](./ESTADO_CIERRE_2026-08-29.md).
+Fecha de este corte: **7–8 sep 2026** (Perú). Capas **5b** + verificación en cron + paginación PostgREST. C3 (cola admin) **no** hecho. Foto previa: [ESTADO_CIERRE_2026-08-29.md](./ESTADO_CIERRE_2026-08-29.md).
 
 Etiquetas de «por qué»:
 
@@ -142,7 +142,7 @@ eval_v2.json: success@10 = 0.633… (Gemini 1536 + buscar_tdr_v2+RRF, min_sim 0.
 
 ### Qué hace
 
-`chunker_contratos.py`: parte TDR/ficha en filas `chunks_tdr`. Cron: primero `fuente=api`, luego `--solo-pdf --solo-nuevos` (`pipeline.yml` L123–139).
+`chunker_contratos.py`: parte TDR/ficha en filas `chunks_tdr`. Cron: primero `fuente=api`, luego `--solo-pdf --solo-nuevos` (`pipeline.yml`). Toda paginación PostgREST lleva `.order("id")` antes de `.range()`: sin eso la página 2 puede repetir filas de la 1 y omitir otras (detectado 7 sep: `diff=2005` falso en `verificar_capas`; 8 `.range()` sin orden, entre ellos el chunker con `PAGE=1000`). Actions 34184376852: `Con detalle vigente : 1,945` (7 sep midió 1949; no es el techo 1000).
 
 ### Cómo
 
@@ -465,7 +465,7 @@ CORS expone `X-Analisis-Cache`, `X-Cotizar-Cache`, `X-Cotizar-Intent`. Métodos 
 
 Backstop de facturación Gemini (~S/10/mes AI Studio): **[por confirmar con Rolando]** — no está en el código.
 
-`clasificar_gemini.py` (C4 semanal) **no** descuenta `flash:` / `analyze:` / `cotizar:` ni escribe `flash_ocr_cuota.json`. Cupo propio `data/clasificacion_cuota.json` (fecha Lima, `--max-llamadas-dia` default 150). Misma API key de AI Studio que OCR/embeddings: el tope de C4 es chico para que el OCR siempre tenga margen. Cupos del Worker: por usuario (JWT), no por IP ([POR-CONFIRMAR] si el deploy CF vivo ya es `6e62b74`).
+`clasificar_gemini.py` (C4 semanal) **no** descuenta `flash:` / `analyze:` / `cotizar:` ni escribe `flash_ocr_cuota.json`. Cupo propio `data/clasificacion_cuota.json` (fecha Lima, `--max-llamadas-dia` default 150). Misma API key de AI Studio que OCR/embeddings: el tope de C4 es chico para que el OCR siempre tenga margen. Cupos del Worker: por usuario (JWT), no por IP (CF `46fec43a-6b9a-4ada-af27-df41c68ec3c4` = HEAD `16c50ff`).
 
 ### 502 / JSON inválido de Gemini (contrato 66461, 18 ago 2026)
 
@@ -720,7 +720,9 @@ Lee claves UTC de hoy: `flash:`, `analyze:`, `cotizar:`, `cotizar_tipo:{texto|ta
 | Seguridad | RLS snapshots/migraciones; Worker `requireSesion`; `docs/SEGURIDAD.md`; trigger versionado | **MEDIDA** 6 sep | PAT fine-grained | anon key en bundle |
 | CUBSO | catálogo 2026-07-02 multi-hoja 85711; BD 290115; huérfanos 1772→30 | **MEDIDA** `c3002bd` | 30 códigos sin match | dump 2016 era 42% miss |
 | Data lake | 925 PDFs / 1,04 GB; `tdr/{YYYY}/{MM}/{id}/{aid}.pdf`; avg 1,15 MB | **MEDIDA** | históricos &gt;90d (946 vigentes) | ~45 meses a 100 GB |
-| Capas datos | fases 0–5 (`v_contratos`+vistas); 6 DROP pendiente | **MEDIDA** items 7370 / docs 3796 | fase 6 | front/Worker aún en `contratos`+eco |
+| Capas datos | fases 0–5b (`v_contratos` 41 cols, `security_invoker=true`; front+Worker leen la vista). Eco activo. 6 DROP **no** | **MEDIDA** 7–8 sep | fase 6 el **9 sep** si ≥2 días + pipelines OK + `diff=0` | DROP no antes; eco es la red |
+| Verificar capas | `scripts/verificar_capas.py` al final del diario y del semanal. `[capas] diff=N capa_null=N huerfanos=N c1=N sin_chunks=N`. Exit 1 si `diff>0` (G3). `sin_chunks` en supabase-py: ids de `v_contratos_estado` + `tdr_*` de `contratos` (la vista no tiene esas columnas) | **MEDIDA** 7–8 sep | `[capas]` en Actions post-fix (34184376852 crasheó antes de imprimir) | `diff=2005` fue paginación sin ORDER BY. Local supabase-py post-fix: `diff=0 capa_null=0 huerfanos=0 c1=54 sin_chunks=0` |
+| Paginación PostgREST | `.order("id")` (PK) antes de cada `.range()`. 8 casos | **MEDIDA** daño vigente+PDF sin chunks = **0** (el cron cubría en unión de noches). RutaDia 864/1000 (techo latente) | — | un vigente que cierra en 48 h y queda fuera esa noche se pierde |
 
 ### Discrepancias código vs PLAN
 
@@ -736,13 +738,13 @@ Lee claves UTC de hoy: `flash:`, `analyze:`, `cotizar:`, `cotizar_tipo:{texto|ta
 8. **#9 postulabilidad:** criterio de acción diaria **sí** está en el ranking default (`esPostulable` + chip). El universo SQL sigue trayendo En Evaluación; el chip los muestra.  
 9. **CRITERIOS §3 «la IA busca»:** el PLAN/criterio pide precios de mercado; el código **estima a ojo**. B15 (búsqueda web / precios reales) no está dimensionado.
 
-### Commits de referencia (corte 6 sep 2026)
+### Commits de referencia (corte 7–8 sep 2026)
 
 | Repo | HEAD | Qué fija |
 |---|---|---|
-| monitor | `916d865` | C4. Capas `151adc5`/`9c7528b`. CUBSO `c3002bd`. Seguridad `2f08dbc`/`087c765` |
-| worker | `6e62b74` · [POR-CONFIRMAR] CF deploy | `requireSesion` chat/analizar/cotizar |
-| web | `1ffe8b0` | Score enriquecido + JWT al Worker (`a7b0023`) |
+| monitor | `3631eee` | `sin_chunks` via `contratos`. Paginación `227f7ef`. C4 `916d865` |
+| worker | `16c50ff` · CF `46fec43a-6b9a-4ada-af27-df41c68ec3c4` | Fase 5b `v_contratos`. JWT: `6e62b74` |
+| web | `b1ffc2b` | Paginación + `v_contratos`. JWT `a7b0023` |
 | trigger | `060a215` (repo privado) | Cron CF → `workflow_dispatch` (B20; ~26s) |
 
 Iteraciones: [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md). Cierres: [TRASPASO_MAESTRO_SEACE.md](./TRASPASO_MAESTRO_SEACE.md) §6.
