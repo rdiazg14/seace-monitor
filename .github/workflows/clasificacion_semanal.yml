@@ -127,6 +127,11 @@ jobs:
           set -euo pipefail
           python clasificar_gemini.py --aplicar data/consenso_it_aplicar.json
 
+      - name: Verificar coherencia de capas
+        if: ${{ always() && !cancelled() }}
+        continue-on-error: true
+        run: python scripts/verificar_capas.py
+
       - name: G3 aplicar
         if: ${{ always() && !cancelled() && (steps.consenso.outcome == 'failure' || steps.aplicar.outcome == 'failure') }}
         env:

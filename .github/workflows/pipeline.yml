@@ -200,6 +200,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python alerta_g3.py --paso funnel --job-status failure
 
+      - name: Verificar coherencia de capas
+        id: capas
+        if: ${{ success() && github.event.inputs.solo_ocr != 'true' }}
+        continue-on-error: true
+        run: python scripts/verificar_capas.py
+
+      - name: G3 capas
+        if: ${{ always() && !cancelled() && github.event.inputs.solo_ocr != 'true' && steps.capas.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python alerta_g3.py --paso capas --job-status failure
+
       - name: Marcar fecha de corrida
         if: ${{ success() }}
         run: |
