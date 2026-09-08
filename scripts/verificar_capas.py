@@ -45,22 +45,14 @@ def _init_supa():
     return create_client(url, key)
 
 
-def _paginar(supa, table: str, select: str, **eq) -> list[dict]:
+def _paginar(supa, table: str, select: str, *, order: str, labeled_only: bool = False) -> list[dict]:
+    """Range estable: sin ORDER BY PostgREST salta filas y fabrica diffs falsos."""
     out: list[dict] = []
     offset = 0
-    q0 = supa.table(table).select(select)
-    for k, v in eq.items():
-        if v is None:
-            q0 = q0.is_(k, "null")
-        else:
-            q0 = q0.eq(k, v)
     while True:
-        q = supa.table(table).select(select)
-        for k, v in eq.items():
-            if v is None:
-                q = q.is_(k, "null")
-            else:
-                q = q.eq(k, v)
+        q = supa.table(table).select(select).order(order)
+        if labeled_only:
+            q = q.or_("categoria_it.not.is.null,relevancia_ia.not.is.null")
         res = q.range(offset, offset + PAGE - 1).execute()
         batch = res.data or []
         out.extend(batch)
@@ -99,23 +91,19 @@ def via_pg() -> tuple[int, int, int, int] | None:
 
 
 def via_supa(supa) -> tuple[int, int, int, int]:
-    clasif = _paginar(supa, "clasificacion_contrato",
-                      "contrato_id,categoria_it,relevancia_ia,capa")
-    contratos: list[dict] = []
-    offset = 0
-    while True:
-        res = (
-            supa.table("contratos")
-            .select("id,categoria_it,relevancia_ia")
-            .or_("categoria_it.not.is.null,relevancia_ia.not.is.null")
-            .range(offset, offset + PAGE - 1)
-            .execute()
-        )
-        batch = res.data or []
-        contratos.extend(batch)
-        if len(batch) < PAGE:
-            break
-        offset += PAGE
+    clasif = _paginar(
+        supa,
+        "clasificacion_contrato",
+        "contrato_id,categoria_it,relevancia_ia,capa",
+        order="contrato_id",
+    )
+    contratos = _paginar(
+        supa,
+        "contratos",
+        "id,categoria_it,relevancia_ia",
+        order="id",
+        labeled_only=True,
+    )
 
     by_cl = {int(r["contrato_id"]): r for r in clasif}
     by_c = {int(r["id"]): r for r in contratos}
