@@ -132,6 +132,11 @@ jobs:
         continue-on-error: true
         run: python scripts/verificar_capas.py
 
+      - name: Evaluar candidatas de vocabulario
+        if: ${{ always() && !cancelled() && steps.aplicar.outcome == 'success' }}
+        continue-on-error: true
+        run: python scripts/evaluar_candidatas.py
+
       - name: G3 aplicar
         if: ${{ always() && !cancelled() && (steps.consenso.outcome == 'failure' || steps.aplicar.outcome == 'failure') }}
         env:
