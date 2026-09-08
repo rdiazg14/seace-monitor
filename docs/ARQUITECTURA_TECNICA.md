@@ -33,7 +33,7 @@ Cierre: tabla de decisiones · discrepancias vs PLAN · commits
 
 | Pieza | Path | HEAD documentado |
 |---|---|---|
-| Pipeline / SQL / evals | `seace-monitor` | `3631eee` (`sin_chunks` via contratos) · paginación `227f7ef` · C4 `916d865` |
+| Pipeline / SQL / evals | `seace-monitor` | `f2c0e14` (cierre) · `2def0f7` `sin_chunks` · `ea18471` vocabulario · `227f7ef` paginación |
 | Worker Gemini | `seace-ai-proxy` | `16c50ff` (Fase 5b `v_contratos`) · CF `46fec43a-6b9a-4ada-af27-df41c68ec3c4`. JWT: `6e62b74` |
 | Front | `seace-web` | `b1ffc2b` (paginación `ORDER BY` + `v_contratos`) · Pages `https://seace.rdiaz-lab.xyz` |
 | Trigger del cron | `seace-pipeline-trigger` | repo privado `main` `060a215` · Worker `https://seace-pipeline-trigger.rdiazg14.workers.dev` |
@@ -742,7 +742,7 @@ Lee claves UTC de hoy: `flash:`, `analyze:`, `cotizar:`, `cotizar_tipo:{texto|ta
 
 | Repo | HEAD | Qué fija |
 |---|---|---|
-| monitor | `3631eee` | `sin_chunks` via `contratos`. Paginación `227f7ef`. C4 `916d865` |
+| monitor | `f2c0e14` | Cierre 7–8 sep. `2def0f7` `sin_chunks`. `ea18471` vocabulario. `227f7ef` paginación |
 | worker | `16c50ff` · CF `46fec43a-6b9a-4ada-af27-df41c68ec3c4` | Fase 5b `v_contratos`. JWT: `6e62b74` |
 | web | `b1ffc2b` | Paginación + `v_contratos`. JWT `a7b0023` |
 | trigger | `060a215` (repo privado) | Cron CF → `workflow_dispatch` (B20; ~26s) |

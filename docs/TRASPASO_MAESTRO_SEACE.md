@@ -57,7 +57,7 @@ Hashes de este corte (HEAD `origin/main` al 8 sep 2026):
 
 | Repo | GitHub | Visibilidad | Rama | HEAD |
 |---|---|---|---|---|
-| seace-monitor | https://github.com/rdiazg14/seace-monitor | **público** | `main` | `3631eee` (`sin_chunks` via contratos) · paginación `227f7ef` |
+| seace-monitor | https://github.com/rdiazg14/seace-monitor | **público** | `main` | `f2c0e14` (cierre 7–8 sep) · `2def0f7` `ea18471` `227f7ef` |
 | seace-web | https://github.com/rdiazg14/seace-web | **público** | `main` | `b1ffc2b` (RutaDia `.order('id')`) · Pages [34184368043](https://github.com/rdiazg14/seace-web/actions/runs/34184368043) **success** |
 | seace-ai-proxy | https://github.com/rdiazg14/seace-ai-proxy | **privado** | `main` | `16c50ff` fase 5b `v_contratos` · CF `46fec43a-6b9a-4ada-af27-df41c68ec3c4` |
 | seace-pipeline-trigger | https://github.com/rdiazg14/seace-pipeline-trigger | **privado** | `main` | `060a215` · Worker `seace-pipeline-trigger.rdiazg14.workers.dev` |
@@ -501,7 +501,7 @@ Capas 4–5b + verificar_capas en el cron + bug de paginación PostgREST. Detall
 - Daño medido: **0** vigentes con PDF y sin ninguna fila en `chunks_tdr`; **0** postulables en ese conjunto; **0** chunks de vigentes sin `embedding_v2`. El bug no perdía datos de forma permanente: cada corrida veía un subconjunto distinto y la unión de noches cubría el universo. Un contrato que cierra en 48 h y queda fuera esa noche sí se pierde.
 - Los 8 llevan `.order("id")` (PK de `contratos` / `chunks_tdr`) y un comentario de por qué no se quita.
 
-**Aprendizaje de vocabulario — IMPLEMENTADO, NO ACTIVADO** (`a7f74a1` + extracción `84b656c`)
+**Aprendizaje de vocabulario — IMPLEMENTADO, NO ACTIVADO** (`a7f74a1` + extracción `ea18471`)
 
 - La señal literal de Gemini son oraciones (`servicio de procesamiento de datos`). Como keyword solo pega si el próximo contrato la escribe idéntica.
 - `extraer_termino()`: quita preámbulo de licitación, cola administrativa, máximo 4 palabras, 4–40 caracteres.
