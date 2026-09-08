@@ -168,18 +168,29 @@ def via_supa(supa) -> tuple[int, int, int, int, int]:
         if by_cl.get(cid, {}).get("capa") == "gemini"
     )
 
+    # tdr_* no viven en v_contratos_estado (solo flags). Mismo split
+    # que analizar_postulables.cargar_postulables_rest.
     postulables = _paginar(
         supa,
         "v_contratos_estado",
-        "id,tdr_texto,tdr_n_paginas_ocr,paginas_ocr_hechas,es_postulable",
+        "id",
         order="id",
         eq={"es_postulable": True},
     )
-    con_pdf = {
-        int(r["id"])
-        for r in postulables
-        if _pdf_procesado(r)
-    }
+    ids_post = [int(r["id"]) for r in postulables]
+    con_pdf: set[int] = set()
+    for i in range(0, len(ids_post), 80):
+        lote = ids_post[i : i + 80]
+        res = (
+            supa.table("contratos")
+            .select("id,tdr_texto,tdr_n_paginas_ocr,paginas_ocr_hechas")
+            .in_("id", lote)
+            .order("id")
+            .execute()
+        )
+        for row in res.data or []:
+            if _pdf_procesado(row):
+                con_pdf.add(int(row["id"]))
     con_chunk: set[int] = set()
     ids_pdf = list(con_pdf)
     for i in range(0, len(ids_pdf), 80):
