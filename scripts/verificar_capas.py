@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Coherencia capa 3 vs contratos. Read-only. Pensado para Actions (sin DSN).
 
-Imprime: [capas] diff=N capa_null=N huerfanos=N c1=N
+Imprime: [capas] diff=N capa_null=N huerfanos=N c1=N sin_chunks=N
 Exit 1 si diff > 0 (G3).
+sin_chunks = postulables con PDF/OCR procesado y cero filas en chunks_tdr.
 """
 from __future__ import annotations
 
@@ -45,7 +46,15 @@ def _init_supa():
     return create_client(url, key)
 
 
-def _paginar(supa, table: str, select: str, *, order: str, labeled_only: bool = False) -> list[dict]:
+def _paginar(
+    supa,
+    table: str,
+    select: str,
+    *,
+    order: str,
+    labeled_only: bool = False,
+    eq: dict | None = None,
+) -> list[dict]:
     """Range estable: sin ORDER BY PostgREST salta filas y fabrica diffs falsos."""
     out: list[dict] = []
     offset = 0
@@ -53,6 +62,9 @@ def _paginar(supa, table: str, select: str, *, order: str, labeled_only: bool = 
         q = supa.table(table).select(select).order(order)
         if labeled_only:
             q = q.or_("categoria_it.not.is.null,relevancia_ia.not.is.null")
+        if eq:
+            for col, val in eq.items():
+                q = q.eq(col, val)
         res = q.range(offset, offset + PAGE - 1).execute()
         batch = res.data or []
         out.extend(batch)
@@ -62,7 +74,38 @@ def _paginar(supa, table: str, select: str, *, order: str, labeled_only: bool = 
     return out
 
 
-def via_pg() -> tuple[int, int, int, int] | None:
+SQL_SIN_CHUNKS = """
+SELECT count(*)::int AS n
+FROM v_contratos_estado v
+JOIN contratos c ON c.id = v.id
+WHERE v.es_postulable
+  AND (
+    (c.tdr_texto IS NOT NULL AND btrim(c.tdr_texto) <> '')
+    OR COALESCE(c.tdr_n_paginas_ocr, 0) > 0
+    OR (
+      jsonb_typeof(COALESCE(c.paginas_ocr_hechas, '[]'::jsonb)) = 'array'
+      AND jsonb_array_length(COALESCE(c.paginas_ocr_hechas, '[]'::jsonb)) > 0
+    )
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM chunks_tdr ct WHERE ct.contrato_id = v.id
+  )
+"""
+
+
+def _pdf_procesado(row: dict) -> bool:
+    tdr = (row.get("tdr_texto") or "").strip()
+    if tdr:
+        return True
+    if int(row.get("tdr_n_paginas_ocr") or 0) > 0:
+        return True
+    hechas = row.get("paginas_ocr_hechas")
+    if isinstance(hechas, list) and len(hechas) > 0:
+        return True
+    return False
+
+
+def via_pg() -> tuple[int, int, int, int, int] | None:
     conn = conectar_pg()
     if conn is None:
         return None
@@ -85,12 +128,13 @@ def via_pg() -> tuple[int, int, int, int] | None:
             "WHERE capa = 'gemini' AND contrato_id = ANY(%s)",
             (IDS_C1,),
         ).fetchone()["n"]
-        return int(diff), int(capa_null), int(huerfanos), int(c1)
+        sin_chunks = conn.execute(SQL_SIN_CHUNKS).fetchone()["n"]
+        return int(diff), int(capa_null), int(huerfanos), int(c1), int(sin_chunks)
     finally:
         conn.close()
 
 
-def via_supa(supa) -> tuple[int, int, int, int]:
+def via_supa(supa) -> tuple[int, int, int, int, int]:
     clasif = _paginar(
         supa,
         "clasificacion_contrato",
@@ -123,7 +167,41 @@ def via_supa(supa) -> tuple[int, int, int, int]:
         1 for cid in IDS_C1
         if by_cl.get(cid, {}).get("capa") == "gemini"
     )
-    return diff, capa_null, huerfanos, c1
+
+    postulables = _paginar(
+        supa,
+        "v_contratos_estado",
+        "id,tdr_texto,tdr_n_paginas_ocr,paginas_ocr_hechas,es_postulable",
+        order="id",
+        eq={"es_postulable": True},
+    )
+    con_pdf = {
+        int(r["id"])
+        for r in postulables
+        if _pdf_procesado(r)
+    }
+    con_chunk: set[int] = set()
+    ids_pdf = list(con_pdf)
+    for i in range(0, len(ids_pdf), 80):
+        lote = ids_pdf[i:i + 80]
+        offset = 0
+        while True:
+            res = (
+                supa.table("chunks_tdr")
+                .select("contrato_id")
+                .in_("contrato_id", lote)
+                .order("id")
+                .range(offset, offset + PAGE - 1)
+                .execute()
+            )
+            batch = res.data or []
+            for row in batch:
+                con_chunk.add(int(row["contrato_id"]))
+            if len(batch) < PAGE:
+                break
+            offset += PAGE
+    sin_chunks = len(con_pdf - con_chunk)
+    return diff, capa_null, huerfanos, c1, sin_chunks
 
 
 def persistir(linea: str) -> None:
@@ -146,10 +224,10 @@ def main() -> int:
             return 2
         nums = via_supa(supa)
         origen = "supabase-py"
-    diff, capa_null, huerfanos, c1 = nums
+    diff, capa_null, huerfanos, c1, sin_chunks = nums
     linea = (
         f"[capas] diff={diff} capa_null={capa_null} "
-        f"huerfanos={huerfanos} c1={c1}"
+        f"huerfanos={huerfanos} c1={c1} sin_chunks={sin_chunks}"
     )
     print(linea, flush=True)
     print(f"[capas] backend={origen}", flush=True)
