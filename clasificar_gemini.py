@@ -38,6 +38,7 @@ from clasificacion_capa import (
     escribir_gemini,
     map_confianza,
 )
+from vocabulario import cargar_pistas, registrar_desde_items
 
 _env = Path(__file__).parent / ".env"
 if _env.exists():
@@ -677,6 +678,9 @@ def user_prompt(lote: list[dict]) -> str:
     return "\n".join(lineas)
 
 
+_PISTAS_P2 = ""
+
+
 def user_prompt_p2(lote: list[dict]) -> str:
     lineas = [
         "Clasifica estos contratos. Devuelve un JSON array con un objeto "
@@ -688,6 +692,9 @@ def user_prompt_p2(lote: list[dict]) -> str:
         lineas.append(f"   descripcion: {recortar(row.get('descripcion'), 400)}")
         lineas.append(f"   objeto: {recortar(row.get('objeto'), 80)}")
         lineas.append(f"   item: {recortar(items_desc(row), 240)}")
+        lineas.append("")
+    if _PISTAS_P2:
+        lineas.append(_PISTAS_P2)
         lineas.append("")
     return "\n".join(lineas)
 
@@ -1126,7 +1133,12 @@ def correr_pasada(
 
 
 def comando_proponer(supa, args, filas: list[dict]) -> int:
+    global _PISTAS_P2
     reset_token_stats()
+    _PISTAS_P2 = cargar_pistas(supa)
+    if _PISTAS_P2:
+        n_lin = _PISTAS_P2.count("\n")
+        print(f"  pistas vocabulario P2: {n_lin} lineas", flush=True)
     por_id = {int(r["id"]): r for r in filas}
     p1_map: dict[int, dict] = {}
     sin_p1: set[int] = set()
@@ -1262,6 +1274,14 @@ def comando_proponer(supa, args, filas: list[dict]) -> int:
     path = ruta_artefacto(ahora)
     escribir_json(path, payload)
     persistir_cola_revision(items, path, ahora)
+    try:
+        n_n, n_i = registrar_desde_items(supa, items)
+        print(
+            f"  keyword_candidatas nuevas={n_n} incrementadas={n_i}",
+            flush=True,
+        )
+    except Exception as e:
+        print(f"  [aviso] keyword_candidatas no se registro: {e}", flush=True)
 
     print("\n  id | decision | origen | p1 | p2 | descripcion", flush=True)
     for it in items:
@@ -1628,6 +1648,15 @@ def comando_aplicar(ruta: str) -> int:
     except Exception as e:
         print(f"ERROR escribiendo clasificacion_contrato: {e}", flush=True)
         return 1
+
+    try:
+        n_n, n_i = registrar_desde_items(supa, a_escribir)
+        print(
+            f"  keyword_candidatas nuevas={n_n} incrementadas={n_i}",
+            flush=True,
+        )
+    except Exception as e:
+        print(f"  [aviso] keyword_candidatas no se registro: {e}", flush=True)
 
     payload["aplicado"] = {
         "utc": datetime.now(timezone.utc).isoformat(),

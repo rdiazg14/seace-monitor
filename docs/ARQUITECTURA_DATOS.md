@@ -808,7 +808,7 @@ No es bloqueante. Duplicar 4 000 JSON y ~2 000 PDFs es barato frente a rompe
 
 ## 11. Aprendizaje autónomo de vocabulario
 
-**Estado: diseñado, no implementado** (pendiente 6 sep).
+**Estado: implementado (7–8 sep 2026), sin auto-activar hasta revisar lista.** Job `scripts/evaluar_candidatas.py`; registro en `--proponer`/`--aplicar`; pistas en P2.
 
 **Principio:** el sistema es autosuficiente. No pide aprobación humana para funcionar. El admin puede revisar y editar; es opcional y esporádico.
 
