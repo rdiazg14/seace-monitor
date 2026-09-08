@@ -896,11 +896,75 @@ def _fila_aplicar_gemini(it: dict, *, artefacto: str, consenso_n: int) -> dict:
     }
 
 
-def cargar_ledger() -> list[dict]:
-    if not LEDGER_PATH.exists():
-        return []
-    data = json.loads(LEDGER_PATH.read_text(encoding="utf-8"))
-    return data if isinstance(data, list) else []
+def _cat_de(bloque) -> str | None:
+    if isinstance(bloque, dict):
+        c = bloque.get("categoria")
+        return c if isinstance(c, str) else None
+    if isinstance(bloque, str) and bloque.strip():
+        return bloque
+    return None
+
+
+def _cliente_supa_opcional():
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        return None
+    try:
+        return create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    except Exception:
+        return None
+
+
+def cargar_ledger(supa=None) -> list[dict]:
+    out: list[dict] = []
+    if LEDGER_PATH.exists():
+        data = json.loads(LEDGER_PATH.read_text(encoding="utf-8"))
+        out = data if isinstance(data, list) else []
+    client = supa if supa is not None else _cliente_supa_opcional()
+    if client is None:
+        return out
+    try:
+        rows = (
+            client.table("clasificacion_pendiente")
+            .select("contrato_id,categoria_p1,categoria_p2,votos")
+            .eq("estado", "rechazada")
+            .execute()
+            .data
+            or []
+        )
+    except Exception as e:
+        print(f"  [aviso] ledger C3 tabla: {e}", flush=True)
+        return out
+    vistos = {
+        (int(e["id"]), e.get("categoria_rechazada"))
+        for e in out
+        if isinstance(e, dict) and e.get("id") is not None
+    }
+    for r in rows:
+        try:
+            cid = int(r["contrato_id"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        cats: set[str] = set()
+        for c in (r.get("categoria_p1"), r.get("categoria_p2")):
+            if isinstance(c, str) and c and c != CATEGORIA_NINGUNA:
+                cats.add(c)
+        votos = r.get("votos")
+        if isinstance(votos, dict):
+            for v in votos.values():
+                if isinstance(v, str) and v and v != CATEGORIA_NINGUNA:
+                    cats.add(v)
+        for cat in cats:
+            key = (cid, cat)
+            if key in vistos:
+                continue
+            vistos.add(key)
+            out.append({
+                "id": cid,
+                "categoria_rechazada": cat,
+                "fecha": datetime.now(timezone.utc).date().isoformat(),
+                "nota": "c3_rechazada",
+            })
+    return out
 
 
 def ledger_por_id(ledger: list[dict]) -> dict[int, list[dict]]:
@@ -1083,6 +1147,75 @@ def persistir_cola_revision(
         COLA_PATH,
         {"actualizado_utc": ahora.isoformat(), "items": out},
     )
+    client = _cliente_supa_opcional()
+    if client is None:
+        print(
+            "  [aviso] clasificacion_pendiente no se escribio: falta SUPABASE_*",
+            flush=True,
+        )
+        return
+    try:
+        n = upsert_cola_tabla(client, items, artefacto, ahora)
+        print(f"  clasificacion_pendiente upsert={n}", flush=True)
+    except Exception as e:
+        print(f"  [aviso] clasificacion_pendiente: {e}", flush=True)
+
+
+def upsert_cola_tabla(supa, items: list[dict], artefacto: Path, ahora: datetime) -> int:
+    """Escribe pendientes en clasificacion_pendiente. No pisa aprobada/rechazada/observacion."""
+    candidatos: list[dict] = []
+    ids: list[int] = []
+    for it in items:
+        if not (it.get("revisar") or it.get("decision") == "cola"):
+            continue
+        try:
+            cid = int(it["id"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        ids.append(cid)
+        candidatos.append(it)
+    if not ids:
+        return 0
+    prev: dict[int, str] = {}
+    for i in range(0, len(ids), 200):
+        chunk = ids[i: i + 200]
+        rows = (
+            supa.table("clasificacion_pendiente")
+            .select("contrato_id,estado")
+            .in_("contrato_id", chunk)
+            .execute()
+            .data
+            or []
+        )
+        for r in rows:
+            prev[int(r["contrato_id"])] = str(r.get("estado") or "")
+    filas: list[dict] = []
+    for it in candidatos:
+        cid = int(it["id"])
+        if prev.get(cid) and prev[cid] != "pendiente":
+            continue
+        p1c = _cat_de(it.get("p1"))
+        p2c = _cat_de(it.get("p2"))
+        fila = {
+            "contrato_id": cid,
+            "categoria_p1": p1c,
+            "categoria_p2": p2c,
+            "origen": it.get("origen"),
+            "votos": it.get("votos") if isinstance(it.get("votos"), dict) else None,
+            "estado": "pendiente",
+            "titulo": recortar(it.get("descripcion"), 120),
+            "artefacto": artefacto.name,
+            "creado_utc": ahora.isoformat(),
+        }
+        filas.append(fila)
+    if not filas:
+        return 0
+    for i in range(0, len(filas), 100):
+        lote = filas[i: i + 100]
+        supa.table("clasificacion_pendiente").upsert(
+            lote, on_conflict="contrato_id",
+        ).execute()
+    return len(filas)
 
 
 def correr_pasada(
