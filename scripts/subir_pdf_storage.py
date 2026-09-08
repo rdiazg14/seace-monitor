@@ -10,6 +10,7 @@ memoria; este script es el backfill / migracion.
 
   uv run python scripts/subir_pdf_storage.py --desde 2026-06-08 --dry-run
   uv run python scripts/subir_pdf_storage.py --desde 2026-06-08
+  uv run python scripts/subir_pdf_storage.py --sin-storage
   uv run python scripts/subir_pdf_storage.py --migrar-arbol
   uv run python scripts/subir_pdf_storage.py --solo-postulables
   uv run python scripts/subir_pdf_storage.py --ids 91696 --limit 1
@@ -20,6 +21,7 @@ import argparse
 import os
 import sys
 import time
+from collections import Counter
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -78,12 +80,67 @@ def parse_ids(raw: str) -> list[int]:
     return out
 
 
+ERROR_SEACE_404 = "seace_404"
+
+
+def clasificar_error(exc: BaseException) -> str:
+    msg = str(exc)
+    if "HTTP 404" in msg:
+        return ERROR_SEACE_404
+    if "HTTP 410" in msg:
+        return "seace_410"
+    if "HTTP 429" in msg:
+        return "seace_429"
+    if msg.startswith("HTTP "):
+        return "seace_" + msg.split()[1][:8]
+    if "no es PDF" in msg:
+        return "no_es_pdf"
+    if "respuesta vacia" in msg:
+        return "vacio"
+    return "otro"
+
+
+def marcar_seace_404(conn: psycopg.Connection, cid: int, aid: int) -> None:
+    """pdf_storage_path queda NULL. documentos.error=seace_404 para no reintentar."""
+    conn.execute(
+        """
+        INSERT INTO documentos (contrato_id, pdf_archivo_id, error, descargado_utc)
+        VALUES (%s, %s, %s, now())
+        ON CONFLICT (contrato_id, pdf_archivo_id) DO UPDATE
+          SET error = EXCLUDED.error
+        """,
+        (cid, aid, ERROR_SEACE_404),
+    )
+    conn.commit()
+
+
+def marcar_documentos_ok(
+    conn: psycopg.Connection, cid: int, aid: int, path: str, n_bytes: int
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO documentos (
+          contrato_id, pdf_archivo_id, storage_path, bytes, error, descargado_utc
+        )
+        VALUES (%s, %s, %s, %s, NULL, now())
+        ON CONFLICT (contrato_id, pdf_archivo_id) DO UPDATE
+          SET storage_path = EXCLUDED.storage_path,
+              bytes = EXCLUDED.bytes,
+              error = NULL,
+              descargado_utc = now()
+        """,
+        (cid, aid, path, n_bytes),
+    )
+    conn.commit()
+
+
 def cargar_cola(
     conn: psycopg.Connection,
     *,
     ids: list[int],
     solo_postulables: bool,
     desde: datetime | None,
+    sin_storage: bool,
     limit: int,
 ) -> list[dict]:
     if ids:
@@ -125,6 +182,16 @@ def cargar_cola(
         if desde is not None:
             sql += " AND c.fecha_publica >= %s"
             params.append(desde)
+        if sin_storage:
+            sql += """
+              AND (c.pdf_storage_path IS NULL OR btrim(c.pdf_storage_path) = '')
+              AND NOT EXISTS (
+                SELECT 1 FROM documentos d
+                WHERE d.contrato_id = c.id
+                  AND d.pdf_archivo_id = c.pdf_archivo_id
+                  AND d.error = 'seace_404'
+              )
+            """
         if solo_postulables:
             sql += " AND (v.es_postulable OR v.es_por_abrir)"
         sql += " ORDER BY c.fecha_publica ASC NULLS LAST, c.id"
@@ -234,6 +301,12 @@ def main() -> int:
         help="fecha_publica >= YYYY-MM-DD (universo: vigentes con pdf_archivo_id)",
     )
     ap.add_argument("--ids", default="", help="Lista explicita id,id,id")
+    ap.add_argument(
+        "--sin-storage",
+        action="store_true",
+        default=False,
+        help="Vigentes con pdf_archivo_id y sin pdf_storage_path (historico). Salta seace_404.",
+    )
     ap.add_argument("--limit", type=int, default=0, help="Tope de filas (0 = sin tope)")
     ap.add_argument("--dry-run", action="store_true", help="Lista, no descarga ni sube")
     ap.add_argument("--forzar", action="store_true", help="Re-sube aunque ya haya path")
@@ -265,9 +338,16 @@ def main() -> int:
             return 2
         desde = datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
 
-    if not ids and not args.solo_postulables and desde is None and not args.migrar_arbol:
+    if (
+        not ids
+        and not args.solo_postulables
+        and desde is None
+        and not args.migrar_arbol
+        and not args.sin_storage
+    ):
         print(
-            "ERROR: indica --desde YYYY-MM-DD, --solo-postulables, --ids o --migrar-arbol",
+            "ERROR: indica --desde YYYY-MM-DD, --sin-storage, "
+            "--solo-postulables, --ids o --migrar-arbol",
             flush=True,
         )
         return 2
@@ -294,7 +374,7 @@ def main() -> int:
                 print(f"migrar_arbol dry planos={n_plano} total={len(filas)}", flush=True)
                 return 0
             migrar_arbol(conn, supa)
-            if not ids and not args.solo_postulables and desde is None:
+            if not ids and not args.solo_postulables and desde is None and not args.sin_storage:
                 return 0
 
         cola = cargar_cola(
@@ -302,6 +382,7 @@ def main() -> int:
             ids=ids,
             solo_postulables=args.solo_postulables,
             desde=desde,
+            sin_storage=args.sin_storage,
             limit=args.limit,
         )
 
@@ -320,7 +401,8 @@ def main() -> int:
         print(
             f"cola={len(cola)} pendientes_subida={len(pendientes)} "
             f"dry_run={args.dry_run} forzar={args.forzar} "
-            f"desde={args.desde or '-'} solo_postulables={args.solo_postulables} "
+            f"desde={args.desde or '-'} sin_storage={args.sin_storage} "
+            f"solo_postulables={args.solo_postulables} "
             f"avg_bytes={avg_b:.0f} est_mb={est_bytes / (1024 * 1024):.1f} "
             f"est_min={est_s / 60:.1f} DELAY_S={DELAY_S} "
             f"DESCARGAR_URL={DESCARGAR_URL}",
@@ -330,6 +412,7 @@ def main() -> int:
         intentados = subidos = saltados = fallidos = 0
         bytes_ok = 0
         seguidos = 0
+        motivos: Counter[str] = Counter()
         http: SeaceHttp | None = None
         t0 = time.monotonic()
 
@@ -374,6 +457,7 @@ def main() -> int:
                     body = descargar_pdf(http, aid)
                     subir(supa, path, body)
                     marcar(conn, cid, path, len(body))
+                    marcar_documentos_ok(conn, cid, aid, path, len(body))
                     if ya and ya != path:
                         try:
                             supa.storage.from_(BUCKET).remove([ya])
@@ -392,16 +476,22 @@ def main() -> int:
                     )
                 except Exception as e:
                     fallidos += 1
-                    seguidos += 1
+                    motivo = clasificar_error(e)
+                    motivos[motivo] += 1
+                    if motivo == ERROR_SEACE_404:
+                        marcar_seace_404(conn, cid, aid)
+                        seguidos = 0
+                    else:
+                        seguidos += 1
                     print(
                         f"  [{i}/{len(cola)}] id={cid} FAIL {_redactar(str(e))} "
-                        f"seguidos={seguidos}",
+                        f"motivo={motivo} seguidos={seguidos}",
                         flush=True,
                     )
                     if seguidos >= MAX_ERRORES_SEGUIDOS:
                         print(
-                            f"STOP {MAX_ERRORES_SEGUIDOS} errores seguidos; "
-                            "posible bloqueo SEACE. Reanudar despues.",
+                            f"STOP {MAX_ERRORES_SEGUIDOS} errores seguidos "
+                            "(no 404); posible bloqueo SEACE. Reanudar despues.",
                             flush=True,
                         )
                         break
@@ -421,15 +511,22 @@ def main() -> int:
                 http.close()
 
     mb = bytes_ok / (1024 * 1024)
+    elapsed = time.monotonic() - t0
     print(
         f"resumen intentados={intentados} subidos={subidos} "
         f"saltados={saltados} fallidos={fallidos} mb={mb:.2f} "
+        f"duracion_s={elapsed:.0f} "
         f"stop_seguidos={seguidos >= MAX_ERRORES_SEGUIDOS}",
         flush=True,
     )
+    if motivos:
+        print(
+            "motivos " + " ".join(f"{k}={v}" for k, v in sorted(motivos.items())),
+            flush=True,
+        )
     if seguidos >= MAX_ERRORES_SEGUIDOS:
         return 1
-    return 1 if fallidos else 0
+    return 0
 
 
 if __name__ == "__main__":
