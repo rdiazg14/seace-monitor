@@ -451,7 +451,8 @@ Valores wrangler: `wrangler.toml` L16–21. Defaults código: `limits.ts` L16–
 | `cotizar:ip:{ip}:{day}` | RPD IP cotizar (1 por pregunta) | hasta mañana UTC |
 | `chat_cache:hit:{day}` / `miss:{day}` | Instrumentación HIT/MISS chat | hasta mañana UTC |
 | `cotizar_tipo:{tipo}:{day}` | Instrumentación `tipo_respuesta` (TTL medianoche UTC) | hasta mañana UTC |
-| `pipeline-trigger:last-error` | Último fallo de dispatch GitHub (Worker trigger) | **ninguno** (hasta overwrite) |
+| `pipeline-trigger:last-error` | Último fallo de dispatch GitHub (Worker trigger). 401 = PAT expirado/revocado | **ninguno** (hasta overwrite) |
+| `pipeline-trigger:last-ok` | Último dispatch 204/200 (cron o POST de prueba) | **ninguno** (hasta overwrite) |
 
 El histórico de `tipo_respuesta` **no** vive solo en KV: tabla `cotizar_tipo_log` (§H, SQL `docs/cotizar_tipo_log.sql`). KV sigue siendo el contador del día.
 
@@ -674,9 +675,9 @@ Auth (no es `FUNNEL_TOKEN`):
 
 Curl verificado en prod (31 ago): GET sin token → **401**; Bearer basura → **401**; POST → **405**.
 
-Lee claves UTC de hoy: `flash:`, `analyze:`, `cotizar:`, `cotizar_tipo:{texto|tabla|grafica|tabla_grafica}:`, `chat_cache:hit/miss:` — ausente → **0** (cero llamadas, no “dato faltante”). `pipeline-trigger:last-error` → **null** si no hay evento; `body` truncado ~500 chars.
+Lee claves UTC de hoy: `flash:`, `analyze:`, `cotizar:`, `cotizar_tipo:{texto|tabla|grafica|tabla_grafica}:`, `chat_cache:hit/miss:` — ausente → **0** (cero llamadas, no “dato faltante”). `pipeline-trigger:last-error` / `last-ok` → **null** si no hay evento; `body` truncado ~500 chars. Front: alerta roja si last-ok > 36 h.
 
-**Front:** `/observabilidad`, `<RequireAuth admin>`, link Navbar solo `perfil.rol === 'admin'`. Fetch al Worker con el JWT. Distribución 14 días: `supabase.from('cotizar_tipo_log')` (RLS `es_admin()`). Alerta roja si last-error no es null. Link a `/` para `v_kpis_*` (no se duplican).
+**Front:** `/observabilidad`, `<RequireAuth admin>`, link Navbar solo `perfil.rol === 'admin'`. Fetch al Worker con el JWT. Distribución 14 días: `supabase.from('cotizar_tipo_log')` (RLS `es_admin()`). Alerta roja si last-ok > 36 h o last-error no es null. Link a `/` para `v_kpis_*` (no se duplican).
 
 ### `cotizar_tipo_log`
 

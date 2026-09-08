@@ -7,8 +7,12 @@ sin_chunks = postulables con PDF/OCR procesado y cero filas en chunks_tdr.
 """
 from __future__ import annotations
 
+import json
 import os
+import subprocess
 import sys
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -35,6 +39,7 @@ IDS_C1 = [
 ]
 OUT = _ROOT / "data" / "ultima_capas.txt"
 PAGE = 1000
+TRIGGER_STALE_H = 36
 
 
 def _init_supa():
@@ -215,6 +220,69 @@ def via_supa(supa) -> tuple[int, int, int, int, int]:
     return diff, capa_null, huerfanos, c1, sin_chunks
 
 
+def _github_token() -> str:
+    t = (os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN") or "").strip()
+    if t:
+        return t
+    try:
+        r = subprocess.run(
+            ["gh", "auth", "token"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if r.returncode == 0:
+            return (r.stdout or "").strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return ""
+
+
+def horas_ultimo_run(event: str) -> float | None:
+    """Horas desde el último run de pipeline.yml con ese event.
+
+    El Worker dispara workflow_dispatch (usa GITHUB_PAT). El schedule: de
+    GitHub no usa el PAT: si solo miráramos schedule, un token vencido no
+    saltaría. Se reportan ambos; el exit 1 por atraso usa dispatch.
+    """
+    token = _github_token()
+    if not token:
+        return None
+    repo = (os.getenv("GITHUB_REPOSITORY") or "rdiazg14/seace-monitor").strip()
+    q = (
+        f"https://api.github.com/repos/{repo}/actions/workflows/"
+        f"pipeline.yml/runs?event={event}&per_page=1"
+    )
+    req = urllib.request.Request(
+        q,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "seace-verificar-capas",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as res:
+            payload = json.loads(res.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError) as e:
+        print(f"[trigger] aviso: no se pudo leer runs event={event}: {e}", flush=True)
+        return None
+    runs = payload.get("workflow_runs") if isinstance(payload, dict) else None
+    if not runs:
+        return None
+    created = runs[0].get("created_at")
+    if not isinstance(created, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - dt).total_seconds() / 3600.0
+
+
 def persistir(linea: str) -> None:
     OUT.parent.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -243,7 +311,25 @@ def main() -> int:
     print(linea, flush=True)
     print(f"[capas] backend={origen}", flush=True)
     persistir(linea)
-    return 1 if diff > 0 else 0
+
+    dispatch_h = horas_ultimo_run("workflow_dispatch")
+    schedule_h = horas_ultimo_run("schedule")
+    def _fmt(v: float | None) -> str:
+        return "na" if v is None else f"{v:.1f}"
+    print(
+        f"[trigger] last_dispatch_h={_fmt(dispatch_h)} "
+        f"last_schedule_h={_fmt(schedule_h)} stale_si>{TRIGGER_STALE_H}",
+        flush=True,
+    )
+    trigger_stale = dispatch_h is not None and dispatch_h > TRIGGER_STALE_H
+    if trigger_stale:
+        print(
+            f"[trigger] ALERTA: último workflow_dispatch hace {dispatch_h:.1f} h "
+            f"(>{TRIGGER_STALE_H}). El Worker/PAT puede estar muerto. "
+            f"schedule={_fmt(schedule_h)} h (el cron de GitHub no usa el PAT).",
+            flush=True,
+        )
+    return 1 if diff > 0 or trigger_stale else 0
 
 
 if __name__ == "__main__":

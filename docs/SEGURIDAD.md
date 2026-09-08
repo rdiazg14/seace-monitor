@@ -155,11 +155,31 @@ Bypass total de RLS. Si filtró, tratá como incidente.
 
 ### 3.5 `GITHUB_PAT` (pipeline-trigger)
 
-1. Creá fine-grained nuevo (§1).
+Fine-grained `token_seace_monitor`. **Expira 2026-09-29.** Si vence, GitHub
+responde **401** (`Bad credentials`; no 403) al `workflow_dispatch`. El
+Worker persiste `pipeline-trigger:last-error` (cron y POST de prueba) y
+deja de disparar. G3 no avisa: corre dentro del job, que no arranca.
+El `schedule:` nativo de GitHub no usa este PAT y puede seguir con atraso.
+
+**Cómo se entera alguien**
+
+- `/observabilidad`: alerta roja si `pipeline-trigger:last-ok` tiene más
+  de 36 h (dos días sin dispatch). También muestra last-error.
+- `scripts/verificar_capas.py` en el pipeline: `[trigger] last_dispatch_h=…`
+  y exit 1 (G3 `--paso capas`) si el último `workflow_dispatch` tiene más
+  de 36 h. El `schedule` se imprime pero no es la señal del PAT.
+
+**Renovar (antes del 29 sep, o el día que la alerta salte)**
+
+1. GitHub → Settings → Developer settings → Fine-grained tokens →
+   `token_seace_monitor` → **Regenerate token**.
 2. `cd seace-pipeline-trigger && npx wrangler secret put GITHUB_PAT`
-3. Probá: `POST /` del trigger con `TRIGGER_TEST_TOKEN` → `github_status` 204/200.
-4. Revocá el PAT viejo en GitHub.
+3. Probá: `POST /` del trigger con `TRIGGER_TEST_TOKEN` → `github_status`
+   204/200. Eso escribe `last-ok`.
+4. Revocá el valor viejo si GitHub dejó uno anterior.
 5. El cron 14:00 UTC del día siguiente confirma.
+
+No pegues el valor del token en chat, docs ni issues.
 
 ### 3.6 `TRIGGER_TEST_TOKEN`
 
