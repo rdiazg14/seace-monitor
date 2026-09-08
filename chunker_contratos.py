@@ -326,7 +326,9 @@ def paginar(supa, tabla: str, cols: str, **filters) -> list[dict]:
             if k == "eq":
                 for col, val in v.items():
                     q = q.eq(col, val)
-        res = q.range(offset, offset + PAGE - 1).execute()
+        # PostgREST: .range() sin .order() no garantiza orden entre paginas;
+        # la pagina 2 puede repetir filas de la 1 y omitir otras.
+        res = q.order("id").range(offset, offset + PAGE - 1).execute()
         batch = res.data or []
         out.extend(batch)
         if len(batch) < PAGE:
@@ -354,6 +356,9 @@ def cobertura_fuentes(supa) -> dict:
                 supa.table("chunks_tdr")
                 .select("contrato_id,fuente")
                 .in_("contrato_id", lote)
+                # PostgREST: .range() sin .order() no garantiza orden entre paginas;
+                # la pagina 2 puede repetir filas de la 1 y omitir otras.
+                .order("id")
                 .range(offset, offset + PAGE - 1)
                 .execute()
             )
@@ -422,6 +427,9 @@ def ids_ya_chunkeados(supa) -> set[int]:
         res = (
             supa.table("chunks_tdr")
             .select("contrato_id")
+            # PostgREST: .range() sin .order() no garantiza orden entre paginas;
+            # la pagina 2 puede repetir filas de la 1 y omitir otras.
+            .order("id")
             .range(offset, offset + PAGE - 1)
             .execute()
         )
@@ -482,6 +490,9 @@ def ids_con_fuente_pdf(supa, ids: list[int]) -> set[int]:
                 .select("contrato_id")
                 .in_("contrato_id", lote)
                 .eq("fuente", "pdf")
+                # PostgREST: .range() sin .order() no garantiza orden entre paginas;
+                # la pagina 2 puede repetir filas de la 1 y omitir otras.
+                .order("id")
                 .range(offset, offset + PAGE - 1)
                 .execute()
             )
@@ -675,12 +686,30 @@ def main():
         return
 
     print("Cargando vigentes con detalle...", flush=True)
-    contratos = paginar(
-        supa,
-        "contratos",
-        "id, nro_contratacion, descripcion_contrato, descripcion, entidad, objeto, estado, nom_area_usuaria, items_json, tdr_texto",
-        eq={"detalle_cargado": True, "estado": "Vigente"},
+    cols = (
+        "id, nro_contratacion, descripcion_contrato, descripcion, entidad, "
+        "objeto, estado, nom_area_usuaria, items_json, tdr_texto"
     )
+    if ids_fijos:
+        contratos = []
+        for i in range(0, len(ids_fijos), 80):
+            lote = ids_fijos[i:i + 80]
+            res = (
+                supa.table("contratos")
+                .select(cols)
+                .in_("id", lote)
+                .execute()
+            )
+            by_id = {int(r["id"]): r for r in (res.data or [])}
+            contratos.extend(by_id[j] for j in lote if j in by_id)
+        print(f"  --ids: {len(contratos)}/{len(ids_fijos)} encontrados", flush=True)
+    else:
+        contratos = paginar(
+            supa,
+            "contratos",
+            cols,
+            eq={"detalle_cargado": True, "estado": "Vigente"},
+        )
     if args.rechunk:
         pendientes = contratos
         print(f"  --rechunk: vigentes con detalle = {len(pendientes):,}", flush=True)

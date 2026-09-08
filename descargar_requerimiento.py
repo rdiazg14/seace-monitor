@@ -777,7 +777,9 @@ def group_by_tipo(supa, *, vigentes: bool = True) -> dict[str, int]:
         q = supa.table("contratos").select("tdr_tipo_extraccion,req_url,pdf_es_imagen")
         if vigentes:
             q = q.eq("estado", "Vigente")
-        res = q.range(offset, offset + PAGE_DB - 1).execute()
+        # PostgREST: .range() sin .order() no garantiza orden entre paginas;
+        # la pagina 2 puede repetir filas de la 1 y omitir otras.
+        res = q.order("id").range(offset, offset + PAGE_DB - 1).execute()
         batch = res.data or []
         for r in batch:
             tipo = r.get("tdr_tipo_extraccion")
@@ -860,6 +862,9 @@ def sync_meta_jsonl(supa) -> int:
             .eq("estado", "Vigente")
             .eq("pdf_es_imagen", True)
             .is_("tdr_tipo_extraccion", "null")
+            # PostgREST: .range() sin .order() no garantiza orden entre paginas;
+            # la pagina 2 puede repetir filas de la 1 y omitir otras.
+            .order("id")
             .range(offset, offset + PAGE_DB - 1)
             .execute()
         )
@@ -2018,6 +2023,9 @@ def reporte_extraccion(supa) -> dict:
                 "tdr_n_paginas_ocr,req_url"
             )
             .eq("estado", "Vigente")
+            # PostgREST: .range() sin .order() no garantiza orden entre paginas;
+            # la pagina 2 puede repetir filas de la 1 y omitir otras.
+            .order("id")
             .range(offset, offset + PAGE_DB - 1)
             .execute()
         )
