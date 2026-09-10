@@ -1,0 +1,15 @@
+{
+  "contrato_id": 92182,
+  "categoria_it": "Hardware",
+  "relevancia_ia": null,
+  "capa": "keyword",
+  "keyword_id": 89,
+  "senal": null,
+  "senal_fuente": null,
+  "confianza": null,
+  "consenso_n": 0,
+  "revisar": false,
+  "artefacto": "smoke_fase4",
+  "creado_utc": "2026-09-06 23:10:19.090341+00:00",
+  "actualizado_utc": "2026-09-07 03:12:04.310806+00:00"
+}

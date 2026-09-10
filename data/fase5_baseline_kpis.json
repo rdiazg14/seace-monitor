@@ -1,0 +1,114 @@
+{
+  "postulables": 21,
+  "kpis_dashboard": {
+    "total_postulables": 21,
+    "cierran_hoy": 16,
+    "cierran_manana": 3,
+    "cierran_semana": 2,
+    "nuevos_hoy_postulables": 0,
+    "vigentes_ventana_vencida": 100,
+    "en_evaluacion": 733,
+    "culminados_it": 3702,
+    "altas_it_7d": 56,
+    "altas_it_7d_prev": 24,
+    "por_linea": [
+      {
+        "linea": "Hardware",
+        "total": 8
+      },
+      {
+        "linea": "Redes/cableado",
+        "total": 4
+      },
+      {
+        "linea": "Desarrollo software",
+        "total": 3
+      },
+      {
+        "linea": "Telemetria/OT",
+        "total": 1
+      },
+      {
+        "linea": "Ciberseguridad",
+        "total": 1
+      },
+      {
+        "linea": "Soporte tecnico",
+        "total": 1
+      },
+      {
+        "linea": "Licencias",
+        "total": 1
+      },
+      {
+        "linea": "IA/analytics",
+        "total": 1
+      },
+      {
+        "linea": "Base de datos/ERP",
+        "total": 1
+      }
+    ],
+    "por_rubro": [
+      {
+        "rubro": "nucleo",
+        "total": 5
+      },
+      {
+        "rubro": "adyacente",
+        "total": 1
+      },
+      {
+        "rubro": "oportunista",
+        "total": 7
+      },
+      {
+        "rubro": "marginal",
+        "total": 8
+      }
+    ]
+  },
+  "contratos_cols": [
+    "id",
+    "nro_contratacion",
+    "descripcion_contrato",
+    "objeto",
+    "descripcion",
+    "entidad",
+    "estado",
+    "fecha_publica",
+    "fecha_ini_cotizacion",
+    "fecha_fin_cotizacion",
+    "tipo_cotizacion",
+    "cotizar",
+    "categoria_it",
+    "relevancia_ia",
+    "texto_busqueda",
+    "created_at",
+    "nom_area_usuaria",
+    "items_json",
+    "detalle_cargado",
+    "req_url",
+    "pdf_descargado",
+    "pdf_procesado",
+    "pdf_es_imagen",
+    "tdr_texto",
+    "pdf_hash",
+    "estado_verificado_at",
+    "pdf_archivo_id",
+    "pdf_nombre",
+    "tdr_tipo_extraccion",
+    "paginas_ocr_pendientes",
+    "paginas_ocr_hechas",
+    "tdr_n_paginas",
+    "tdr_n_paginas_nativas",
+    "tdr_n_paginas_ocr",
+    "analizado",
+    "cotizado",
+    "fecha_analisis",
+    "fecha_cotizacion",
+    "pdf_storage_path",
+    "pdf_storage_at",
+    "pdf_storage_bytes"
+  ]
+}
