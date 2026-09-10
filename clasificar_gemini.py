@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 Fase B / C1 / C4: clasifica categoria_it con Gemini sobre lo que keywords
-dejo en NULL.
+dejo sin fila en clasificacion_contrato.
 
-Cascada: SELECT siempre categoria_it IS NULL AND relevancia_ia IS NULL.
+Cascada: SELECT siempre sin fila en clasificacion_contrato.
 No pisa etiquetas de keywords. No toca relevancia_ia. No escribe
 flash_ocr_cuota.json (cupo propio: data/clasificacion_cuota.json).
 
@@ -221,8 +221,7 @@ SYSTEM_PROMPT_P2 = SYSTEM_PROMPT_REGLAS + LINEA_P2_CIEGO + SYSTEM_PROMPT_JSON
 
 COLS = (
     "id,descripcion,descripcion_contrato,objeto,entidad,"
-    "nom_area_usuaria,items_json,categoria_it,relevancia_ia,"
-    "estado,fecha_fin_cotizacion"
+    "nom_area_usuaria,items_json,estado,fecha_fin_cotizacion"
 )
 
 TOKEN_STATS = {
@@ -601,16 +600,16 @@ def paginar_nulls(
     *,
     incluir_ventana_cerrada: bool = False,
 ) -> list[dict]:
-    """categoria_it IS NULL AND relevancia_ia IS NULL + filtro de universo."""
+    """Sin fila en clasificacion_contrato + filtro de universo."""
     now = datetime.now(timezone.utc)
     out: list[dict] = []
     offset = 0
+    select = f"{COLS},clasificacion_contrato(contrato_id,categoria_it,relevancia_ia)"
     while True:
         q = (
             supa.table("contratos")
-            .select(COLS)
-            .is_("categoria_it", "null")
-            .is_("relevancia_ia", "null")
+            .select(select)
+            .is_("clasificacion_contrato", "null")
             .order("id", desc=True)
         )
         if filtro == "vigentes":
@@ -1667,17 +1666,18 @@ def comando_consenso(rutas: list[str]) -> int:
 
 
 def reselect_ids(supa, ids: list[int]) -> dict[int, dict]:
+    """Releer clasificacion actual de clasificacion_contrato (fase 6)."""
     out: dict[int, dict] = {}
     for i in range(0, len(ids), BATCH_DB):
         chunk = ids[i: i + BATCH_DB]
         res = (
-            supa.table("contratos")
-            .select("id,categoria_it,relevancia_ia")
-            .in_("id", chunk)
+            supa.table("clasificacion_contrato")
+            .select("contrato_id,categoria_it,relevancia_ia,capa")
+            .in_("contrato_id", chunk)
             .execute()
         )
         for row in res.data or []:
-            out[int(row["id"])] = row
+            out[int(row["contrato_id"])] = row
     return out
 
 
@@ -1747,16 +1747,12 @@ def comando_aplicar(ruta: str) -> int:
         cid = int(it["id"])
         row = actuales.get(cid)
         if row is None:
-            print(
-                f"[skip] id={cid} no aparece en el re-SELECT",
-                flush=True,
-            )
-            descartados.append(cid)
-            continue
-        if row.get("categoria_it") or row.get("relevancia_ia"):
+            # Sin fila en clasificacion_contrato: aun sin clasificar -> escribir
+            pass
+        else:
             ya = row.get("categoria_it") or row.get("relevancia_ia")
             print(
-                f"[skip] id={cid} ya etiquetado como {ya} desde el SELECT original",
+                f"[skip] id={cid} ya clasificado como {ya} (capa={row.get('capa')})",
                 flush=True,
             )
             descartados.append(cid)
@@ -1969,7 +1965,7 @@ def main() -> int:
     if supa is None:
         return 1
 
-    print("SELECT categoria_it IS NULL AND relevancia_ia IS NULL...",
+    print("SELECT sin fila en clasificacion_contrato...",
           flush=True)
     filas = paginar_nulls(
         supa,

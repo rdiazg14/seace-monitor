@@ -319,10 +319,11 @@ def comando_proponer() -> int:
         )
         contratos = conn.execute(
             """
-            SELECT id, descripcion, descripcion_contrato, objeto, entidad,
-                   categoria_it, estado, fecha_ini_cotizacion, fecha_fin_cotizacion
-            FROM contratos
-            ORDER BY id
+            SELECT c.id, c.descripcion, c.descripcion_contrato, c.objeto, c.entidad,
+                   cl.categoria_it, c.estado, c.fecha_ini_cotizacion, c.fecha_fin_cotizacion
+            FROM contratos c
+            LEFT JOIN clasificacion_contrato cl ON cl.contrato_id = c.id
+            ORDER BY c.id
             """
         ).fetchall()
 
@@ -500,7 +501,12 @@ def _reselect(conn, ids: list[int]) -> dict[int, str | None]:
     for i in range(0, len(ids), BATCH_DB):
         chunk = ids[i: i + BATCH_DB]
         rows = conn.execute(
-            "SELECT id, categoria_it FROM contratos WHERE id = ANY(%s)",
+            """
+            SELECT c.id, cl.categoria_it
+            FROM contratos c
+            LEFT JOIN clasificacion_contrato cl ON cl.contrato_id = c.id
+            WHERE c.id = ANY(%s)
+            """,
             (chunk,),
         ).fetchall()
         for r in rows:
@@ -509,7 +515,7 @@ def _reselect(conn, ids: list[int]) -> dict[int, str | None]:
 
 
 def _flush_update(conn, lote: list[dict]) -> None:
-    """Escribe capa 3 (keyword). El eco copia a contratos.categoria_it."""
+    """Escribe capa 3 (keyword) en clasificacion_contrato. fase 6: sin eco."""
     if not lote:
         return
     filas = [

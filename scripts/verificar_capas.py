@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Coherencia capa 3 vs contratos. Read-only. Pensado para Actions (sin DSN).
+"""Coherencia de capas. Read-only. Pensado para Actions (sin DSN).
 
-Imprime: [capas] diff=N capa_null=N huerfanos=N c1=N sin_chunks=N
-Exit 1 si diff > 0 (G3).
+Imprime: [capas] sin_clasificar=N capa_null=N c1=N sin_chunks=N
+Exit 1 si capa_null > 0 (G3).
 sin_chunks = postulables con PDF/OCR procesado y cero filas en chunks_tdr.
 """
 from __future__ import annotations
@@ -27,7 +27,7 @@ if _ENV.is_file():
             k, _, v = line.partition("=")
             os.environ.setdefault(k.strip(), v.strip())
 
-from clasificacion_capa import conectar_pg, diff_clasificacion_contratos  # noqa: E402
+from clasificacion_capa import conectar_pg  # noqa: E402
 
 IDS_C1 = [
     273, 10353, 11435, 11988, 12399, 20626, 32171, 32378, 34382, 34492,
@@ -57,7 +57,6 @@ def _paginar(
     select: str,
     *,
     order: str,
-    labeled_only: bool = False,
     eq: dict | None = None,
 ) -> list[dict]:
     """Range estable: sin ORDER BY PostgREST salta filas y fabrica diffs falsos."""
@@ -65,8 +64,6 @@ def _paginar(
     offset = 0
     while True:
         q = supa.table(table).select(select).order(order)
-        if labeled_only:
-            q = q.or_("categoria_it.not.is.null,relevancia_ia.not.is.null")
         if eq:
             for col, val in eq.items():
                 q = q.eq(col, val)
@@ -110,23 +107,21 @@ def _pdf_procesado(row: dict) -> bool:
     return False
 
 
-def via_pg() -> tuple[int, int, int, int, int] | None:
+def via_pg() -> tuple[int, int, int, int] | None:
     conn = conectar_pg()
     if conn is None:
         return None
     try:
-        diff = diff_clasificacion_contratos(conn)
-        capa_null = conn.execute(
-            "SELECT count(*)::int AS n FROM clasificacion_contrato WHERE capa IS NULL"
-        ).fetchone()["n"]
-        huerfanos = conn.execute(
+        sin_clasificar = conn.execute(
             """
             SELECT count(*)::int AS n
             FROM contratos c
             LEFT JOIN clasificacion_contrato cl ON cl.contrato_id = c.id
-            WHERE (c.categoria_it IS NOT NULL OR c.relevancia_ia IS NOT NULL)
-              AND cl.contrato_id IS NULL
+            WHERE cl.contrato_id IS NULL
             """
+        ).fetchone()["n"]
+        capa_null = conn.execute(
+            "SELECT count(*)::int AS n FROM clasificacion_contrato WHERE capa IS NULL"
         ).fetchone()["n"]
         c1 = conn.execute(
             "SELECT count(*)::int AS n FROM clasificacion_contrato "
@@ -134,44 +129,40 @@ def via_pg() -> tuple[int, int, int, int, int] | None:
             (IDS_C1,),
         ).fetchone()["n"]
         sin_chunks = conn.execute(SQL_SIN_CHUNKS).fetchone()["n"]
-        return int(diff), int(capa_null), int(huerfanos), int(c1), int(sin_chunks)
+        return int(sin_clasificar), int(capa_null), int(c1), int(sin_chunks)
     finally:
         conn.close()
 
 
-def via_supa(supa) -> tuple[int, int, int, int, int]:
-    clasif = _paginar(
+def _count(supa, table: str, *, extra_select: str = "", extra_filter=None) -> int:
+    """Count exact de una tabla via PostgREST."""
+    select = "id" if not extra_select else extra_select
+    q = supa.table(table).select(select, count="exact").limit(0)
+    if extra_filter:
+        q = extra_filter(q)
+    return q.execute().count or 0
+
+
+def via_supa(supa) -> tuple[int, int, int, int]:
+    total_contratos = _count(supa, "contratos")
+    total_clasificados = _count(supa, "clasificacion_contrato", extra_select="contrato_id")
+    sin_clasificar = total_contratos - total_clasificados
+
+    capa_null = _count(
         supa,
         "clasificacion_contrato",
-        "contrato_id,categoria_it,relevancia_ia,capa",
-        order="contrato_id",
-    )
-    contratos = _paginar(
-        supa,
-        "contratos",
-        "id,categoria_it,relevancia_ia",
-        order="id",
-        labeled_only=True,
+        extra_select="contrato_id",
+        extra_filter=lambda q: q.is_("capa", "null"),
     )
 
-    by_cl = {int(r["contrato_id"]): r for r in clasif}
-    by_c = {int(r["id"]): r for r in contratos}
-    ids = set(by_cl) | set(by_c)
-    diff = 0
-    for cid in ids:
-        a = by_c.get(cid) or {}
-        b = by_cl.get(cid) or {}
-        if (
-            a.get("categoria_it") != b.get("categoria_it")
-            or a.get("relevancia_ia") != b.get("relevancia_ia")
-        ):
-            diff += 1
-    capa_null = sum(1 for r in clasif if r.get("capa") is None)
-    huerfanos = sum(1 for cid in by_c if cid not in by_cl)
-    c1 = sum(
-        1 for cid in IDS_C1
-        if by_cl.get(cid, {}).get("capa") == "gemini"
+    res_c1 = (
+        supa.table("clasificacion_contrato")
+        .select("contrato_id")
+        .eq("capa", "gemini")
+        .in_("contrato_id", [int(x) for x in IDS_C1])
+        .execute()
     )
+    c1 = len(res_c1.data or [])
 
     # tdr_* no viven en v_contratos_estado (solo flags). Mismo split
     # que analizar_postulables.cargar_postulables_rest.
@@ -217,7 +208,7 @@ def via_supa(supa) -> tuple[int, int, int, int, int]:
                 break
             offset += PAGE
     sin_chunks = len(con_pdf - con_chunk)
-    return diff, capa_null, huerfanos, c1, sin_chunks
+    return sin_clasificar, capa_null, c1, sin_chunks
 
 
 def _github_token() -> str:
@@ -303,10 +294,10 @@ def main() -> int:
             return 2
         nums = via_supa(supa)
         origen = "supabase-py"
-    diff, capa_null, huerfanos, c1, sin_chunks = nums
+    sin_clasificar, capa_null, c1, sin_chunks = nums
     linea = (
-        f"[capas] diff={diff} capa_null={capa_null} "
-        f"huerfanos={huerfanos} c1={c1} sin_chunks={sin_chunks}"
+        f"[capas] sin_clasificar={sin_clasificar} "
+        f"capa_null={capa_null} c1={c1} sin_chunks={sin_chunks}"
     )
     print(linea, flush=True)
     print(f"[capas] backend={origen}", flush=True)
@@ -329,7 +320,7 @@ def main() -> int:
             f"schedule={_fmt(schedule_h)} h (el cron de GitHub no usa el PAT).",
             flush=True,
         )
-    return 1 if diff > 0 or trigger_stale else 0
+    return 1 if capa_null > 0 or trigger_stale else 0
 
 
 if __name__ == "__main__":

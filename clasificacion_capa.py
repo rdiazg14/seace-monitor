@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Helpers capa 3: escritura en clasificacion_contrato + diff vs contratos.
+"""Helpers capa 3: escritura en clasificacion_contrato (fuente unica).
 
-Fase 4: los escritores dejan de tocar contratos.categoria_it; el trigger
-trg_clasificacion_echo copia a contratos. Keywords no pisan gemini/humano;
+Fase 6: contratos ya no tiene categoria_it/relevancia_ia. El trigger
+trg_clasificacion_echo se elimino. Keywords no pisan gemini/humano;
 Gemini no pisa humano.
 
 Escritura: preferir psycopg (DATABASE_URL). En GitHub Actions el secret
-puede faltar: fallback a supabase-py (service role) que tambien dispara el eco.
+puede faltar: fallback a supabase-py (service role).
 """
 from __future__ import annotations
 
@@ -18,64 +18,15 @@ CAPAS_PROTEGIDAS_GEMINI = frozenset({"humano"})
 
 
 def diff_clasificacion_contratos(conn) -> int:
-    """Filas donde categoria_it o relevancia_ia difieren. 0 = sync."""
-    row = conn.execute(
-        """
-        SELECT count(*)::int AS n
-        FROM contratos c
-        FULL OUTER JOIN clasificacion_contrato cl
-          ON cl.contrato_id = c.id
-        WHERE (
-            c.categoria_it IS NOT NULL OR c.relevancia_ia IS NOT NULL
-            OR cl.contrato_id IS NOT NULL
-        )
-        AND (
-            c.categoria_it IS DISTINCT FROM cl.categoria_it
-            OR c.relevancia_ia IS DISTINCT FROM cl.relevancia_ia
-        )
-        """
-    ).fetchone()
-    if isinstance(row, dict):
-        return int(row["n"])
-    return int(row[0])
+    """DEPRECADO fase 6: contratos ya no tiene categoria_it/relevancia_ia.
+    El eco se elimino; la fuente unica es clasificacion_contrato."""
+    return 0
 
 
 def diff_ids_supa(supa, ids: list[int]) -> int:
-    """Diff solo sobre ids tocados (camino Actions sin DATABASE_URL)."""
-    if not ids:
-        return 0
-    n = 0
-    for i in range(0, len(ids), 200):
-        chunk = ids[i: i + 200]
-        c_rows = (
-            supa.table("contratos")
-            .select("id,categoria_it,relevancia_ia")
-            .in_("id", chunk)
-            .execute()
-            .data
-            or []
-        )
-        cl_rows = (
-            supa.table("clasificacion_contrato")
-            .select("contrato_id,categoria_it,relevancia_ia")
-            .in_("contrato_id", chunk)
-            .execute()
-            .data
-            or []
-        )
-        by_c = {int(r["id"]): r for r in c_rows}
-        by_cl = {int(r["contrato_id"]): r for r in cl_rows}
-        for cid in chunk:
-            a = by_c.get(cid) or {}
-            b = by_cl.get(cid) or {}
-            if cid not in by_c and cid not in by_cl:
-                continue
-            if (
-                a.get("categoria_it") != b.get("categoria_it")
-                or a.get("relevancia_ia") != b.get("relevancia_ia")
-            ):
-                n += 1
-    return n
+    """DEPRECADO fase 6: contratos ya no tiene categoria_it/relevancia_ia.
+    El eco se elimino; la fuente unica es clasificacion_contrato."""
+    return 0
 
 
 def upsert_keyword(

@@ -782,6 +782,7 @@ def group_by_tipo(supa, *, vigentes: bool = True) -> dict[str, int]:
         res = q.order("id").range(offset, offset + PAGE_DB - 1).execute()
         batch = res.data or []
         for r in batch:
+            _aplanar_cl(r)
             tipo = r.get("tdr_tipo_extraccion")
             key = tipo if tipo else "NULL"
             out[key] = out.get(key, 0) + 1
@@ -870,6 +871,7 @@ def sync_meta_jsonl(supa) -> int:
         )
         batch = res.data or []
         for r in batch:
+            _aplanar_cl(r)
             cid = int(r["id"])
             if cid in by_id:
                 continue
@@ -1088,12 +1090,28 @@ def ventana_cotizacion_abierta(
     return ini is None or ini <= now
 
 
+def _aplanar_cl(row: dict | None) -> dict | None:
+    """Mueve categoria_it/relevancia_ia desde clasificacion_contrato a la raiz."""
+    if not row:
+        return row
+    cl = row.get("clasificacion_contrato")
+    if isinstance(cl, dict):
+        row.setdefault("categoria_it", cl.get("categoria_it"))
+        row.setdefault("relevancia_ia", cl.get("relevancia_ia"))
+    elif isinstance(cl, list) and cl:
+        row.setdefault("categoria_it", cl[0].get("categoria_it"))
+        row.setdefault("relevancia_ia", cl[0].get("relevancia_ia"))
+    return row
+
+
 def es_ti(row: dict) -> bool:
+    _aplanar_cl(row)
     return bool(row.get("categoria_it")) or bool(row.get("relevancia_ia"))
 
 
 def prio_ti(row: dict) -> tuple:
     """ALTA → categoria_it → MEDIA → BAJA."""
+    _aplanar_cl(row)
     ia = str(row.get("relevancia_ia") or "").strip().upper()
     cat = row.get("categoria_it")
     cid = -int(row.get("id") or 0)
@@ -1129,7 +1147,7 @@ def contrato_ocr_sigue_elegible(
         supa.table("contratos")
         .select(
             "id,estado,fecha_ini_cotizacion,fecha_fin_cotizacion,"
-            "categoria_it,relevancia_ia"
+            "clasificacion_contrato(categoria_it,relevancia_ia)"
         )
         .eq("id", cid)
         .limit(1)
@@ -1137,7 +1155,7 @@ def contrato_ocr_sigue_elegible(
     )
     if not res.data:
         return False, "no_encontrado"
-    r = res.data[0]
+    r = _aplanar_cl(res.data[0])
     if (r.get("estado") or "") != "Vigente":
         return False, f"estado={r.get('estado')}"
     now = datetime.now(timezone.utc)
@@ -1220,13 +1238,13 @@ def _enriquecer_cola_ocr(supa, filas: list[dict]) -> list[dict]:
             supa.table("contratos")
             .select(
                 "id,estado,fecha_ini_cotizacion,fecha_fin_cotizacion,"
-                "categoria_it,relevancia_ia"
+                "clasificacion_contrato(categoria_it,relevancia_ia)"
             )
             .in_("id", lote)
             .execute()
         )
         for row in res.data or []:
-            extra[int(row["id"])] = row
+            extra[int(row["id"])] = _aplanar_cl(row)
     for r in filas:
         e = extra.get(int(r["id"])) or {}
         for k in (
@@ -1261,7 +1279,8 @@ def pendientes_ocr_paginas(
     cols = (
         "id,nro_contratacion,descripcion_contrato,entidad,fecha_publica,"
         "pdf_descargado,req_url,pdf_es_imagen,tdr_texto,pdf_archivo_id,pdf_nombre,"
-        "estado,fecha_ini_cotizacion,fecha_fin_cotizacion,categoria_it,relevancia_ia"
+        "estado,fecha_ini_cotizacion,fecha_fin_cotizacion,"
+        "clasificacion_contrato(categoria_it,relevancia_ia)"
     )
     if columnas_extraccion_ok(supa):
         cols += (
@@ -1283,6 +1302,7 @@ def pendientes_ocr_paginas(
         )
         batch = res.data or []
         for r in batch:
+            _aplanar_cl(r)
             cid = int(r["id"])
             loc = local.get(cid) or {}
             pend = _as_int_list(r.get("paginas_ocr_pendientes")) or _as_int_list(
@@ -1333,12 +1353,12 @@ def pendientes_ocr_paginas(
             .select(
                 "id,tdr_texto,pdf_archivo_id,pdf_nombre,pdf_es_imagen,"
                 "estado,fecha_ini_cotizacion,fecha_fin_cotizacion,"
-                "categoria_it,relevancia_ia"
+                "clasificacion_contrato(categoria_it,relevancia_ia)"
             )
             .in_("id", ids[:800])
             .execute()
         )
-        extra_by = {int(r["id"]): r for r in (extra.data or [])}
+        extra_by = {int(r["id"]): _aplanar_cl(r) for r in (extra.data or [])}
         merged: list[dict] = []
         for cid in ids:
             if cid not in by and cid not in extra_by:
@@ -2031,6 +2051,7 @@ def reporte_extraccion(supa) -> dict:
         )
         batch = res.data or []
         for r in batch:
+            _aplanar_cl(r)
             url = r.get("req_url") or ""
             if url == "sin_pdf":
                 sin_pdf += 1
