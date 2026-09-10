@@ -1,7 +1,7 @@
 # Traspaso maestro — SEACE Monitor
 
 Contexto completo para retomar el proyecto **sin chat previo**.
-Snapshot: **7–8 sep 2026** (Perú). Un solo punto de entrada; el detalle vive en los docs enlazados.
+Snapshot: **10 sep 2026** (Perú) — cierre del proyecto, arquitectura por capas completa (fases 0–6). Un solo punto de entrada; el detalle vive en los docs enlazados.
 
 | Doc | Para qué |
 |---|---|
@@ -10,7 +10,8 @@ Snapshot: **7–8 sep 2026** (Perú). Un solo punto de entrada; el detalle vive 
 | [ESTADO_CIERRE_2026-08-20.md](./ESTADO_CIERRE_2026-08-20.md) | Foto histórica de iteraciones 1–9 + fixes |
 | [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md) | Iteraciones 1–11 + clasificación IT 1 sep: qué, archivos, commit, estado |
 | [CRITERIOS_DECISION_ENERTRONIC.md](./CRITERIOS_DECISION_ENERTRONIC.md) | Inteligencia de negocio. §3 «la IA busca» = intención, no implementación |
-| [ARQUITECTURA_DATOS.md](./ARQUITECTURA_DATOS.md) | Capas PG (fases 0–5b aplicadas; 6 DROP pendiente) |
+| [ARQUITECTURA_DATOS.md](./ARQUITECTURA_DATOS.md) | Capas PG (**fases 0–6 aplicadas**; DROP hecho el 10 sep) |
+| [SEGURIDAD.md](./SEGURIDAD.md) | Inventario de secretos (solo nombres), rotación y barrido de credenciales |
 
 **Regla:** el código gana al PLAN. Secretos solo por **nombre** (nunca JWT, API keys ni tokens).
 
@@ -53,14 +54,16 @@ Al retomar: leé **§6 (cierres hasta 7–8 sep)** + §7 (gotchas) + [CHANGELOG_
 
 ## 1. Mapa de los 4 repos
 
-Hashes de este corte (HEAD `origin/main` al 8 sep 2026):
+Hashes de este corte (HEAD `origin/main` al **10 sep 2026**, cierre del proyecto):
 
 | Repo | GitHub | Visibilidad | Rama | HEAD |
 |---|---|---|---|---|
-| seace-monitor | https://github.com/rdiazg14/seace-monitor | **público** | `main` | `f2c0e14` (cierre 7–8 sep) · `2def0f7` `ea18471` `227f7ef` |
-| seace-web | https://github.com/rdiazg14/seace-web | **público** | `main` | `b1ffc2b` (RutaDia `.order('id')`) · Pages [34184368043](https://github.com/rdiazg14/seace-web/actions/runs/34184368043) **success** |
-| seace-ai-proxy | https://github.com/rdiazg14/seace-ai-proxy | **privado** | `main` | `16c50ff` fase 5b `v_contratos` · CF `46fec43a-6b9a-4ada-af27-df41c68ec3c4` |
-| seace-pipeline-trigger | https://github.com/rdiazg14/seace-pipeline-trigger | **privado** | `main` | `060a215` · Worker `seace-pipeline-trigger.rdiazg14.workers.dev` |
+| seace-monitor | https://github.com/rdiazg14/seace-monitor | **público** | `main` | `e2549fc` fase 6 (DROP) + `2674966` datos del run verde |
+| seace-web | https://github.com/rdiazg14/seace-web | **público** | `main` | `5eb8a73` (tarjeta de expiración del token) · Pages [34301018030](https://github.com/rdiazg14/seace-web/actions/runs/34301018030) **success**, mismo SHA |
+| seace-ai-proxy | https://github.com/rdiazg14/seace-ai-proxy | **privado** | `main` | `e8e7604` (`adminStats` expone `token-expira`) · CF versión viva `3c9b7b5d` (Secret Change de la rotación de Gemini; **mismo etag de script** que el upload `fa68fe1b`, o sea no revirtió código) |
+| seace-pipeline-trigger | https://github.com/rdiazg14/seace-pipeline-trigger | **privado** | `main` | `520aff7` · CF versión viva `dcfa9287` · Worker `seace-pipeline-trigger.rdiazg14.workers.dev` |
+
+**Estado de capas:** fases **0–6 aplicadas**. `contratos` quedó solo con datos declarados por SEACE; la clasificación vive únicamente en `clasificacion_contrato`. Detalle e incidente en [ARQUITECTURA_DATOS.md](./ARQUITECTURA_DATOS.md) §Fase 6.
 
 ### 1.1 seace-monitor
 
@@ -177,7 +180,7 @@ El front **hardcodea** `AI_PROXY = https://seace-ai-proxy.rdiazg14.workers.dev` 
 
 | Tabla | Uso |
 |---|---|
-| `contratos` | Ficha SEACE. PK = `id` SEACE. IT: `categoria_it`, `relevancia_ia`. Funnel: `analizado`, `cotizado`, `fecha_analisis`, `fecha_cotizacion` (permanentes; FALSE = nunca marcado desde que existe la columna). Extra: `tdr_texto`, `pdf_hash`, `pdf_descargado`, `req_url` (`sin_pdf` = sin anexo PDF), `tdr_tipo_extraccion`, `paginas_ocr_*`, `estado_verificado_at`, `nom_area_usuaria`, `items_json` |
+| `contratos` | Ficha SEACE. PK = `id` SEACE. **Post-fase 6 ya NO tiene `categoria_it` ni `relevancia_ia`**: la clasificación se lee por `v_contratos` (que las trae de `clasificacion_contrato`). Funnel: `analizado`, `cotizado`, `fecha_analisis`, `fecha_cotizacion` (permanentes; FALSE = nunca marcado desde que existe la columna). Extra: `tdr_texto`, `pdf_hash`, `pdf_descargado`, `req_url` (`sin_pdf` = sin anexo PDF), `tdr_tipo_extraccion`, `paginas_ocr_*`, `estado_verificado_at`, `nom_area_usuaria`, `items_json` |
 | `chunks_tdr` | `texto`, `embedding vector(768)` **v1**, `embedding_v2 vector(1536)`, `fuente` api\|pdf, `meta_entidad` / `meta_nro` |
 | `perfiles` | `rol` admin\|normal, FK `auth.users` (`seace-web/supabase/perfiles.sql`) |
 | `ingesta_rechazados` | G2 dead-letter |
@@ -455,7 +458,7 @@ C4 + score enriquecido + capas fase 3 + CUBSO 2026 + seguridad + data lake. Deta
 
 - `contrato_items`: **7370** filas de 3977 contratos, índice en `cod_cubso`.
 - `documentos`: **3796** filas, **925** con `storage_path` (= bucket).
-- Fase 6 (DROP de `categoria_it`/`relevancia_ia`): **pendiente** (requiere front+Worker en `v_contratos`). Fase 5 (`v_contratos` + vistas/RPC) **aplicada**; fase 4 dual-write+eco **aplicada**; `--forzar-completa` ya no pisa C1.
+- Fase 6 (DROP de `categoria_it`/`relevancia_ia`): **APLICADA el 2026-09-10**. Fase 5 (`v_contratos` + vistas/RPC) **aplicada**; fase 4 dual-write+eco **aplicada y luego retirada** (el eco ya no existe); `--forzar-completa` ya no pisa C1.
 
 **CUBSO actualizado** (`c3002bd`)
 
@@ -471,7 +474,7 @@ C4 + score enriquecido + capas fase 3 + CUBSO 2026 + seguridad + data lake. Deta
 
 **Data lake**
 
-- 14 → **925** PDFs, **1,04 GB**, árbol `tdr/{YYYY}/{MM}/{id}/{aid}.pdf`.
+- 14 → **925** PDFs, **1,04 GB**, árbol `tdr/{YYYY}/{MM}/{id}/{aid}.pdf`. Al cierre (10 sep): **2 061** PDFs, **2,34 GB**.
 - Promedio real **1,15 MB** (muestra de 14 daba 695 KB). ~45 meses hasta 100 GB.
 - El cron sube el binario que ya tiene en memoria antes de descartarlo.
 
@@ -481,16 +484,19 @@ Capas 4–5b + verificar_capas en el cron + bug de paginación PostgREST. Detall
 
 **Capas fases 4 y 5 — APLICADAS**
 
-- Fase 4: dual-write. Escritores → `clasificacion_contrato`; trigger `trg_clasificacion_echo` copia a `contratos` para los lectores viejos. La ingesta ya no manda `categoria_it`.
+- Fase 4: dual-write. Escritores → `clasificacion_contrato`; trigger `trg_clasificacion_echo` copiaba a `contratos` para los lectores viejos (**retirado en fase 6**). La ingesta ya no manda `categoria_it`.
 - Actions **no** tiene secret `DATABASE_URL` (solo `SUPABASE_URL` / `SUPABASE_SERVICE_KEY`). Los writers con solo psycopg no escribían capa 3 (aviso silencioso). Fix: fallback supabase-py. Probado en Actions con id **92182** (log `backend=supabase-py`, `escritos=1`, `diff=0`).
 - Fase 5: `v_contratos` (41 columnas, `security_invoker=true` — sin eso, en PG 17.6 la vista corre con permisos del creador y puede saltar RLS). 7 vistas/RPC migradas. Fase 5b: front (11 archivos, `3b946b5`) y Worker (5 puntos, `16c50ff`) leen la vista.
 
-**Fase 6 — NO APLICADA.** Al verificar (7 sep ~20:00 Lima) habían pasado ~13 h desde 5b, no 48 h. Eco sigue como red. Retomar **9 sep**.
+**Fase 6 — APLICADA el 2026-09-10.** DROP de `contratos.categoria_it` y `contratos.relevancia_ia`; eco eliminado; 7 vistas + RPC recreadas con `security_invoker=true`. Snapshot previo `capas_fase6_snapshot` de **4 593** filas, verificado con **0** ausencias y **0** diferencias contra `clasificacion_contrato`. Lectores migrados: `reclasificar_categoria.py`, `clasificar_gemini.py`, `scripts/backfill_categoria.py`, `scripts/verificar_capas.py`, `descargar_requerimiento.py`, `clasificacion_capa.py`.
+
+> **Incidente y lección de traspaso.** El DROP se ejecutó **antes** de pushear la migración de lectores: el run [34434200288](https://github.com/rdiazg14/seace-monitor/actions/runs/34434200288) falló con `42703 column contratos.categoria_it does not exist` en 3 steps (keywords, OCR, capas). Se corrigió pusheando `e2549fc` y el run [34437994154](https://github.com/rdiazg14/seace-monitor/actions/runs/34437994154) pasó completo. **En un expand-contract, el código migrado se despliega ANTES del cambio de schema, no después.** Orden correcto: migrar lectores → push → ≥1 pipeline verde con el código nuevo → snapshot → DROP.
 
 **Verificar capas en el cron — NUEVA** (`9a75527`, paginado `c425ba9`, `sin_chunks` en `227f7ef`)
 
 - `scripts/verificar_capas.py` al final de `pipeline.yml` y `clasificacion_semanal.yml`.
-- Línea: `[capas] diff=N capa_null=N huerfanos=N c1=N sin_chunks=N`. Exit 1 si `diff>0` (G3).
+- Línea **post-fase 6**: `[capas] sin_clasificar=N capa_null=N c1=N sin_chunks=N`. Exit 1 si `capa_null>0` (G3) o si el trigger está stale. El `diff` se retiró: sin eco no hay dos copias que comparar. Medido en Actions (run 34437994154): `[capas] sin_clasificar=74004 capa_null=0 c1=54 sin_chunks=0`, `backend=supabase-py`.
+- Línea histórica (fases 4–5b): `[capas] diff=N capa_null=N huerfanos=N c1=N sin_chunks=N`, exit 1 si `diff>0`.
 - Primera corrida Actions (antes del ORDER BY): `diff=2005` **falso**.
 - Dispatch [34184376852](https://github.com/rdiazg14/seace-monitor/actions/runs/34184376852) (8 sep, post-`.order`): job **success**. **No** imprimió `[capas]`: `via_supa` pidió `tdr_texto` en `v_contratos_estado` (la vista no la tiene; el SQL sí JOIN a `contratos`). G3 comentó en [issue #2](https://github.com/rdiazg14/seace-monitor/issues/2). Fix: ids desde la vista, `tdr_*` desde `contratos`. Local supabase-py (mismo backend que Actions): `[capas] diff=0 capa_null=0 huerfanos=0 c1=54 sin_chunks=0`. **[POR-CONFIRMAR]** esa línea en un log de Actions post-fix.
 
@@ -511,12 +517,16 @@ Capas 4–5b + verificar_capas en el cron + bug de paginación PostgREST. Detall
 
 **Pendientes (sin inventar plan)**
 
-- Capas fase 6 (DROP) **no antes del 9 sep ~07:00 Lima**: ≥2 días desde 5b + ≥2 pipelines OK post-5b con `[capas] diff=0` en el log + migrar lectores del pipeline (reclasificar/gemini/validadores) el día del DROP.
-- Aprendizaje de vocabulario: **implementado, no activado**. Extrae núcleo (no oración). 119 candidatas históricas → 71 tipo B únicos; 9 pasarían umbrales (varias dudosas). Activar cuando C4 lleve meses.
-- C3 cola de revisión: tabla + `/keywords`; 22 pendientes + 4 observaciones.
-- Vista admin de keywords.
-- Data lake histórico: 946 vigentes de más de 90 días.
+- **Regenerar `GITHUB_PAT` antes del 2026-09-29 15:08:52 UTC.** Es la fecha en KV `pipeline-trigger:token-expira`. Si expira, el cron de Cloudflare deja de disparar el pipeline y solo queda el `schedule` de GitHub (con ~4 h de atraso medio).
+- Confirmar `pipeline_trigger_token_expira` en `/admin/stats` con JWT admin. Evidencia actual: la versión viva del Worker tiene el **mismo etag de script** que el upload posterior al commit `e8e7604`, así que el Secret Change no revirtió código; falta la comprobación funcional directa (el token OAuth de wrangler no permite descargar el bundle: `10405`).
+- Aprendizaje de vocabulario: **implementado, no activado**. Rinde poco con el volumen actual. 119 candidatas históricas → 71 tipo B únicos; 9 pasarían umbrales (varias dudosas). Activar cuando C4 lleve meses.
+- C3 cola de revisión: tabla + `/keywords`; 22 pendientes + 4 observaciones (26 filas en `clasificacion_pendiente`).
+- Data lake histórico anterior a los vigentes actuales.
+- 30 códigos CUBSO sin correspondencia en el catálogo vigente.
 - PAT del trigger: sigue classic; conviene fine-grained.
+- Timeout de `enriquecer_detalle.py` (`57014`) en el count exacto sobre ~78k filas: apareció **una vez** (run 34382975903) y no se reprodujo. Es rendimiento de PostgREST/Postgres, ajeno a fase 6.
+- `auditoria-clasificador/` leía `contratos.categoria_it` y quedó roto tras el DROP. No es producción.
+- **B20:** el `schedule` de GitHub llega con ~4 h de atraso medio; el cron de Cloudflare llega con segundos. El primario es el Worker; el `schedule` es respaldo.
 - B20: schedule GHA atraso medio 4h; cron Cloudflare ~26 s.
 - 30 códigos CUBSO sin aparecer en el catálogo vigente.
 
@@ -576,10 +586,10 @@ Capas 4–5b + verificar_capas en el cron + bug de paginación PostgREST. Detall
 26. **CRITERIOS §3 «la IA busca» no está en código.** No inventar una tabla de precios “para cumplir el criterio” sin dimensionar B15.
 27. **B20 no está cerrado al 100 %.** Un run `workflow_dispatch` (33319218551) prueba el mecanismo, no la serie de horarios. No diseñar B13/B14 encima todavía.
 28. **`GITHUB_PAT` / `TRIGGER_TEST_TOKEN`:** los carga Rolando. Cursor no hace `wrangler secret put` de esos valores.
-29. **`categoria_it` es cascada, no un job único.** La ingesta lee `it_keywords` (C2; fallback `IT_CATS`). C2 fase 4 (`scripts/backfill_categoria.py`) ya aplicó la cascada nueva al corpus histórico (puede desetiquetar). `reclasificar_categoria.py` sigue existiendo pero solo mira ambas columnas NULL y **no** desetiqueta. C1 Gemini **solo** si ambas columnas siguen NULL (no pisa los 54 escritos ni 90331). El incremental **no** re-etiqueta ids viejos. Keywords **no** leen `tdr_texto` / `items_json` / `nom_area_usuaria`.
+29. **`categoria_it` es cascada, no un job único.** La ingesta lee `it_keywords` (C2; fallback `IT_CATS`). C2 fase 4 (`scripts/backfill_categoria.py`) ya aplicó la cascada nueva al corpus histórico (puede desetiquetar). `reclasificar_categoria.py` sigue existiendo pero **post-fase 6 mira «sin fila en `clasificacion_contrato`»** y **no** desetiqueta. C1 Gemini **solo** si el contrato sigue sin fila de clasificación (no pisa los 54 escritos ni 90331). El incremental **no** re-etiqueta ids viejos. Keywords **no** leen `tdr_texto` / `items_json` / `nom_area_usuaria`.
 30. **`clasificar_gemini.py` es C4 semanal** (`clasificacion_semanal.yml`, lun 10:00 Lima). Keywords diarias en `pipeline.yml`. `--proponer` / `--consenso` / `--aplicar`. Consenso ×3 obligatorio. Cupo `clasificacion_cuota.json` (no `flash_ocr_cuota.json`). `ninguna` → NULL. **No** meter Gemini en el diario (~49 min).
 31. **OCR `--solo-ti` exige etiqueta previa.** Keywords diario + C4 reducen el huevo-gallina. `enriquecer_detalle.py` puede pisar `descripcion`. C3: `/keywords` + `clasificacion_pendiente`.
-32. **Admin JWT no UPDATE `categoria_it`.** RLS de `contratos` es SELECT. Correcciones a mano: service role / SQL Editor.
+32. **Admin JWT no UPDATE `categoria_it`.** RLS de `contratos` es SELECT. **Post-fase 6 la columna ni existe en `contratos`**: cualquier corrección va a `clasificacion_contrato` (idealmente `capa='humano'`, que ni keywords ni Gemini pisan). Correcciones a mano: service role / SQL Editor.
 33. **`categoria_it` y `relevancia_ia` son ejes independientes.** 13 categorías TI; solo IA/analytics es «tiene IA». Ruta pide **cualquiera** de las dos. No clasificar preguntando solo «¿tiene IA?».
 34. **Windows cp1252:** prints con `→` u otro no-ASCII revientan el pipeline. ASCII (`->`) o UTF-8 forzado en stdout. Fix: `24a2a3b`.
 
@@ -617,4 +627,4 @@ Capas 4–5b + verificar_capas en el cron + bug de paginación PostgREST. Detall
 
 Endpoints Worker Gemini: `POST /` · `POST /analizar` · `POST /cotizar` · `GET /funnel-pendientes` (FUNNEL_TOKEN) · `GET /admin/stats` (JWT admin) · `POST /embed` → 410.
 
-Fecha snapshot: **5 sep 2026** (Perú).
+Fecha snapshot: **10 sep 2026** (Perú).

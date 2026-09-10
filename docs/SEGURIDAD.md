@@ -73,24 +73,55 @@ actualización en el almacén, no auditoría de uso.
 
 | nombre | tipo | donde | consumidor | multi-lugar | rotable sin downtime? | última vez conocida |
 |---|---|---|---|---|---|---|
-| `GEMINI_API_KEY` | API Google AI | GH `seace-monitor` · CF `seace-ai-proxy` · `.env` local · `.dev.vars` proxy | pipeline OCR/embeddings · Worker chat/analizar/cotizar · scripts locales | **sí (3+)** | sí, con overlap breve | GH 2026-08-17 |
+| `GEMINI_API_KEY` | API Google AI | GH `seace-monitor` · CF `seace-ai-proxy` · `.env` local · `.dev.vars` proxy | pipeline OCR/embeddings · Worker chat/analizar/cotizar · scripts locales | **sí (3+)** | sí, con overlap breve | **rotada 2026-09-10**: GH `02:08:08Z`, CF Secret Change `02:07:36Z` (versión viva `3c9b7b5d`). Copia local **validada** contra `models.list` → HTTP 200 |
 | `SUPABASE_SERVICE_KEY` | JWT `service_role` | GH `seace-monitor` · CF `seace-ai-proxy` · `.env` local | pipeline escritura BD · Worker (analisis/cotizar log/admin perfiles) · scripts | **sí (3)** | **no limpio** (ver §3) | GH 2026-08-15 |
 | `SUPABASE_ANON_KEY` | JWT `anon` (público) | CF `seace-ai-proxy` · `.env` / `.dev.vars` · **hardcode** `seace-web/src/lib/supabase.ts` | Worker lecturas PostgREST · SPA · Auth API | sí (público) | n/a — pública por diseño | bundle web |
 | `SUPABASE_URL` | URL proyecto | GH · CF `[vars]` · `.env` · hardcode web | todos | sí (no secreto fuerte) | sí | GH 2026-08-15 |
 | `DATABASE_URL` | Postgres DSN | `.env` local · **referenciado** en `pipeline.yml` como `secrets.DATABASE_URL` | `run_sql.py`, backfills, scripts DDL | local (+ GH si existe) | sí | local; **no aparece en `gh secret list`** — verificar en UI / crear |
 | `FUNNEL_TOKEN` | token opaco | GH · CF proxy · `.env` · `.dev.vars` | `GET /funnel-pendientes` · `reconciliar_funnel.py` · cron | **sí (3)** | sí (overlap) | GH 2026-08-21 |
 | `ANALIZAR_SERVICE_TOKEN` | token opaco | GH · CF proxy · `.env` | `X-Service-Token` en `/analizar` (pipeline backfill) | **sí (3)** | sí (overlap) | GH 2026-09-06 |
-| `GITHUB_PAT` | PAT GitHub | CF `seace-pipeline-trigger` only | cron/dispatch `pipeline.yml` | no | sí | CF secret |
+| `GITHUB_PAT` | PAT GitHub | CF `seace-pipeline-trigger` only | cron/dispatch `pipeline.yml` | no | sí | CF secret. **Expira 2026-09-29 15:08:52 UTC** (KV `pipeline-trigger:token-expira`, `source=cron`). **Regenerar antes de esa fecha** |
 | `TRIGGER_TEST_TOKEN` | token opaco | CF trigger only | `POST /` de prueba del trigger | no | sí | CF secret |
 | `GITHUB_TOKEN` | token Actions | inyectado por GH Actions | `alerta_g3.py` / `gh` en workflows | efímero | n/a | por run |
 
-**Brecha operativa:** `pipeline.yml` y `clasificacion_semanal.yml`
-referencian `secrets.DATABASE_URL`, pero `gh secret list` en
-`seace-monitor` **no lista** `DATABASE_URL`. DDL/`run_sql.py` en Actions
-siguen necesitando el secret. Los writers de capa 3
+**Brecha operativa (confirmada 2026-09-10):** `pipeline.yml` y
+`clasificacion_semanal.yml` referencian `secrets.DATABASE_URL`, pero
+`gh secret list` en `seace-monitor` **sigue sin listarlo** (lista solo
+`ANALIZAR_SERVICE_TOKEN`, `FUNNEL_TOKEN`, `GEMINI_API_KEY`,
+`SUPABASE_SERVICE_KEY`, `SUPABASE_URL`). En los logs se ve
+`DATABASE_URL:` vacío y `[clasificacion] backend=supabase-py
+(DATABASE_URL ausente; fallback Actions)`. DDL/`run_sql.py` en Actions
+seguirían necesitando el secret. Los writers de capa 3
 (`clasificacion_capa.escribir_keyword` / `escribir_gemini`) **caen a
-supabase-py** con `SUPABASE_SERVICE_KEY` si el DSN falta; el trigger de
-eco sigue disparándose por PostgREST.
+supabase-py** con `SUPABASE_SERVICE_KEY`, camino ejercitado y verde en el
+run 34437994154. **Post-fase 6 ya no hay trigger de eco**, así que el
+fallback escribe directo la única copia de la clasificación.
+
+### Inventario verificado 2026-09-10 (solo nombres, sin valores)
+
+| Almacén | Secretos presentes |
+|---|---|
+| CF `seace-ai-proxy` | `ANALIZAR_SERVICE_TOKEN`, `FUNNEL_TOKEN`, `GEMINI_API_KEY`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_KEY` |
+| CF `seace-pipeline-trigger` | `GITHUB_PAT`, `TRIGGER_TEST_TOKEN` |
+| GH `seace-monitor` | `ANALIZAR_SERVICE_TOKEN`, `FUNNEL_TOKEN`, `GEMINI_API_KEY`, `SUPABASE_SERVICE_KEY`, `SUPABASE_URL` — **falta `DATABASE_URL`** |
+| GH `seace-web` / `seace-ai-proxy` | ninguno (deploy de Pages usa `GITHUB_TOKEN`; el Worker se despliega a mano) |
+| `.env` local monitor | `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SUPABASE_ANON_KEY`, `GEMINI_API_KEY`, `FUNNEL_TOKEN`, `DATABASE_URL`, `ANALIZAR_SERVICE_TOKEN` |
+| `.dev.vars` proxy | `GEMINI_API_KEY`, `SUPABASE_ANON_KEY`, `FUNNEL_TOKEN` |
+
+### Barrido de credenciales en los 4 repos (2026-09-10)
+
+Patrones buscados sobre archivos trackeados y no ignorados: JWT, `sk-`,
+`AIza`, `ghp_`, `github_pat_`, `postgres://usuario:pass@`.
+
+**Un único hallazgo, esperado:** `seace-web/src/lib/supabase.ts:5`, tipo
+JWT. Decodificado solo el claim `role`: **`role=anon`**, `ref=wusywwhcyqngnpvpzxyr`,
+`exp=2036-08-14`. Pública por diseño; RLS es la defensa.
+
+`.env`, `.env.local` y `.dev.vars` están ignorados donde existen
+(`git check-ignore -v` confirmado) y **nunca entraron al historial** de
+ninguno de los 4 repos (`git log --all --name-only`). Nota menor de
+endurecimiento: `seace-monitor` y `seace-web` no ignoran `.dev.vars`
+(no existe en ninguno de los dos; solo importaría si alguien lo creara).
 
 ---
 

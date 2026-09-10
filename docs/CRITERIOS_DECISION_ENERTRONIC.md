@@ -30,7 +30,9 @@ pone su IP y gana mejor margen. El hardware NUNCA se descarta; solo pesa menos.
 
 **Regla:** software (IA/cloud/ML/desarrollo) > hardware, **pero todo se evalúa y todo aparece en el ranking.**
 
-> **Cómo se asigna `categoria_it` (6 sep 2026):** este documento mapea las 13 líneas a Núcleo/Adyacente/Oportunista/Marginal; **no** las etiqueta. `categoria_it` (¿es TI?) y `relevancia_ia` (¿tiene IA?) son ejes **independientes**. Pipeline: (1) keywords desde `it_keywords` en la ingesta; (2) `reclasificar_categoria.py` diario sobre NULL Vigente/En Evaluación; (3) `clasificar_gemini.py` semanal con consenso ×3 sobre vigentes (`clasificacion_semanal.yml`). C3 (cola admin) **no** hecho. Detalle: `ARQUITECTURA_TECNICA.md` §C.
+> **Cómo se asigna `categoria_it` (actualizado 10 sep 2026):** este documento mapea las 13 líneas a Núcleo/Adyacente/Oportunista/Marginal; **no** las etiqueta. `categoria_it` (¿es TI?) y `relevancia_ia` (¿tiene IA?) son ejes **independientes**. Pipeline: (1) keywords desde `it_keywords` en la ingesta; (2) `reclasificar_categoria.py` diario sobre los contratos **sin fila en `clasificacion_contrato`** (Vigente / En Evaluación); (3) `clasificar_gemini.py` semanal con consenso ×3 sobre vigentes (`clasificacion_semanal.yml`). C3 (cola de revisión) **hecho**: tabla `clasificacion_pendiente` + `/keywords` (26 filas: 22 pendientes + 4 observaciones).
+>
+> **Dónde vive la clasificación (fase 6, 2026-09-10):** ya **no** en `contratos`. Esas columnas se dropearon; la fuente única es `clasificacion_contrato`, con `capa` (`keyword` / `gemini` / `cubso` / `humano`), evidencia (`senal`, `senal_fuente`, `keyword_id`, `confianza`, `consenso_n`) y fechas. Para leer, usar `v_contratos`. Detalle: `ARQUITECTURA_DATOS.md` §Fase 6.
 
 ---
 

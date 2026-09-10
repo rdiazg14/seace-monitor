@@ -1,15 +1,43 @@
 # Arquitectura de datos por capas
 
-> **Fase 4 (dual-write) aplicada:** la ingesta no manda `categoria_it` /
+> **Fase 6 (contract) aplicada el 2026-09-10:** `contratos.categoria_it` y
+> `contratos.relevancia_ia` **ya no existen**. La clasificacion vive
+> **unicamente** en `clasificacion_contrato`, con trazabilidad de que capa
+> la produjo, con que evidencia y cuando. El trigger de eco
+> `trg_clasificacion_echo` y su funcion `fn_clasificacion_echo()` fueron
+> eliminados. `contratos` volvio a ser exactamente lo que declara SEACE.
+>
+> **Fase 4 (dual-write), historica:** la ingesta no manda `categoria_it` /
 > `relevancia_ia` en el upsert. Escritores → `clasificacion_contrato`;
-> trigger `trg_clasificacion_echo` copia a `contratos`. Keywords no pisan
+> trigger `trg_clasificacion_echo` copiaba a `contratos` (ya retirado). Keywords no pisan
 > gemini/humano. `--forzar-completa` ya no pisa C1 (guard `SEACE_FORZAR_COMPLETA` retirado).
 
-**Estado:** **Fases 0–5b aplicadas**. Front, Worker y vistas SQL leen `v_contratos` (capa 3). Eco sigue activo. **Fase 6** (DROP): **no** antes del **9 sep ~07:00 Lima** (≥2 días + pipelines OK + `[capas] diff=0` por corrida).
+**Estado:** **Fases 0–6 aplicadas**. El expand-contract está **cerrado**. Front, Worker y vistas SQL leen `v_contratos` (41 columnas, `security_invoker=true`), que proyecta hechos de `contratos` + clasificación de `clasificacion_contrato` vía `LEFT JOIN`.
 
-**Principio:** cada capa escribe solo sus tablas. La ingesta upserta hechos SEACE en `contratos` (sin `categoria_it`/`relevancia_ia`) y, para altas con keyword, escribe capa 3; el eco mantiene `contratos` sincronizado para los lectores.
+**Principio:** cada capa escribe solo sus tablas. La ingesta upserta hechos SEACE en `contratos` (sin clasificación) y, para altas con keyword, escribe capa 3. Ya no hay eco: no hay dos copias que puedan divergir, así que el `diff` dejó de existir como métrica.
 
 **Corpus de referencia (corte previo a este diseño):** ~77 963 contratos; **4 213** con `categoria_it`; ~73 746 con ambas etiquetas NULL.
+
+---
+
+## 0. Estado medido al cierre (2026-09-10)
+
+| Objeto | Valor |
+|---|---|
+| `contratos` | **78 599** (solo datos declarados por SEACE) |
+| `clasificacion_contrato` | **4 595** — keyword **4 536**, gemini **59** |
+| `capa IS NULL` / huérfanos | **0** / **0** |
+| `clasificacion_pendiente` | **26** (22 pendientes + 4 observaciones) |
+| `it_keywords` | **216** activas |
+| `keyword_candidatas` | **119** en estado `nueva` |
+| `cubso_catalogo` | **290 115** items, versión 2026-07-02 |
+| Data lake | **2 061** PDFs, **2,34 GB** |
+| Postulables | **~21–22** (varía con el reloj) |
+| `analisis_contrato` | persistido; lectura BD → KV → Gemini |
+
+### Vuelta atrás (única)
+
+`categoria_it_snapshot_capas_fase6` — **4 593** filas capturadas inmediatamente antes del DROP (`migraciones_datos.nombre='capas_fase6_snapshot'`, aplicada 2026-09-10 03:31:45 UTC). Verificado post-DROP: **0** filas del snapshot ausentes en `clasificacion_contrato` y **0** diferencias de valor. Es la única forma de recrear las columnas si alguna vez hiciera falta.
 
 ---
 
@@ -144,7 +172,7 @@ No se mueven en v1 (siguen en `contratos`): `tdr_texto` (caché para Gemini), `p
 
 ## 4. DDL propuesto
 
-> Fase 0–3: SQL en `docs/capas_fase*.sql` (aplicados). El SQL de esta sección es la referencia; si diverge, gana el archivo en `docs/`. No hace DROP de columnas de `contratos`. Fases 4–6 **no** aplicadas.
+> Fase 0–3: SQL en `docs/capas_fase*.sql` (aplicados). El SQL de esta sección es la referencia; si diverge, gana el archivo en `docs/`. No hace DROP de columnas de `contratos`. **Fases 4–6 aplicadas** (fase 6 el 2026-09-10: `docs/capas_fase6_snapshot.sql` + `docs/capas_fase6_drop.sql`).
 
 Convención RLS (la de prod hoy):
 
@@ -567,7 +595,7 @@ Sugerencias (`Buscador.tsx` ~L117): hoy leen `contratos`; no dependen de etiquet
 
 Observabilidad lee `cotizar_tipo_log` (admin RLS) y stats de pipeline. No depende de las columnas a borrar.
 
-Scripts en `auditoria-clasificador/` leen `contratos.categoria_it`. Siguen funcionando con el eco; el día del DROP hay que JOIN. No es producción.
+Scripts en `auditoria-clasificador/` leen `contratos.categoria_it`. **Post-fase 6 esa columna no existe: quedaron rotos y hay que migrarlos a `v_contratos` o a un JOIN con `clasificacion_contrato`.** No es producción, así que no bloqueó el DROP. [POR-CONFIRMAR] si se usan todavía.
 
 ---
 
@@ -712,19 +740,28 @@ Front puede seguir en `contratos` (eco). Preferible un PR chico: Ruta/Buscador/f
 
 Rollback: restaurar definiciones viejas de vistas (guardar el SQL actual en el PR). Columnas de `contratos` intactas.
 
-### Fase 6 — Contract: DROP en `contratos`
+### Fase 6 — Contract: DROP en `contratos` — **APLICADA 2026-09-10**
 
-Solo si fase 5b lleva ≥2 días de pipeline estable **y** `[capas] diff=0` por corrida. Front y Worker ya leen `v_contratos` (7–8 sep). El eco sigue: hay que migrar lectores del pipeline (reclasificar/gemini/validadores) **el día del DROP**. No antes del **9 sep ~07:00 Lima**.
+SQL: `docs/capas_fase6_snapshot.sql` (marcador `capas_fase6_snapshot`) y `docs/capas_fase6_drop.sql` (marcador `capas_fase6_drop`, aplicada 03:33:37 UTC). Ambos idempotentes y transaccionales; el segundo se corrió dos veces y la segunda fue no-op.
 
-1. Front + Worker leen `v_contratos` / JOIN.
-2. `DROP TRIGGER trg_clasificacion_echo`.
-3. `ALTER TABLE contratos DROP COLUMN categoria_it, DROP COLUMN relevancia_ia`.
-4. `DROP INDEX idx_contratos_catit` (cae con la columna).
-5. `NOTIFY pgrst`.
+Orden que ejecutó el DROP:
 
-**Validar:** las mismas queries de fase 5. 54 C1 siguen en `clasificacion_contrato`.
+1. `DROP TRIGGER trg_clasificacion_echo` + `DROP FUNCTION fn_clasificacion_echo()`.
+2. DROP en orden inverso de dependencias: `v_kpis_conversion_rubro`, `v_kpis_conversion`, `v_kpis_negocio`, `v_kpis_dashboard`, `v_contratos_estado`, `dashboard_resumen`, `vigentes_urgentes`, RPC `buscar_contratos`, `v_contratos`.
+3. `ALTER TABLE contratos DROP COLUMN categoria_it, DROP COLUMN relevancia_ia` (`idx_contratos_catit` cae con la columna).
+4. Recrear las 7 vistas + la RPC, con `security_invoker=true` y `GRANT SELECT` a `anon, authenticated`.
+5. Verificaciones **dentro de la misma transacción**: 0 columnas legacy en `contratos`, `v_contratos` expone las 2 desde `cl`, `v_contratos` tiene 41 columnas, `v_contratos_estado` y `v_kpis_dashboard` devuelven filas.
+6. `NOTIFY pgrst, 'reload schema'`.
 
-**Irreversible sin snapshot.** Reconstruir columnas desde `clasificacion_contrato` + snapshot fase 0 es el plan B (horas, no un botón).
+**Validado post-DROP:** columnas legacy `[]`; snapshot 4 593 filas con **0** ausencias y **0** diferencias; C1 **54/54** con `capa='gemini'`; `capa_null=0`; huérfanos `0`; las 3 vistas con `security_invoker=true`.
+
+**Irreversible sin snapshot.** La única vuelta atrás es `categoria_it_snapshot_capas_fase6` (horas, no un botón).
+
+#### Incidente y lección
+
+El DROP se ejecutó **antes** de pushear la migración de los lectores. Resultado: el run **34434200288** falló con `42703 column contratos.categoria_it does not exist` en 3 steps (`Reclasificar por keywords`, `OCR selectivo`, `Verificar coherencia de capas`). Se corrigió pusheando el código migrado (`e2549fc`); el run **34437994154** pasó completo: 29 steps verdes, 8 G3 en `skipped`, cero errores de columna.
+
+> **Regla para el próximo expand-contract: el código migrado se despliega ANTES del cambio de schema, no después.** El orden correcto es: migrar lectores → push → ≥1 pipeline verde con el código nuevo → snapshot → DROP.
 
 ### Fase 7 — Contract opcional (misma capa 1)
 

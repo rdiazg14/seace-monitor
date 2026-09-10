@@ -29,6 +29,8 @@ Repos: `seace-monitor` · `seace-web` · `seace-ai-proxy` · `seace-pipeline-tri
 | — | Cierre 6 sep | **C4:** keywords diario en pipeline (`reclasificar` 16481→1 en 68s) + Gemini semanal ×3 (universo 264, 4 unánimes, ~USD 0,19; ids 92081/92070/91928/91674); cupo `clasificacion_cuota.json`. **Score enriquecido:** `analisis_contrato` manda; techos califica=no→35 y margen&lt;1000→55; 91688=93, 92065=92, 91696=35; select 37 KiB. **Capas fase 3:** contrato_items 7370 / documentos 3796 (925 con storage). **CUBSO** 2026-07-02: huérfanos 1772→30, BD 290115. **Seguridad:** RLS snapshots; Worker `requireSesion`; SEGURIDAD.md; trigger versionado. **Data lake:** 925 PDFs / 1,04 GB. **Capas fase 4:** dual-write + eco; writers → `clasificacion_contrato`; Actions sin `DATABASE_URL` usan supabase-py | Monitor C4/workflows/capas/CUBSO/seguridad; web `rutaDia.ts`; worker JWT; trigger repo | monitor `916d865`/`d443134`(+fix Actions); web `1ffe8b0`; worker `6e62b74`; trigger `060a215` | **prod** |
 | — | Cierre 7–8 sep | **Capas 4–5b** aplicadas (`v_contratos` 41 cols, `security_invoker`, front+Worker). **Fase 6 no.** Verificar capas en cron. Actions 34184376852: chunker `Con detalle vigente : 1,945` (no techo 1000); `verificar_capas` crasheó (`tdr_texto` no está en `v_contratos_estado`) y disparó G3 #2. Fix: `tdr_*` desde `contratos`. Local supabase-py: `[capas] diff=0 capa_null=0 huerfanos=0 c1=54 sin_chunks=0`. Bug PostgREST `.range()` sin `.order()`: 8 casos; daño vigente+PDF sin chunks = **0**. Vocabulario: extrae núcleo, **no** activado (119→71 tipo B; 9 pasarían umbral) | Monitor `verificar_capas.py`, `chunker_contratos.py`, `vocabulario.py`; web `RutaDia.tsx` | monitor `f2c0e14` `2def0f7` `ea18471` `227f7ef` `c425ba9` `9a75527` `a7f74a1` `d443134`; web `b1ffc2b` `3b946b5`; worker `16c50ff` | **prod** (fase 6 pendiente 9 sep; vocabulario sin auto-activar; `[capas]` en Actions post-fix pendiente) |
 
+| — | Cierre 9–10 sep — **fase 6 / cierre del proyecto** | **Capas fase 6 APLICADA (2026-09-10):** `DROP` de `contratos.categoria_it` y `contratos.relevancia_ia`; la clasificación vive **solo** en `clasificacion_contrato` con trazabilidad de capa/evidencia/fecha. Snapshot previo `capas_fase6_snapshot` **4 593** filas (0 ausencias, 0 diferencias de valor post-DROP). Eco `trg_clasificacion_echo` + `fn_clasificacion_echo()` **eliminados**. 7 vistas + RPC `buscar_contratos` recreadas con `security_invoker=true`; verificaciones dentro de la transacción; SQL idempotente corrido 2× (2ª no-op). **Lectores migrados:** `reclasificar_categoria.py`, `clasificar_gemini.py`, `scripts/backfill_categoria.py`, `scripts/verificar_capas.py`, `descargar_requerimiento.py`, `clasificacion_capa.py`. **`verificar_capas` cambió de formato:** `[capas] sin_clasificar=N capa_null=N c1=N sin_chunks=N` (el `diff` ya no aplica). **Incidente:** el DROP corrió **antes** de pushear la migración → run **34434200288** con `42703` en 3 steps (keywords, OCR, capas). Corregido con `e2549fc`; run **34437994154** verde: 29 steps OK, 8 G3 `skipped`, 0 errores de columna, `[capas] sin_clasificar=74004 capa_null=0 c1=54 sin_chunks=0` (`backend=supabase-py`). **Estado final:** contratos **78 599**, clasificación **4 595** (keyword 4 536 / gemini 59), pendiente **26**, keywords **216** activas, candidatas **119** `nueva`, data lake **2 061** PDFs / **2,34 GB**, CUBSO **290 115** (2026-07-02) | Monitor `clasificacion_capa.py`, `clasificar_gemini.py`, `reclasificar_categoria.py`, `descargar_requerimiento.py`, `scripts/{backfill_categoria,verificar_capas,validar_fase4,probar_eco_fase4}.py`, `docs/capas_fase6_{snapshot,drop}.sql` | monitor `e2549fc` | **prod** (expand-contract cerrado) |
+
 ## Qué no cubren estas iteraciones
 
 Siguen fuera (backlog real; ver TRASPASO §6 cierre 7–8 sep):
@@ -41,8 +43,12 @@ Siguen fuera (backlog real; ver TRASPASO §6 cierre 7–8 sep):
 - Retry de `/analizar` / no cobrar cupo si Gemini falla (el 502 amable **no** tocó el cupo).
 - Caché semántica de `/cotizar` (solo exacta + `esCacheable`).
 - Chat que responda KPIs de la capa semántica.
-- Capas fase 6 (DROP `categoria_it`/`relevancia_ia`); eco sigue. No antes del 9 sep.
-- Activar aprendizaje de vocabulario (código listo, `--dry-run` en el semanal).
-- Vista admin de keywords.
-- Data lake histórico (946 vigentes &gt;90 días).
+- Activar aprendizaje de vocabulario (código listo, `--dry-run` en el semanal; rinde poco con el volumen actual).
+- Data lake histórico anterior a los vigentes actuales.
 - PAT fine-grained del trigger; B20 (atraso GHA); 30 códigos CUBSO huérfanos.
+- Regenerar `GITHUB_PAT` antes del **2026-09-29**.
+- Confirmar `pipeline_trigger_token_expira` en `/admin/stats` con JWT admin (evidencia actual por etag, no directa).
+- Timeout de `enriquecer_detalle.py` con count exacto sobre 78k filas: apareció una vez, no se reprodujo.
+- Migrar `auditoria-clasificador/` a `v_contratos` (leía `contratos.categoria_it`; no es producción).
+
+Cerrado en esta iteración: capas fase 6 (DROP aplicado) y vista admin de keywords.
