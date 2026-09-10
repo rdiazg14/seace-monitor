@@ -3,8 +3,8 @@
 Reclasificacion diaria por keywords (C4, gratis, cero tokens).
 
 Carga it_keywords (misma cascada que backfill_categoria / ingesta) y etiqueta
-contratos Vigente / En Evaluacion que siguen con categoria_it y relevancia_ia
-en NULL. Nunca desetiqueta.
+contratos Vigente / En Evaluacion que NO tienen fila en clasificacion_contrato.
+Nunca desetiqueta.
 
 Motivo: la ingesta solo clasifica ids nuevos. Cada keyword que agregamos deja
 un goteo hasta que alguien re-evalua (caso 92056: 'tablet' valida, quedo NULL).
@@ -47,7 +47,7 @@ BATCH_DB = 100
 PAGE_DB = 1_000
 COLS = (
     "id,descripcion,descripcion_contrato,objeto,entidad,"
-    "categoria_it,relevancia_ia,estado,fecha_fin_cotizacion"
+    "estado,fecha_fin_cotizacion"
 )
 ESTADOS_ACCIONABLES = ("Vigente", "En Evaluación", "En Evaluacion")
 
@@ -103,18 +103,18 @@ def ventana_abierta(row: dict, now: datetime) -> bool:
 
 
 def paginar_nulls(supa, limit: int) -> list[dict]:
-    """NULL en ambas columnas, solo Vigente / En Evaluacion. limit=0 → todos."""
+    """Sin fila en clasificacion_contrato, solo Vigente / En Evaluacion. limit=0 → todos."""
     out: list[dict] = []
     offset = 0
+    select = f"{COLS},clasificacion_contrato(contrato_id,categoria_it,relevancia_ia)"
     while True:
         take = PAGE_DB if not limit else min(PAGE_DB, limit - len(out))
         if take <= 0:
             break
         res = (
             supa.table("contratos")
-            .select(COLS)
-            .is_("categoria_it", "null")
-            .is_("relevancia_ia", "null")
+            .select(select)
+            .is_("clasificacion_contrato", "null")
             .in_("estado", list(ESTADOS_ACCIONABLES))
             .order("id")
             .range(offset, offset + take - 1)
@@ -194,7 +194,7 @@ def main() -> int:
           flush=True)
 
     print(
-        "SELECT NULL+NULL AND estado IN Vigente/En Evaluacion...",
+        "SELECT sin clasificacion AND estado IN Vigente/En Evaluacion...",
         flush=True,
     )
     filas = paginar_nulls(supa, args.limit)

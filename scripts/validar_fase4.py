@@ -59,18 +59,17 @@ def main() -> int:
                 f"  {r['contrato_id']} capa={r['capa']} "
                 f"cat={r['categoria_it']} art={r['artefacto']}"
             )
-        # contratos con etiqueta sin fila clasificacion
-        huecos = conn.execute(
+        # fase 6: no hay columnas en contratos; verificar huerfanos
+        huerfanos = conn.execute(
             """
             SELECT count(*)::int AS n
-            FROM contratos c
-            LEFT JOIN clasificacion_contrato cl ON cl.contrato_id = c.id
-            WHERE (c.categoria_it IS NOT NULL OR c.relevancia_ia IS NOT NULL)
-              AND cl.contrato_id IS NULL
+            FROM clasificacion_contrato cl
+            LEFT JOIN contratos c ON c.id = cl.contrato_id
+            WHERE c.id IS NULL
             """
         ).fetchone()["n"]
-        print(f"contratos_con_etiqueta_sin_capa3={huecos}")
-    return 0 if diff == 0 and n_null_capa == 0 and c1 == 54 and huecos == 0 else 1
+        print(f"huerfanos={huerfanos}")
+    return 0 if diff == 0 and n_null_capa == 0 and c1 == 54 and huerfanos == 0 else 1
 
 
 if __name__ == "__main__":

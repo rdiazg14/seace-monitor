@@ -24,6 +24,7 @@ def _env() -> None:
 
 def main() -> int:
     _env()
+    print("INFO: fase 6 elimino el trigger de eco. Este script no aplica.")
     with psycopg.connect(os.environ["DATABASE_URL"], row_factory=dict_row) as conn:
         with conn.cursor() as cur:
             cur.execute(
