@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Coherencia de capas. Read-only. Pensado para Actions (sin DSN).
 
-Imprime: [capas] sin_clasificar=N capa_null=N c1=N sin_chunks=N
-Exit 1 si capa_null > 0 (G3).
+Imprime: [capas] sin_clasificar=N capa_null=N c1=N sin_chunks=N sin_pdf_intento=N
+Exit 1 si capa_null > 0 o sin_pdf_intento > 0 (G3).
 sin_chunks = postulables con PDF/OCR procesado y cero filas en chunks_tdr.
+sin_pdf_intento = postulables con ventana abierta, sin pdf_storage_path y sin
+req_url: nunca se intento la descarga. Antes esa omision no dejaba rastro
+(ingesta_rechazados solo registra fallos, no contratos nunca intentados).
 """
 from __future__ import annotations
 
@@ -95,6 +98,16 @@ WHERE v.es_postulable
 """
 
 
+SQL_SIN_PDF_INTENTO = """
+SELECT count(*)::int AS n
+FROM v_contratos_estado v
+JOIN contratos c ON c.id = v.id
+WHERE v.es_postulable
+  AND c.pdf_storage_path IS NULL
+  AND c.req_url IS NULL
+"""
+
+
 def _pdf_procesado(row: dict) -> bool:
     tdr = (row.get("tdr_texto") or "").strip()
     if tdr:
@@ -107,7 +120,7 @@ def _pdf_procesado(row: dict) -> bool:
     return False
 
 
-def via_pg() -> tuple[int, int, int, int] | None:
+def via_pg() -> tuple[int, int, int, int, int] | None:
     conn = conectar_pg()
     if conn is None:
         return None
@@ -129,7 +142,11 @@ def via_pg() -> tuple[int, int, int, int] | None:
             (IDS_C1,),
         ).fetchone()["n"]
         sin_chunks = conn.execute(SQL_SIN_CHUNKS).fetchone()["n"]
-        return int(sin_clasificar), int(capa_null), int(c1), int(sin_chunks)
+        sin_pdf_intento = conn.execute(SQL_SIN_PDF_INTENTO).fetchone()["n"]
+        return (
+            int(sin_clasificar), int(capa_null), int(c1),
+            int(sin_chunks), int(sin_pdf_intento),
+        )
     finally:
         conn.close()
 
@@ -143,7 +160,7 @@ def _count(supa, table: str, *, extra_select: str = "", extra_filter=None) -> in
     return q.execute().count or 0
 
 
-def via_supa(supa) -> tuple[int, int, int, int]:
+def via_supa(supa) -> tuple[int, int, int, int, int]:
     total_contratos = _count(supa, "contratos")
     total_clasificados = _count(supa, "clasificacion_contrato", extra_select="contrato_id")
     sin_clasificar = total_contratos - total_clasificados
@@ -164,8 +181,8 @@ def via_supa(supa) -> tuple[int, int, int, int]:
     )
     c1 = len(res_c1.data or [])
 
-    # tdr_* no viven en v_contratos_estado (solo flags). Mismo split
-    # que analizar_postulables.cargar_postulables_rest.
+    # tdr_* y pdf_storage_path/req_url no viven en v_contratos_estado (solo
+    # flags). Mismo split que analizar_postulables.cargar_postulables_rest.
     postulables = _paginar(
         supa,
         "v_contratos_estado",
@@ -175,11 +192,15 @@ def via_supa(supa) -> tuple[int, int, int, int]:
     )
     ids_post = [int(r["id"]) for r in postulables]
     con_pdf: set[int] = set()
+    sin_pdf_intento = 0
     for i in range(0, len(ids_post), 80):
         lote = ids_post[i : i + 80]
         res = (
             supa.table("contratos")
-            .select("id,tdr_texto,tdr_n_paginas_ocr,paginas_ocr_hechas")
+            .select(
+                "id,tdr_texto,tdr_n_paginas_ocr,paginas_ocr_hechas,"
+                "pdf_storage_path,req_url"
+            )
             .in_("id", lote)
             .order("id")
             .execute()
@@ -187,6 +208,8 @@ def via_supa(supa) -> tuple[int, int, int, int]:
         for row in res.data or []:
             if _pdf_procesado(row):
                 con_pdf.add(int(row["id"]))
+            if not row.get("pdf_storage_path") and not row.get("req_url"):
+                sin_pdf_intento += 1
     con_chunk: set[int] = set()
     ids_pdf = list(con_pdf)
     for i in range(0, len(ids_pdf), 80):
@@ -208,7 +231,7 @@ def via_supa(supa) -> tuple[int, int, int, int]:
                 break
             offset += PAGE
     sin_chunks = len(con_pdf - con_chunk)
-    return sin_clasificar, capa_null, c1, sin_chunks
+    return sin_clasificar, capa_null, c1, sin_chunks, sin_pdf_intento
 
 
 def _github_token() -> str:
@@ -294,10 +317,11 @@ def main() -> int:
             return 2
         nums = via_supa(supa)
         origen = "supabase-py"
-    sin_clasificar, capa_null, c1, sin_chunks = nums
+    sin_clasificar, capa_null, c1, sin_chunks, sin_pdf_intento = nums
     linea = (
         f"[capas] sin_clasificar={sin_clasificar} "
-        f"capa_null={capa_null} c1={c1} sin_chunks={sin_chunks}"
+        f"capa_null={capa_null} c1={c1} sin_chunks={sin_chunks} "
+        f"sin_pdf_intento={sin_pdf_intento}"
     )
     print(linea, flush=True)
     print(f"[capas] backend={origen}", flush=True)
@@ -320,7 +344,14 @@ def main() -> int:
             f"schedule={_fmt(schedule_h)} h (el cron de GitHub no usa el PAT).",
             flush=True,
         )
-    return 1 if capa_null > 0 or trigger_stale else 0
+    if sin_pdf_intento > 0:
+        print(
+            f"[capas] ALERTA: {sin_pdf_intento} postulable(s) con ventana abierta "
+            f"sin intento de descarga (pdf_storage_path y req_url NULL). "
+            f"El sistema los ve pero no puede analizarlos.",
+            flush=True,
+        )
+    return 1 if capa_null > 0 or trigger_stale or sin_pdf_intento > 0 else 0
 
 
 if __name__ == "__main__":
