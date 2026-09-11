@@ -232,6 +232,17 @@ corpus). Commit `39c32a2`, fila borrada en `e97f844`.
 dentro del contenedor: nombre que contenga `termino`/`tdr`/`referencia`/`eett`,
 desempate por `.pdf` y mayor tamaño.
 
+**Gotcha — `contratos.cotizar` es derivado y queda congelado en la ingesta (11 sep 2026):**
+`cotizar` es un valor **derivado** que SEACE calcula al momento de la consulta:
+equivale a `estado='Vigente' AND fecha_ini_cotizacion <= now() <= fecha_fin_cotizacion`
+(la misma definición que `es_postulable` de `v_contratos_estado`). Se guarda
+congelado en el instante de la ingesta, así que un contrato ingestado antes de
+que abra su ventana queda con `cotizar=false` para siempre. Medido: **1642**
+Vigente con `false`, **114** de ellos con la ventana abierta ahora. **NO usar
+esta columna para decidir postulabilidad**: usar `es_postulable`. Refrescarla
+exigiría re-descargar el listado completo (778 páginas) para recalcular algo ya
+derivable de `estado` + fechas que ya tenemos.
+
 **Clasificación IT (cascada, 6 sep 2026):** `categoria_it` no se pinta a mano. Keywords desde tabla (ingesta + paso diario `reclasificar_categoria.py`) + C1/C4 Gemini con consenso semanal. C3 (cola admin) en `/keywords`.
 
 **Síntoma de la fuga (1 sep):** IT en el Buscador (FTS) y ausente de Ruta del día. Caso **90432** / CM-6-2026-HNSEB. Causa: keywords substring **una vez** en la ingesta. El OCR **no** clasifica (hipótesis descartada). Ruta exige `categoria_it` OR `relevancia_ia` NOT NULL.
