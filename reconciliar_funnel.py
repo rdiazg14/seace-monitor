@@ -108,11 +108,12 @@ def fusionar(payload: dict) -> tuple[list[dict], int, int, int]:
             n_desc += 1
             continue
         cid, fecha = parsed
-        by_id[cid] = {
-            "id": cid,
-            "analizado": True,
-            "fecha_analisis": fecha,
-        }
+        # analizado y cotizado son NOT NULL en contratos (default false).
+        # Si la fila queda sin cotizado, el upsert manda null y Postgres
+        # aborta el lote entero (ON CONFLICT DO UPDATE valida NOT NULL).
+        row = by_id.setdefault(cid, {"id": cid, "analizado": False, "cotizado": False})
+        row["analizado"] = True
+        row["fecha_analisis"] = fecha
         n_a += 1
 
     for raw in payload.get("cotizados") or []:
@@ -129,7 +130,7 @@ def fusionar(payload: dict) -> tuple[list[dict], int, int, int]:
                 f"fecha_cotizacion={fecha})",
                 flush=True,
             )
-        row = by_id.setdefault(cid, {"id": cid})
+        row = by_id.setdefault(cid, {"id": cid, "analizado": False, "cotizado": False})
         row["cotizado"] = True
         row["fecha_cotizacion"] = fecha
         n_c += 1
