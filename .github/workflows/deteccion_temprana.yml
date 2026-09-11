@@ -63,6 +63,17 @@ jobs:
         continue-on-error: true
         run: python enriquecer_detalle.py --limit 150
 
+      # 65% de los contratos IT abren ventana en <2h (mediana 21 min). Sin
+      # este paso el PDF esperaba al diario de las 09:00: hasta 15h visible
+      # sin analizar. --limit 40 es tope de seguridad; el resto lo hace el
+      # diario. Sin OCR: PyMuPDF no gasta Flash ni necesita tope de reloj.
+      - name: PDF nativo (PyMuPDF, sin Flash)
+        id: pdf
+        if: ${{ success() && steps.detalle.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 8
+        run: python descargar_requerimiento.py --solo-nativo --limit 40
+
       - name: G3 deteccion_ingesta
         if: ${{ always() && !cancelled() && steps.ingesta.outcome == 'failure' }}
         env:
@@ -74,3 +85,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python alerta_g3.py --paso deteccion_detalle --job-status failure
+
+      - name: G3 deteccion_pdf
+        if: ${{ always() && !cancelled() && steps.pdf.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python alerta_g3.py --paso deteccion_pdf --job-status failure
