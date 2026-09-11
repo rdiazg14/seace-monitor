@@ -204,6 +204,34 @@ Orden (`pipeline.yml`):
 
 **G2:** inválidos → `ingesta_rechazados` (`ingesta_rechazados.sql`), no a `contratos`.
 
+**Gotcha — el mime de SEACE no es confiable (11 sep 2026):** SEACE reporta
+`application/octet-stream` para PDFs válidos. **Nunca filtrar anexos por
+`descripcionMime`**: el magic byte del binario (`%PDF`) es la única fuente
+confiable. Medido: **81 de 191** contratos marcados "sin archivo PDF" tenían un
+PDF legible (`%PDF-1.7`); **23 se recuperaron**; el resto eran formatos reales
+(`.rar` 26, `.zip` 20, `.docx` 62). `elegir_pdf` acepta ahora si el mime
+contiene `pdf`, la extensión es `.pdf` o el nombre termina en `.pdf`; la
+validación real la sigue haciendo `_es_pdf` por magic bytes. Cuando el binario
+elegido no es PDF, el rechazo se registra con motivo **"archivo no es PDF"**
+(`NoEsPdf`), distinto de "sin archivo PDF". Commit `39c32a2`. Incidente
+relacionado: `docs/incidente_analisis_degradado.md`.
+
+**Gotcha — el gate de análisis exige TDR real (11 sep 2026):**
+`analizar_postulables.py` aceptaba `n_chunks > 0` sin mirar el origen del chunk.
+Los chunks `fuente='api'` son metadatos de la ficha (descripción + ítem +
+entidad, ~1.2K chars) y **no** habilitan análisis: un contrato sin TDR se
+analizaba con esa ficha y el veredicto declaraba "no consta en el extracto"
+sobre lo que sí constaba en el PDF sin abrir. Ahora `_tiene_texto` exige
+`tdr_texto >= 200` **o** chunks `fuente='pdf'`. Caso medido: 93277 (único en el
+corpus). Commit `39c32a2`, fila borrada en `e97f844`.
+
+**Pendiente — contenedores y ofimática:** los `.rar` (26), `.zip` (20) y `.docx`
+(62) siguen sin procesarse. ZIP y DOCX son puro-Python (`zipfile`,
+`python-docx`); **RAR exige instalar un binario en el runner** (`unrar` /
+`libarchive-tools`; `ubuntu-latest` no lo trae). Heurística propuesta para el TDR
+dentro del contenedor: nombre que contenga `termino`/`tdr`/`referencia`/`eett`,
+desempate por `.pdf` y mayor tamaño.
+
 **Clasificación IT (cascada, 6 sep 2026):** `categoria_it` no se pinta a mano. Keywords desde tabla (ingesta + paso diario `reclasificar_categoria.py`) + C1/C4 Gemini con consenso semanal. C3 (cola admin) en `/keywords`.
 
 **Síntoma de la fuga (1 sep):** IT en el Buscador (FTS) y ausente de Ruta del día. Caso **90432** / CM-6-2026-HNSEB. Causa: keywords substring **una vez** en la ingesta. El OCR **no** clasifica (hipótesis descartada). Ruta exige `categoria_it` OR `relevancia_ia` NOT NULL.

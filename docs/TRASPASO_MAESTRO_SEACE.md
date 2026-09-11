@@ -559,7 +559,7 @@ Capas 4–5b + verificar_capas en el cron + bug de paginación PostgREST. Detall
 ## 7. Gotchas (un chat nuevo no debe malinterpretar)
 
 1. **«Vigente» ≠ ventana de cotización abierta.** G1 copia `idEstadoContrato` del SEACE (2 Vigente / 3 En Evaluación / 4 Culminado). `esPostulable()` exige Vigente **y** ventana Lima. `rankingActivo` **no** recorta (deja vencidos y En Evaluación); el **chip** default sí. No «arreglar» G1 para cerrar por `fecha_fin`.
-2. **422 `/analizar` = TDR &lt; 200 chars**, no `req_url=sin_pdf`. Un sin_pdf **con chunks API** se analiza (p. ej. 83729 → 200). 422 real: ficha sin texto y sin chunks (p. ej. id 42).
+2. **422 `/analizar` = TDR &lt; 200 chars**, no `req_url=sin_pdf`. Un sin_pdf **con chunks API** ya **no** se analiza: el gate exige `tdr_texto >= 200` **o** chunks `fuente='pdf'` (los `fuente='api'` son metadatos de ficha, ~1.2K chars, y producían veredictos que declaraban "no consta" sobre lo que sí constaba en el PDF sin abrir — caso 93277, `docs/incidente_analisis_degradado.md`). 422 real: ficha sin texto y sin chunks (p. ej. id 42).
 3. **Solo un Supabase en código:** `wusywwhcyqngnpvpzxyr`. Otro proyecto inactivo: no tocar. Ref: [por confirmar con Rolando].
 4. **Restos v1 en el Worker:** constante Llama `@cf/meta/llama-3.3-70b-instruct-fp8-fast`, `retrieveContext` 768, `RAG_BACKEND` default **v1 si falta env** (`index.ts` L131–132). Prod fija `v2` en toml. No usar `wrangler rollback` a v1 sin pedido. Fase 7 limpia BD; el bundle v1 se puede borrar después.
 5. **`POST /embed` = 410.** El pipeline **no** embebe por el Worker.
@@ -592,6 +592,9 @@ Capas 4–5b + verificar_capas en el cron + bug de paginación PostgREST. Detall
 32. **Admin JWT no UPDATE `categoria_it`.** RLS de `contratos` es SELECT. **Post-fase 6 la columna ni existe en `contratos`**: cualquier corrección va a `clasificacion_contrato` (idealmente `capa='humano'`, que ni keywords ni Gemini pisan). Correcciones a mano: service role / SQL Editor.
 33. **`categoria_it` y `relevancia_ia` son ejes independientes.** 13 categorías TI; solo IA/analytics es «tiene IA». Ruta pide **cualquiera** de las dos. No clasificar preguntando solo «¿tiene IA?».
 34. **Windows cp1252:** prints con `→` u otro no-ASCII revientan el pipeline. ASCII (`->`) o UTF-8 forzado en stdout. Fix: `24a2a3b`.
+35. **El mime de SEACE no es confiable: nunca filtrar anexos por `descripcionMime`.** SEACE reporta `application/octet-stream` para PDFs válidos; el magic byte del binario (`%PDF`) es la única fuente confiable. Medido: **81 de 191** contratos marcados "sin archivo PDF" tenían un PDF legible; **23 se recuperaron**; el resto eran formatos reales (`.rar` 26, `.zip` 20, `.docx` 62). `elegir_pdf` acepta por mime/extensión/nombre y `_es_pdf` valida el binario. Si el archivo elegido no es PDF, el rechazo va con motivo **"archivo no es PDF"** (`NoEsPdf`), distinto de "sin archivo PDF". Commit `39c32a2`.
+36. **El análisis exige TDR real, no metadatos de ficha.** Los chunks `fuente='api'` (descripción + ítem + entidad, ~1.2K chars) **no** habilitan `/analizar`; solo `tdr_texto >= 200` o chunks `fuente='pdf'`. Un contrato sin TDR se analizaba con la ficha y el veredicto declaraba "no consta" sobre lo que sí constaba en el PDF sin abrir (93277). Commits `39c32a2` / `e97f844`, `docs/incidente_analisis_degradado.md`.
+37. **Pendiente: contenedores y ofimática.** `.rar` (26), `.zip` (20) y `.docx` (62) siguen sin procesarse. ZIP y DOCX son puro-Python (`zipfile`, `python-docx`); **RAR exige instalar un binario en el runner** (`unrar` / `libarchive-tools`; `ubuntu-latest` no lo trae). Heurística para el TDR dentro del contenedor: nombre con `termino`/`tdr`/`referencia`/`eett`, desempate por `.pdf` y mayor tamaño.
 
 ---
 
