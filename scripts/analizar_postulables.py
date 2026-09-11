@@ -8,6 +8,12 @@ Cola: v_contratos_estado.es_postulable + texto + no hay fila con el
 pdf_hash actual y prompt_version. Si SEACE reemplaza el PDF, pdf_hash
 cambia y el análisis viejo no cuenta: vuelve a entrar.
 
+Gate de texto: tdr_texto >= 200 chars, o chunks con fuente='pdf'. Los
+chunks fuente='api' son metadatos de la ficha (descripcion + item +
+entidad, ~1.2K chars) y NO habilitan análisis: producen veredictos que
+declaran "no consta en el extracto" sobre lo que si consta en el TDR sin
+abrir (medido: contrato 93277).
+
   uv run python scripts/analizar_postulables.py --dry-run
   uv run python scripts/analizar_postulables.py --limit 25
 
@@ -42,6 +48,10 @@ _SQL_COLA = """
             SELECT count(*)::int FROM chunks_tdr ch
             WHERE ch.contrato_id = c.id
           ) AS n_chunks,
+          (
+            SELECT count(*)::int FROM chunks_tdr ch
+            WHERE ch.contrato_id = c.id AND ch.fuente = 'pdf'
+          ) AS n_chunks_pdf,
           EXISTS (
             SELECT 1 FROM analisis_contrato a
             WHERE a.contrato_id = c.id
@@ -73,8 +83,15 @@ def _pdf_hash(raw: object) -> str:
     return s or "na"
 
 
-def _tiene_texto(tdr_len: int, n_chunks: int) -> bool:
-    return tdr_len >= 200 or n_chunks > 0
+def _tiene_texto(tdr_len: int, n_chunks_pdf: int) -> bool:
+    """Solo el TDR real habilita el analisis.
+
+    Los chunks fuente='api' son metadatos de la ficha (descripcion + item +
+    entidad). Antes bastaba n_chunks > 0, asi que un contrato sin TDR se
+    analizaba con ~1.2K chars de ficha y el veredicto declaraba "no consta"
+    sobre lo que si constaba en el PDF sin abrir.
+    """
+    return tdr_len >= 200 or n_chunks_pdf > 0
 
 
 def _map_rows(rows: list[tuple]) -> list[dict]:
@@ -82,6 +99,7 @@ def _map_rows(rows: list[tuple]) -> list[dict]:
     for r in rows:
         tdr_len = int(r[4] or 0)
         n_chunks = int(r[5] or 0)
+        n_chunks_pdf = int(r[6] or 0)
         out.append({
             "id": int(r[0]),
             "nro": r[1],
@@ -89,8 +107,9 @@ def _map_rows(rows: list[tuple]) -> list[dict]:
             "pdf_hash": _pdf_hash(r[3]),
             "tdr_len": tdr_len,
             "n_chunks": n_chunks,
-            "ya_en_bd": bool(r[6]),
-            "con_texto": _tiene_texto(tdr_len, n_chunks),
+            "n_chunks_pdf": n_chunks_pdf,
+            "ya_en_bd": bool(r[7]),
+            "con_texto": _tiene_texto(tdr_len, n_chunks_pdf),
         })
     return out
 
@@ -154,20 +173,25 @@ def cargar_postulables_rest(supa) -> list[dict]:
                 _pdf_hash(a.get("pdf_hash"))
             )
         con_chunk: set[int] = set()
+        con_chunk_pdf: set[int] = set()
         ch = (
             supa.table("chunks_tdr")
-            .select("contrato_id")
+            .select("contrato_id,fuente")
             .in_("contrato_id", lote)
             .limit(1000)
             .execute()
         )
         for row in ch.data or []:
-            con_chunk.add(int(row["contrato_id"]))
+            cid_ch = int(row["contrato_id"])
+            con_chunk.add(cid_ch)
+            if (row.get("fuente") or "") == "pdf":
+                con_chunk_pdf.add(cid_ch)
         for c in contratos.data or []:
             cid = int(c["id"])
             tdr = c.get("tdr_texto") or ""
             tdr_len = len(tdr)
             n_chunks = 1 if cid in con_chunk else 0
+            n_chunks_pdf = 1 if cid in con_chunk_pdf else 0
             actual = _pdf_hash(c.get("pdf_hash"))
             by_id[cid] = {
                 "id": cid,
@@ -176,8 +200,9 @@ def cargar_postulables_rest(supa) -> list[dict]:
                 "pdf_hash": actual,
                 "tdr_len": tdr_len,
                 "n_chunks": n_chunks,
+                "n_chunks_pdf": n_chunks_pdf,
                 "ya_en_bd": actual in hashes.get(cid, set()),
-                "con_texto": _tiene_texto(tdr_len, n_chunks),
+                "con_texto": _tiene_texto(tdr_len, n_chunks_pdf),
                 "fin": c.get("fecha_fin_cotizacion") or "",
             }
     ordered = [by_id[i] for i in ids if i in by_id]
@@ -291,8 +316,8 @@ def main() -> int:
     for r in candidatos:
         print(
             f"  {r['id']} nro={r['nro']} tdr={r['tdr_len']} "
-            f"chunks={r['n_chunks']} hash={r['pdf_hash'][:12]} "
-            f"{r['entidad']}",
+            f"chunks={r['n_chunks']} chunks_pdf={r['n_chunks_pdf']} "
+            f"hash={r['pdf_hash'][:12]} {r['entidad']}",
             flush=True,
         )
     if args.dry_run:

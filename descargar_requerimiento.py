@@ -88,6 +88,10 @@ _OCR_NEXT = 0.0
 TEMP_PREFIX = "seace-tdr-"
 PREVIEW_CHARS = 1_500
 MOTIVO_SIN_PDF = "sin archivo PDF"
+# Distinto de MOTIVO_SIN_PDF: aqui SI habia un anexo candidato a PDF y el
+# binario resulto no serlo. Permite separar "no hay PDF" de "hay algo que
+# no es PDF" en ingesta_rechazados.
+MOTIVO_NO_PDF = "archivo no es PDF"
 REQ_PENDIENTE_OCR = "pendiente_ocr"
 META_LOG = Path(__file__).parent / "data" / "tdr_extraccion.jsonl"
 CUOTA_OCR_PATH = Path(__file__).parent / "data" / "flash_ocr_cuota.json"
@@ -109,11 +113,23 @@ _TZ_LIMA = timezone(timedelta(hours=-5))
 
 
 class SinPdf(Exception):
-    """Listado vacio o sin application/pdf. No se reintenta."""
+    """Listado vacio o sin ningun anexo candidato a PDF. No se reintenta."""
 
     def __init__(self, archivos: list):
         super().__init__(MOTIVO_SIN_PDF)
         self.archivos = archivos or []
+
+
+class NoEsPdf(Exception):
+    """Se eligio un anexo candidato a PDF pero el binario no es PDF.
+
+    Caso tipico: un unico anexo mal etiquetado por SEACE (p. ej. un RAR con
+    mime application/octet-stream y nombre enganoso). El motivo es distinto
+    de MOTIVO_SIN_PDF para poder distinguirlo en ingesta_rechazados.
+    """
+
+    def __init__(self, msg: str):
+        super().__init__(f"{MOTIVO_NO_PDF} ({msg})")
 
 
 class PdfExtractError(Exception):
@@ -234,7 +250,7 @@ def contratos_por_ids(supa, ids: list[int]) -> list[dict]:
         supa.table("contratos")
         .select(
             "id,nro_contratacion,descripcion_contrato,entidad,"
-            "fecha_publica,pdf_descargado"
+            "fecha_publica,pdf_descargado,req_url"
         )
         .in_("id", ids)
         .execute()
@@ -262,25 +278,37 @@ def pendientes_pdf(supa, limit: int, modo: str = "todos") -> list[dict]:
     """Vigentes sin PDF, mas recientes primero.
 
     modo:
-      todos  — pdf_descargado false/null
-      nativo — igual, INCLUYE pendiente_ocr (re-extrae nativo por página)
-      ocr    — solo req_url=pendiente_ocr (PASO 3 / Flash)
+      todos       — pdf_descargado false/null
+      nativo      — igual, INCLUYE pendiente_ocr (re-extrae nativo por página)
+      ocr         — solo req_url=pendiente_ocr (PASO 3 / Flash)
+      sin_pdf     — ADEMAS incluye los marcados req_url='sin_pdf' con
+                    pdf_descargado=true. Son los que el filtro por mime
+                    descarto antes; se reevaluan con el criterio nuevo.
     """
     if limit <= 0:
         limit = 10**9
+    reintentar = modo == "sin_pdf"
     out: list[dict] = []
     offset = 0
     while len(out) < limit:
         take = min(PAGE_DB, limit - len(out))
-        res = (
+        q = (
             supa.table("contratos")
             .select(
                 "id,nro_contratacion,descripcion_contrato,entidad,"
                 "fecha_publica,pdf_descargado,req_url,pdf_es_imagen"
             )
             .eq("estado", "Vigente")
-            .or_("pdf_descargado.eq.false,pdf_descargado.is.null")
-            .order("fecha_publica", desc=True, nullsfirst=False)
+        )
+        if reintentar:
+            q = q.or_(
+                "pdf_descargado.eq.false,pdf_descargado.is.null,"
+                "req_url.eq.sin_pdf"
+            )
+        else:
+            q = q.or_("pdf_descargado.eq.false,pdf_descargado.is.null")
+        res = (
+            q.order("fecha_publica", desc=True, nullsfirst=False)
             .order("id", desc=True)
             .range(offset, offset + take - 1)
             .execute()
@@ -334,16 +362,41 @@ def resumen_archivos(archivos: list) -> list[dict]:
     return out
 
 
+def _candidato_pdf(a: dict) -> bool:
+    """True si el anexo PUDO haber sido un PDF, juzgando solo el listado.
+
+    SEACE es poco fiable con descripcionMime: publica PDFs validos como
+    application/octet-stream. Por eso no se descarta por mime; se acepta si
+    CUALQUIERA de estas senales dice pdf, y la verificacion real se hace
+    contra el binario en _es_pdf (magic bytes %PDF).
+    """
+    mime = str(a.get("descripcionMime") or "").lower()
+    if "pdf" in mime:
+        return True
+    ext = str(a.get("descripcionExtension") or "").strip().lower()
+    if ext == ".pdf":
+        return True
+    nombre = str(a.get("nombre") or "").strip().lower()
+    return nombre.endswith(".pdf")
+
+
 def elegir_pdf(archivos: list) -> dict | None:
-    pdfs = [
+    """Elige el anexo a descargar.
+
+    SEACE reporta application/octet-stream para PDFs reales (medido: 81 de
+    191 rechazos "sin archivo PDF" empezaban con %PDF-1.7). Antes se exigia
+    descripcionMime == "application/pdf" exacto y esos PDFs se descartaban
+    antes de descargar. El magic byte del binario (_es_pdf) es la unica
+    fuente confiable; el listado solo sirve para priorizar.
+    """
+    candidatos = [
         a for a in archivos
-        if isinstance(a, dict)
-        and str(a.get("descripcionMime") or "").lower() == "application/pdf"
+        if isinstance(a, dict) and _candidato_pdf(a)
     ]
-    if not pdfs:
+    if not candidatos:
         return None
-    tipo1 = [a for a in pdfs if a.get("idTipoArchivo") == 1]
-    return (tipo1 or pdfs)[0]
+    tipo1 = [a for a in candidatos if a.get("idTipoArchivo") == 1]
+    return (tipo1 or candidatos)[0]
 
 
 def listar_archivos(http: SeaceHttp, cid: int) -> tuple[str, list]:
@@ -373,9 +426,9 @@ def descargar_binario(http: SeaceHttp, url: str, dest: Path) -> None:
     if not body:
         raise RuntimeError("respuesta vacia al descargar PDF")
     if _parece_html(body) or "json" in ctype.lower() or "text/html" in ctype.lower():
-        raise RuntimeError(f"no es PDF (content-type={ctype[:80]} n={len(body)})")
+        raise NoEsPdf(f"no es PDF (content-type={ctype[:80]} n={len(body)})")
     if not _es_pdf(body, ctype):
-        raise RuntimeError(
+        raise NoEsPdf(
             f"binario no es PDF (content-type={ctype[:80]} n={len(body)} "
             f"magic={body[:8]!r})"
         )
@@ -628,7 +681,7 @@ def procesar_contrato(
             "por_pagina": extra["por_pagina"],
         })
         return meta
-    except (PdfExtractError, NecesitaOcr):
+    except (PdfExtractError, NecesitaOcr, NoEsPdf):
         raise
     except Exception as e:
         raise PdfExtractError(str(e), meta) from e
@@ -2221,6 +2274,12 @@ def main() -> None:
         default=OCR_MAX_SEGUNDOS_DEFAULT,
         help="Tope de reloj OCR (0 = sin tope; cupo Flash sigue). Default 7200 = 2h",
     )
+    ap.add_argument(
+        "--reintentar-sin-pdf",
+        action="store_true",
+        help="Incluye en la cola los req_url='sin_pdf' con pdf_descargado=true "
+        "(los descartados antes por el mime de SEACE)",
+    )
     ap.add_argument("--headed", action="store_true",
                     help="Playwright headed (solo si hay fallback 401/403)")
     args = ap.parse_args()
@@ -2239,6 +2298,8 @@ def main() -> None:
     else:
         modo_sel = "todos"
         permitir_ocr = True
+    if args.reintentar_sin_pdf and modo_sel in ("todos", "nativo"):
+        modo_sel = "sin_pdf"
     compacto = args.solo_nativo or args.solo_ocr or args.limit == 0
 
     if not SUPABASE_URL or not SUPABASE_KEY:
@@ -2361,6 +2422,8 @@ def main() -> None:
     skip_ocr = 0
     ocr_paginas_estimadas = 0
     sin_pdf = 0
+    no_pdf = 0
+    reintentados = 0
     err = 0
     t0 = time.time()
     leftovers_antes = {
@@ -2372,6 +2435,8 @@ def main() -> None:
         for i, c in enumerate(filas, 1):
             cid = int(c["id"])
             desc = (c.get("descripcion_contrato") or "")[:50]
+            if (c.get("req_url") or "") == "sin_pdf":
+                reintentados += 1
             try:
                 row = procesar_contrato(
                     http, c, permitir_ocr=permitir_ocr, supa=None if args.dry_run else supa
@@ -2434,6 +2499,20 @@ def main() -> None:
                         MOTIVO_SIN_PDF,
                         origen="pdf",
                     )
+            except NoEsPdf as e:
+                # Habia anexo candidato a PDF y el binario no lo era. No
+                # reintentar (guardar_sin_pdf marca req_url='sin_pdf'), pero
+                # queda registrado con motivo distinto para poder contarlo.
+                no_pdf += 1
+                imprimir_linea(i, len(filas), cid, "NO_PDF", desc)
+                if not args.dry_run:
+                    guardar_sin_pdf(supa, cid)
+                    registrar_rechazo(
+                        supa,
+                        payload_rechazo(c, str(e)[:500]),
+                        MOTIVO_NO_PDF,
+                        origen="pdf",
+                    )
             except PdfExtractError as e:
                 err += 1
                 imprimir_linea(i, len(filas), cid, f"FAIL ({e})", desc)
@@ -2458,13 +2537,13 @@ def main() -> None:
                         str(e),
                         origen="pdf",
                     )
-            if i % 25 == 0:
+            if i % 20 == 0:
                 elapsed = time.time() - t0
                 print(
                     f"  -- progreso {i}/{len(filas)}  "
                     f"puro={n_puro} mixto={n_mixto} imagen={n_imagen} "
                     f"pags_ocr={ocr_paginas_total} sin_pdf={sin_pdf} "
-                    f"err={err} t={elapsed:.0f}s",
+                    f"no_pdf={no_pdf} err={err} t={elapsed:.0f}s",
                     flush=True,
                 )
             time.sleep(DELAY_S)
@@ -2484,7 +2563,8 @@ def main() -> None:
         f"Listo en {elapsed:.0f}s  ok={ok} "
         f"nativo_puro={n_puro} mixto={n_mixto} imagen_total={n_imagen} "
         f"pags_ocr_cola={ocr_paginas_total} "
-        f"sin_pdf={sin_pdf} err={err} dry-run={args.dry_run}",
+        f"sin_pdf={sin_pdf} no_pdf={no_pdf} reintentados={reintentados} "
+        f"err={err} dry-run={args.dry_run}",
         flush=True,
     )
     print(
