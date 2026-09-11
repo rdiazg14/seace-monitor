@@ -236,7 +236,26 @@ jobs:
             NUEVOS=$(grep nuevos_esta_corrida data/ultima_ingesta.txt | cut -d= -f2 || true)
             MOTIVO=$(grep motivo_parada data/ultima_ocr.txt | cut -d= -f2 || true)
             git commit -m "chore(data): pipeline $(date -u '+%Y-%m-%d') — corpus=${TOTAL:-?} nuevos=${NUEVOS:-?} ocr=${MOTIVO:-skip}"
-            git push
+
+            # Otro workflow pudo empujar commits a origin mientras este job corría;
+            # el push directo sería rechazado (non-fast-forward). Rebasea antes.
+            # -X theirs: en rebase, "theirs" = el commit del runner; si hay
+            # conflicto (solo data/), gana la versión recién generada aquí.
+            if ! git pull --rebase -X theirs; then
+              echo "::error::rebase falló tras el commit; revisar data/ en el runner"
+              exit 1
+            fi
+
+            # Reintento único: si el push vuelve a ser rechazado (otro push entró
+            # en el medio), rebasea una vez más y vuelve a intentar.
+            if ! git push; then
+              echo "push rechazado; reintentando tras rebase..."
+              if ! git pull --rebase -X theirs; then
+                echo "::error::rebase de reintento falló"
+                exit 1
+              fi
+              git push
+            fi
           fi
 
       - name: Alerta G3
