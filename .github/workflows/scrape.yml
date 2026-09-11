@@ -60,7 +60,18 @@ jobs:
             echo "Sin cambios en contratos_token.csv"
           else
             git commit -m "chore(data): snapshot token CSV $(date -u '+%Y-%m-%d')"
-            git push
+
+            # Mismo patrón que pipeline.yml: otro workflow pudo empujar commits a
+            # origin en el medio. -X theirs resuelve conflictos a favor del runner.
+            if ! git pull --rebase -X theirs; then
+              echo "::error::rebase falló tras el commit"
+              exit 1
+            fi
+            if ! git push; then
+              echo "push rechazado; reintentando tras rebase..."
+              git pull --rebase -X theirs
+              git push
+            fi
           fi
 
   alerta_prueba:
