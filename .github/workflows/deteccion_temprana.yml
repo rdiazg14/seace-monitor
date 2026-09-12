@@ -6,8 +6,11 @@
 # disparo de las 14:00 UTC alcanzo. Los 78 tienen todo lo que Ruta del dia
 # necesita para rankear (categoria_it por keywords + estado de la ingesta);
 # no necesitan TDR ni embeddings para aparecer.
-# Este workflow NO commitea data/: el parquet/CSV lo mantiene el diario.
-# La fuente de verdad es Supabase.
+# Además de altas + detalle, corre el flujo OCR (páginas imagen, mismo tope
+# del diario) + análisis IA de postulables nuevos: así un contrato nuevo TI
+# queda analizado en ~2h en vez de esperar al diario de las 09:00.
+# Este workflow NO commitea data/: el parquet/CSV y el contador de cuota
+# Flash los mantiene el diario. La fuente de verdad es Supabase.
 name: Deteccion temprana (altas + detalle)
 
 on:
@@ -28,7 +31,7 @@ concurrency:
 jobs:
   deteccion:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     permissions:
       issues: write
       contents: read
@@ -38,6 +41,8 @@ jobs:
       SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       FUNNEL_TOKEN: ${{ secrets.FUNNEL_TOKEN }}
+      ANALIZAR_SERVICE_TOKEN: ${{ secrets.ANALIZAR_SERVICE_TOKEN }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -71,13 +76,37 @@ jobs:
       # 65% de los contratos IT abren ventana en <2h (mediana 21 min). Sin
       # este paso el PDF esperaba al diario de las 09:00: hasta 15h visible
       # sin analizar. --limit 40 es tope de seguridad; el resto lo hace el
-      # diario. Sin OCR: PyMuPDF no gasta Flash ni necesita tope de reloj.
+      # diario. PyMuPDF no gasta Flash; el OCR (Flash) viene después, solo
+      # para las páginas imagen que este paso marca como pendientes.
       - name: PDF nativo (PyMuPDF, sin Flash)
         id: pdf
         if: ${{ success() && steps.detalle.outcome == 'success' }}
         continue-on-error: true
         timeout-minutes: 8
         run: python descargar_requerimiento.py --solo-nativo --limit 40
+
+      # Mismo flujo OCR del diario, tras el nativo: PyMuPDF ya extrajo el texto
+      # de los PDFs de texto; el OCR (Flash) solo procesa las páginas imagen
+      # pendientes. Mismas reglas/topes del diario (--max-segundos 7200,
+      # --rpm 6, --max-ocr-dia 6000). La cola acá es chica (contratos nuevos TI),
+      # así que termina rápido pese al reloj de 2 h.
+      - name: OCR selectivo (TI, páginas imagen)
+        id: ocr
+        if: ${{ success() && steps.pdf.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 30
+        run: python descargar_requerimiento.py --solo-ocr --solo-ti \
+          --max-segundos 7200 --rpm 6 --max-ocr-dia 6000 --limit 0
+
+      # Análisis IA de postulables (mismo script y flag del diario). Idempotente:
+      # solo procesa postulables sin fila previa con el mismo pdf_hash. Con el
+      # TDR recién extraído (nativo + OCR) ya puede analizar sin esperar al diario.
+      - name: Analizar postulables
+        id: analizar
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 15
+        run: python scripts/analizar_postulables.py --limit 25
 
       - name: G3 deteccion_ingesta
         if: ${{ always() && !cancelled() && steps.ingesta.outcome == 'failure' }}
@@ -96,3 +125,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python alerta_g3.py --paso deteccion_pdf --job-status failure
+
+      - name: G3 deteccion_ocr
+        if: ${{ always() && !cancelled() && steps.ocr.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python alerta_g3.py --paso deteccion_ocr --job-status failure
+
+      - name: G3 deteccion_analizar
+        if: ${{ always() && !cancelled() && steps.analizar.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python alerta_g3.py --paso deteccion_analizar --job-status failure
