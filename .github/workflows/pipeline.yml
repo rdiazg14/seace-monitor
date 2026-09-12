@@ -85,6 +85,12 @@ jobs:
         continue-on-error: true
         run: python enriquecer_detalle.py
 
+      - name: Sincronizar contrato_items
+        id: items
+        if: ${{ always() && !cancelled() && github.event.inputs.solo_ocr != 'true' }}
+        continue-on-error: true
+        run: python sincronizar_items.py
+
       - name: G3 detalle
         if: ${{ always() && !cancelled() && github.event.inputs.solo_ocr != 'true' && steps.detalle.outcome == 'failure' }}
         env:
