@@ -74,6 +74,11 @@ jobs:
         if: ${{ github.event.inputs.solo_ocr != 'true' }}
         run: python ingesta_completa.py
 
+      - name: Marcar ingesta
+        if: ${{ success() && github.event.inputs.solo_ocr != 'true' }}
+        continue-on-error: true
+        run: python marcar_ingesta.py
+
       - name: Refresco de estados (G1)
         id: g1
         if: ${{ success() && github.event.inputs.solo_ocr != 'true' }}
