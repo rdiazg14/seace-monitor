@@ -223,6 +223,10 @@ jobs:
           echo "=== ultima_ingesta.txt ==="; cat data/ultima_ingesta.txt || true
           echo "=== ultima_ocr.txt ==="; cat data/ultima_ocr.txt || true
 
+      - name: Marcar corrida en pipeline_estado
+        if: ${{ success() }}
+        run: python marcar_corrida.py
+
       - name: Commit y push de data/
         if: ${{ success() }}
         run: |
