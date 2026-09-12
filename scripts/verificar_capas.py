@@ -107,6 +107,18 @@ WHERE v.es_postulable
   AND c.req_url IS NULL
 """
 
+# Informativo (no falla): contratos con items_json pero sin espejo en
+# contrato_items. > 0 significa que sincronizar_items.py no corrió o falló.
+SQL_ITEMS_DESYNC = """
+SELECT count(*)::int AS n
+FROM contratos c
+WHERE jsonb_typeof(c.items_json) = 'array'
+  AND jsonb_array_length(c.items_json) > 0
+  AND NOT EXISTS (
+    SELECT 1 FROM contrato_items ci WHERE ci.contrato_id = c.id
+  )
+"""
+
 
 def _pdf_procesado(row: dict) -> bool:
     tdr = (row.get("tdr_texto") or "").strip()
@@ -120,7 +132,7 @@ def _pdf_procesado(row: dict) -> bool:
     return False
 
 
-def via_pg() -> tuple[int, int, int, int, int] | None:
+def via_pg() -> tuple[int, int, int, int, int, int] | None:
     conn = conectar_pg()
     if conn is None:
         return None
@@ -143,9 +155,10 @@ def via_pg() -> tuple[int, int, int, int, int] | None:
         ).fetchone()["n"]
         sin_chunks = conn.execute(SQL_SIN_CHUNKS).fetchone()["n"]
         sin_pdf_intento = conn.execute(SQL_SIN_PDF_INTENTO).fetchone()["n"]
+        items_desync = conn.execute(SQL_ITEMS_DESYNC).fetchone()["n"]
         return (
             int(sin_clasificar), int(capa_null), int(c1),
-            int(sin_chunks), int(sin_pdf_intento),
+            int(sin_chunks), int(sin_pdf_intento), int(items_desync),
         )
     finally:
         conn.close()
@@ -160,7 +173,7 @@ def _count(supa, table: str, *, extra_select: str = "", extra_filter=None) -> in
     return q.execute().count or 0
 
 
-def via_supa(supa) -> tuple[int, int, int, int, int]:
+def via_supa(supa) -> tuple[int, int, int, int, int, int | None]:
     total_contratos = _count(supa, "contratos")
     total_clasificados = _count(supa, "clasificacion_contrato", extra_select="contrato_id")
     sin_clasificar = total_contratos - total_clasificados
@@ -231,7 +244,7 @@ def via_supa(supa) -> tuple[int, int, int, int, int]:
                 break
             offset += PAGE
     sin_chunks = len(con_pdf - con_chunk)
-    return sin_clasificar, capa_null, c1, sin_chunks, sin_pdf_intento
+    return sin_clasificar, capa_null, c1, sin_chunks, sin_pdf_intento, None
 
 
 def _github_token() -> str:
@@ -317,11 +330,12 @@ def main() -> int:
             return 2
         nums = via_supa(supa)
         origen = "supabase-py"
-    sin_clasificar, capa_null, c1, sin_chunks, sin_pdf_intento = nums
+    sin_clasificar, capa_null, c1, sin_chunks, sin_pdf_intento, items_desync = nums
     linea = (
         f"[capas] sin_clasificar={sin_clasificar} "
         f"capa_null={capa_null} c1={c1} sin_chunks={sin_chunks} "
-        f"sin_pdf_intento={sin_pdf_intento}"
+        f"sin_pdf_intento={sin_pdf_intento} "
+        f"items_desync={items_desync if items_desync is not None else 'na'}"
     )
     print(linea, flush=True)
     print(f"[capas] backend={origen}", flush=True)
@@ -349,6 +363,13 @@ def main() -> int:
             f"[capas] ALERTA: {sin_pdf_intento} postulable(s) con ventana abierta "
             f"sin intento de descarga (pdf_storage_path y req_url NULL). "
             f"El sistema los ve pero no puede analizarlos.",
+            flush=True,
+        )
+    if items_desync is not None and items_desync > 0:
+        print(
+            f"[capas] aviso: {items_desync} contrato(s) con items_json sin filas "
+            f"en contrato_items (sincronizar_items.py no corrió o falló). "
+            f"El JOIN con cubso_catalogo queda parcial.",
             flush=True,
         )
     return 1 if capa_null > 0 or trigger_stale or sin_pdf_intento > 0 else 0
