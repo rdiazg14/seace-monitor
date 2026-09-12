@@ -16,7 +16,9 @@ name: Deteccion temprana (altas + detalle)
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */2 * * *"  # cada 2h UTC
+    # Cada 2h UTC, salvo las 14:00 UTC (09:00 Lima) que coincide con el diario:
+    # ahí el pipeline completo ya corre OCR + análisis y no queremos solapar.
+    - cron: "0 0,2,4,6,8,10,12,16,18,20,22 * * *"
 
 permissions:
   issues: write
