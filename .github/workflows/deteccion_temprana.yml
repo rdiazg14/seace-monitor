@@ -58,6 +58,11 @@ jobs:
         continue-on-error: true
         run: python ingesta_completa.py
 
+      - name: Marcar ingesta
+        if: ${{ always() && !cancelled() && steps.ingesta.outcome == 'success' }}
+        continue-on-error: true
+        run: python marcar_ingesta.py
+
       - name: Detalle web
         id: detalle
         continue-on-error: true
