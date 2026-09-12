@@ -178,7 +178,7 @@ A/B header vs body (contrato **87164**, 16 ago 2026, `probar_pdf_rag.py`): mean 
 
 Un job diario: altas (keywords desde `it_keywords`) → frescura de estado → detalle web → **reclasificar keywords (NULL Vigente/En Evaluación)** → PDF nativo → OCR acotado → chunk → embed v2. **No** escribe `embedding(768)` ni llama `POST /embed`. Gemini de `categoria_it` **no** va en el yaml diario: vive en `clasificacion_semanal.yml` (C4).
 
-Hay un segundo workflow, `deteccion_temprana.yml`, cron `"0 */2 * * *"`: ingesta + detalle + PDF nativo + OCR selectivo (páginas imagen, mismo tope del diario) + análisis IA de postulables nuevos (`--limit 25`). Sin G1, sin chunking, sin embeddings, sin git push de `data/`. El objetivo: un contrato nuevo TI queda analizado en ~2 h en vez de esperar al diario. Primera corrida: 93 altas que el diario no había visto. Commits `e4f238a`, `666f108` (OCR+análisis: `6d2c20c`).
+Hay un segundo workflow, `deteccion_temprana.yml`, cron `"0 0,2,4,6,8,10,12,16,18,20,22 * * *"` (cada 2 h, salvo las 14:00 UTC que coincide con el diario): ingesta + detalle + **refresh de estado acotado** (`refresh_estados.py --solo-postulables`: solo Vigentes IT/IA postulables o por abrir, ~16 vs ~2061) + PDF nativo + OCR selectivo (páginas imagen, mismo tope del diario) + análisis IA de postulables nuevos (`--limit 25`). Sin G1 completo, sin chunking, sin embeddings, sin git push de `data/`. El objetivo: un contrato nuevo TI queda analizado y con estado fresco en ~2 h en vez de esperar al diario. Commits `e4f238a`, `666f108` (OCR+análisis+refresh acotado).
 
 Tercer workflow: `clasificacion_semanal.yml`, cron `"0 15 * * 1"` (lunes 10:00 Lima): 3× `--proponer --filtro vigentes` + `--consenso` + `--aplicar`. Nunca aplica consenso de menos de 3 corridas. Cupo propio `data/clasificacion_cuota.json` (no toca `flash_ocr_cuota.json`).
 
@@ -506,6 +506,8 @@ CORS expone `X-Analisis-Cache`, `X-Cotizar-Cache`, `X-Cotizar-Intent`. Métodos 
 Backstop de facturación Gemini (~S/10/mes AI Studio): **[por confirmar con Rolando]** — no está en el código.
 
 `clasificar_gemini.py` (C4 semanal) **no** descuenta `flash:` / `analyze:` / `cotizar:` ni escribe `flash_ocr_cuota.json`. Cupo propio `data/clasificacion_cuota.json` (fecha Lima, `--max-llamadas-dia` default 150). Misma API key de AI Studio que OCR/embeddings: el tope de C4 es chico para que el OCR siempre tenga margen. Cupos del Worker: por usuario (JWT), no por IP (CF `46fec43a-6b9a-4ada-af27-df41c68ec3c4` = HEAD `16c50ff`).
+
+**Cuota Flash OCR movida a BD (12 sep 2026):** el contador de gasto OCR dejó de vivir solo en `data/flash_ocr_cuota.json` y ahora es la tabla `pipeline_cuota_ocr` (una fila por `fecha_lima`). Así el diario y la detección temprana comparten el mismo tope sin pisarse por un archivo git que solo commitea el diario. El archivo sigue escribiéndose como respaldo/auditoría local, pero la fuente de verdad es la BD (`cargar_cuota_ocr`/`guardar_cuota_ocr` leen/escriben BD con fallback al archivo). SQL: `docs/pipeline_cuota_ocr.sql`.
 
 ### 502 / JSON inválido de Gemini (contrato 66461, 18 ago 2026)
 

@@ -9,6 +9,7 @@ cada corrida; En Evaluación por lotes rotativos.
 Uso:
   python refresh_estados.py
   python refresh_estados.py --dry-run --limit 30
+  python refresh_estados.py --solo-postulables   # solo Vigentes IT/IA postulables/por abrir
   python refresh_estados.py --gc          # borra chunks de cierres >60d
 """
 from __future__ import annotations
@@ -208,6 +209,40 @@ def gc_cierres_antiguos(supa, dry_run: bool) -> int:
     return borrados
 
 
+def seleccionar_postulables(supa) -> list[dict]:
+    """Refresco acotado: solo Vigentes IT/IA postulables o por abrir.
+
+    Es el universo accionable de Ruta del día (v_contratos_estado). Los demás
+    Vigentes (no-TI, o con ventana lejana) se refrescan en la corrida diaria.
+    Para detección temprana cada 2 h: toca ~15-40 contratos, no los ~1900.
+    """
+    ids: list[int] = []
+    offset = 0
+    while True:
+        res = (
+            supa.table("v_contratos_estado")
+            .select("id")
+            .or_("es_postulable.eq.true,es_por_abrir.eq.true")
+            .order("id")
+            .range(offset, offset + PAGE_DB - 1)
+            .execute()
+        )
+        batch = res.data or []
+        ids.extend(int(r["id"]) for r in batch)
+        if len(batch) < PAGE_DB:
+            break
+        offset += PAGE_DB
+    if not ids:
+        return []
+    out: list[dict] = []
+    cols = "id, estado, estado_verificado_at"
+    for i in range(0, len(ids), 80):
+        lote = ids[i : i + 80]
+        res = supa.table("contratos").select(cols).in_("id", lote).execute()
+        out.extend(res.data or [])
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=0,
@@ -218,6 +253,8 @@ def main():
                     help="Consulta API y loguea; no escribe en BD")
     ap.add_argument("--gc", action="store_true",
                     help="Borra chunks de cierres con estado_verificado_at >60d")
+    ap.add_argument("--solo-postulables", action="store_true",
+                    help="Solo Vigentes IT/IA postulables o por abrir (rápido, detección temprana)")
     ap.add_argument("--headed", action="store_true")
     args = ap.parse_args()
 
@@ -230,11 +267,15 @@ def main():
     print("=" * 60, flush=True)
     print("G1 — Refresco de estados", flush=True)
     print(f"  dry-run={args.dry_run}  gc={args.gc}  "
+          f"solo-postulables={args.solo_postulables}  "
           f"limit={args.limit or 'all'}  max-evaluacion={args.max_evaluacion}",
           flush=True)
     print("=" * 60, flush=True)
 
-    lote = seleccionar_lote(supa, args.max_evaluacion, args.limit)
+    if args.solo_postulables:
+        lote = seleccionar_postulables(supa)
+    else:
+        lote = seleccionar_lote(supa, args.max_evaluacion, args.limit)
     total = len(lote)
     if total == 0:
         print("Nada que refrescar.", flush=True)

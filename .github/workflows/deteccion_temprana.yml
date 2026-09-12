@@ -6,11 +6,13 @@
 # disparo de las 14:00 UTC alcanzo. Los 78 tienen todo lo que Ruta del dia
 # necesita para rankear (categoria_it por keywords + estado de la ingesta);
 # no necesitan TDR ni embeddings para aparecer.
-# Además de altas + detalle, corre el flujo OCR (páginas imagen, mismo tope
-# del diario) + análisis IA de postulables nuevos: así un contrato nuevo TI
-# queda analizado en ~2h en vez de esperar al diario de las 09:00.
-# Este workflow NO commitea data/: el parquet/CSV y el contador de cuota
-# Flash los mantiene el diario. La fuente de verdad es Supabase.
+# Además de altas + detalle, corre refresh de estado acotado (postulables/
+# por abrir TI/IA), OCR (páginas imagen, mismo tope del diario) y análisis IA
+# de postulables nuevos: así un contrato nuevo TI queda analizado y con estado
+# fresco en ~2h en vez de esperar al diario de las 09:00.
+# Este workflow NO commitea data/: el parquet/CSV lo mantiene el diario.
+# La fuente de verdad es Supabase (BD + Storage); el contador de cuota Flash
+# vive en la tabla pipeline_cuota_ocr, compartida con el diario.
 name: Deteccion temprana (altas + detalle)
 
 on:
@@ -75,6 +77,15 @@ jobs:
         continue-on-error: true
         run: python enriquecer_detalle.py --limit 150
 
+      # Refresco acotado de estado: solo Vigentes IT/IA postulables o por abrir
+      # (~15-40), no los ~1900 del diario. Rápido (segundos), para que un
+      # contrato que SEACE ya cerró no siga apareciendo postulable entre diarios.
+      - name: Refresco de estados (acotado)
+        id: g1
+        if: ${{ success() && steps.detalle.outcome == 'success' }}
+        continue-on-error: true
+        run: python refresh_estados.py --solo-postulables
+
       # 65% de los contratos IT abren ventana en <2h (mediana 21 min). Sin
       # este paso el PDF esperaba al diario de las 09:00: hasta 15h visible
       # sin analizar. --limit 40 es tope de seguridad; el resto lo hace el
@@ -121,6 +132,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python alerta_g3.py --paso deteccion_detalle --job-status failure
+
+      - name: G3 deteccion_g1
+        if: ${{ always() && !cancelled() && steps.g1.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python alerta_g3.py --paso deteccion_g1 --job-status failure
 
       - name: G3 deteccion_pdf
         if: ${{ always() && !cancelled() && steps.pdf.outcome == 'failure' }}

@@ -95,6 +95,7 @@ MOTIVO_NO_PDF = "archivo no es PDF"
 REQ_PENDIENTE_OCR = "pendiente_ocr"
 META_LOG = Path(__file__).parent / "data" / "tdr_extraccion.jsonl"
 CUOTA_OCR_PATH = Path(__file__).parent / "data" / "flash_ocr_cuota.json"
+CUOTA_OCR_TABLA = "pipeline_cuota_ocr"
 OCR_LOG = Path(__file__).parent / "data" / "ultima_ocr.txt"
 MIN_SEGUNDOS_CONTRATO = 45
 OCR_MAX_SEGUNDOS_DEFAULT = 7_200
@@ -979,8 +980,30 @@ def usd_de_tokens(prompt: int, out: int) -> float:
     ) * FLASH_USD_OUT_PER_M
 
 
-def cargar_cuota_ocr() -> dict:
+def cargar_cuota_ocr(supa=None) -> dict:
+    """Cuota Flash OCR del día Lima. Fuente de verdad: BD (pipeline_cuota_ocr);
+    fallback al archivo local si no hay cliente o la tabla no responde."""
     hoy = fecha_lima()
+    if supa is not None:
+        try:
+            res = (
+                supa.table(CUOTA_OCR_TABLA)
+                .select("*")
+                .eq("fecha_lima", hoy)
+                .maybe_single()
+                .execute()
+            )
+            row = res.data
+            if row:
+                return {
+                    "fecha": hoy,
+                    "requests": int(row.get("requests") or 0),
+                    "prompt_tokens": int(row.get("prompt_tokens") or 0),
+                    "out_tokens": int(row.get("out_tokens") or 0),
+                    "usd_est": float(row.get("usd_est") or 0.0),
+                }
+        except Exception as e:
+            print(f"  [warn] cargar_cuota_ocr BD: {e}", flush=True)
     if CUOTA_OCR_PATH.exists():
         try:
             d = json.loads(CUOTA_OCR_PATH.read_text(encoding="utf-8"))
@@ -1001,7 +1024,23 @@ def cargar_cuota_ocr() -> dict:
     }
 
 
-def guardar_cuota_ocr(d: dict) -> None:
+def guardar_cuota_ocr(supa, d: dict) -> None:
+    if supa is not None:
+        try:
+            supa.table(CUOTA_OCR_TABLA).upsert(
+                {
+                    "fecha_lima": d["fecha"],
+                    "requests": int(d.get("requests") or 0),
+                    "prompt_tokens": int(d.get("prompt_tokens") or 0),
+                    "out_tokens": int(d.get("out_tokens") or 0),
+                    "usd_est": float(d.get("usd_est") or 0.0),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+                on_conflict="fecha_lima",
+            ).execute()
+        except Exception as e:
+            print(f"  [warn] guardar_cuota_ocr BD: {e}", flush=True)
+    # Respaldo local (auditoría en git vía el diario). No es la fuente de verdad.
     CUOTA_OCR_PATH.parent.mkdir(parents=True, exist_ok=True)
     CUOTA_OCR_PATH.write_text(
         json.dumps(d, ensure_ascii=False, indent=2) + "\n",
@@ -1009,7 +1048,7 @@ def guardar_cuota_ocr(d: dict) -> None:
     )
 
 
-def registrar_ocr_ok(cuota: dict, max_dia: int) -> None:
+def registrar_ocr_ok(supa, cuota: dict, max_dia: int) -> None:
     prompt = int(LAST_OCR_USAGE.get("prompt") or 0)
     out = int(LAST_OCR_USAGE.get("candidates") or 0)
     page_usd = usd_de_tokens(prompt, out)
@@ -1017,7 +1056,7 @@ def registrar_ocr_ok(cuota: dict, max_dia: int) -> None:
     cuota["prompt_tokens"] = int(cuota.get("prompt_tokens") or 0) + prompt
     cuota["out_tokens"] = int(cuota.get("out_tokens") or 0) + out
     cuota["usd_est"] = float(cuota.get("usd_est") or 0) + page_usd
-    guardar_cuota_ocr(cuota)
+    guardar_cuota_ocr(supa, cuota)
     if int(cuota["requests"]) >= max_dia:
         raise CupoFlash(
             f"tope diario {max_dia} Flash (usadas={cuota['requests']})",
@@ -1572,7 +1611,7 @@ def ocr_contrato_selectivo(
                     hechas.append(i)
                 nuevas.append(i)
                 guardar_ocr_progreso(supa, contrato, tdr, pend, hechas)
-                registrar_ocr_ok(cuota, max_dia)
+                registrar_ocr_ok(supa, cuota, max_dia)
     finally:
         borrar_temp(tmp)
 
@@ -1628,7 +1667,7 @@ def run_ocr_selectivo(
     max_segundos: int = OCR_MAX_SEGUNDOS_DEFAULT,
     incluir_por_abrir: bool = False,
 ) -> None:
-    cuota = cargar_cuota_ocr()
+    cuota = cargar_cuota_ocr(supa)
     t0 = time.monotonic()
     exigir_ti = solo_ti and not ids
     print("=" * 60, flush=True)
