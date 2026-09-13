@@ -277,7 +277,8 @@ def cargar_cuota_c4(supa=None) -> dict:
                 .maybe_single()
                 .execute()
             )
-            row = res.data
+            # supabase-py 2.x: maybe_single() devuelve None (no .data) sin fila.
+            row = getattr(res, "data", None)
             if row:
                 return {
                     "fecha": hoy,
