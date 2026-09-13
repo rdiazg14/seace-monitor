@@ -5,7 +5,8 @@ dejo sin fila en clasificacion_contrato.
 
 Cascada: SELECT siempre sin fila en clasificacion_contrato.
 No pisa etiquetas de keywords. No toca relevancia_ia. No escribe
-flash_ocr_cuota.json (cupo propio: data/clasificacion_cuota.json).
+flash_ocr_cuota.json (cupo propio: BD pipeline_cuota_c4; respaldo local en
+data/clasificacion_cuota.json).
 
 C4 semanal (clasificacion_semanal.yml): 3x --proponer + --consenso + --aplicar
 sobre --filtro vigentes (ventana abierta o futura). No va al pipeline diario.
@@ -56,7 +57,9 @@ GEMINI_FLASH = (
 )
 # Cupo C4 propio. La API key es una sola: si C4 agota creditos, el OCR se
 # queda sin TDRs. Tope chico para que el OCR siempre tenga margen.
+# Fuente de verdad: BD (pipeline_cuota_c4); el JSON es solo respaldo local.
 CUOTA_C4_PATH = Path(__file__).parent / "data" / "clasificacion_cuota.json"
+CUOTA_C4_TABLA = "pipeline_cuota_c4"
 MAX_LLAMADAS_DIA_DEFAULT = 150
 EXIT_CUPO_C4 = 8
 _MAX_LLAMADAS_DIA = MAX_LLAMADAS_DIA_DEFAULT
@@ -261,9 +264,30 @@ def set_max_llamadas_dia(n: int) -> None:
     _MAX_LLAMADAS_DIA = max(0, int(n))
 
 
-def cargar_cuota_c4() -> dict:
-    """Mismo patron que flash_ocr_cuota: fecha Lima, reset a medianoche."""
+def cargar_cuota_c4(supa=None) -> dict:
+    """Cupo C4 del día Lima. Fuente de verdad: BD (pipeline_cuota_c4);
+    fallback al archivo local si no hay cliente o la tabla no responde."""
     hoy = fecha_lima()
+    if supa is not None:
+        try:
+            res = (
+                supa.table(CUOTA_C4_TABLA)
+                .select("*")
+                .eq("fecha_lima", hoy)
+                .maybe_single()
+                .execute()
+            )
+            row = res.data
+            if row:
+                return {
+                    "fecha": hoy,
+                    "requests": int(row.get("requests") or 0),
+                    "prompt_tokens": int(row.get("prompt_tokens") or 0),
+                    "candidates_tokens": int(row.get("candidates_tokens") or 0),
+                    "total_tokens": int(row.get("total_tokens") or 0),
+                }
+        except Exception as e:
+            print(f"  [warn] cargar_cuota_c4 BD: {e}", flush=True)
     if CUOTA_C4_PATH.exists():
         try:
             d = json.loads(CUOTA_C4_PATH.read_text(encoding="utf-8"))
@@ -284,7 +308,23 @@ def cargar_cuota_c4() -> dict:
     }
 
 
-def guardar_cuota_c4(d: dict) -> None:
+def guardar_cuota_c4(supa, d: dict) -> None:
+    if supa is not None:
+        try:
+            supa.table(CUOTA_C4_TABLA).upsert(
+                {
+                    "fecha_lima": d["fecha"],
+                    "requests": int(d.get("requests") or 0),
+                    "prompt_tokens": int(d.get("prompt_tokens") or 0),
+                    "candidates_tokens": int(d.get("candidates_tokens") or 0),
+                    "total_tokens": int(d.get("total_tokens") or 0),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+                on_conflict="fecha_lima",
+            ).execute()
+        except Exception as e:
+            print(f"  [warn] guardar_cuota_c4 BD: {e}", flush=True)
+    # Respaldo local (auditoría en git vía el semanal). No es la fuente de verdad.
     CUOTA_C4_PATH.parent.mkdir(parents=True, exist_ok=True)
     CUOTA_C4_PATH.write_text(
         json.dumps(d, ensure_ascii=False, indent=2) + "\n",
@@ -292,9 +332,9 @@ def guardar_cuota_c4(d: dict) -> None:
     )
 
 
-def assert_cuota_c4() -> None:
+def assert_cuota_c4(supa=None) -> None:
     """Antes de llamar Gemini. Exit path: CupoClasificacion → EXIT_CUPO_C4."""
-    cuota = cargar_cuota_c4()
+    cuota = cargar_cuota_c4(supa)
     usados = int(cuota.get("requests") or 0)
     if usados >= _MAX_LLAMADAS_DIA:
         raise CupoClasificacion(
@@ -303,7 +343,7 @@ def assert_cuota_c4() -> None:
         )
 
 
-def registrar_llamada_c4(body: dict) -> None:
+def registrar_llamada_c4(supa, body: dict) -> None:
     """Tras respuesta OK. No toca flash_ocr_cuota.json. No lanza: el tope
     se corta en assert_cuota_c4 de la siguiente llamada."""
     um = body.get("usageMetadata") or {}
@@ -314,7 +354,7 @@ def registrar_llamada_c4(body: dict) -> None:
         except (TypeError, ValueError):
             return 0
 
-    cuota = cargar_cuota_c4()
+    cuota = cargar_cuota_c4(supa)
     cuota["requests"] = int(cuota.get("requests") or 0) + 1
     cuota["prompt_tokens"] = int(cuota.get("prompt_tokens") or 0) + n(
         "promptTokenCount"
@@ -325,7 +365,7 @@ def registrar_llamada_c4(body: dict) -> None:
     cuota["total_tokens"] = int(cuota.get("total_tokens") or 0) + n(
         "totalTokenCount"
     )
-    guardar_cuota_c4(cuota)
+    guardar_cuota_c4(supa, cuota)
     usados = int(cuota["requests"])
     if usados >= _MAX_LLAMADAS_DIA:
         print(
@@ -705,6 +745,7 @@ def clasificar_lote(
     system_prompt: str | None = None,
     schema: dict | None = None,
     armar_prompt=None,
+    supa=None,
 ) -> list[dict]:
     sys_p = SYSTEM_PROMPT if system_prompt is None else system_prompt
     sch = RESPONSE_SCHEMA if schema is None else schema
@@ -727,7 +768,7 @@ def clasificar_lote(
             print(f"    [gemini backoff {wait:.0f}s attempt={attempt}]", flush=True)
             time.sleep(wait)
         try:
-            assert_cuota_c4()
+            assert_cuota_c4(supa)
             r = client.post(
                 GEMINI_URL,
                 headers={
@@ -751,7 +792,7 @@ def clasificar_lote(
             r.raise_for_status()
             body = r.json()
             acumular_tokens(body)
-            registrar_llamada_c4(body)
+            registrar_llamada_c4(supa, body)
             text = extract_gemini_text(body)
             if not text:
                 raise RuntimeError("gemini vacio")
@@ -1226,6 +1267,7 @@ def correr_pasada(
     system_prompt: str,
     schema: dict,
     armar_prompt,
+    supa=None,
 ) -> tuple[dict[int, dict], set[int]]:
     matched_out: dict[int, dict] = {}
     sin: set[int] = set()
@@ -1242,6 +1284,7 @@ def correr_pasada(
                 system_prompt=system_prompt,
                 schema=schema,
                 armar_prompt=armar_prompt,
+                supa=supa,
             )
         except Exception as e:
             print(f"  [lote {etiqueta} fallo] {e}", flush=True)
@@ -1288,6 +1331,7 @@ def comando_proponer(supa, args, filas: list[dict]) -> int:
                     system_prompt=SYSTEM_PROMPT_P1,
                     schema=RESPONSE_SCHEMA_P1,
                     armar_prompt=user_prompt,
+                    supa=supa,
                 )
                 for cid, p in p1_map.items():
                     degradar_p1(p, por_id[cid])
@@ -1317,6 +1361,7 @@ def comando_proponer(supa, args, filas: list[dict]) -> int:
                         system_prompt=SYSTEM_PROMPT_P2,
                         schema=RESPONSE_SCHEMA_P2,
                         armar_prompt=user_prompt_p2,
+                        supa=supa,
                     )
     except CupoClasificacion as e:
         print(f"ERROR cupo C4 (exit {EXIT_CUPO_C4}): {e}", flush=True)
@@ -1814,7 +1859,7 @@ def camino_directo(supa, args, filas: list[dict]) -> int:
             lote = filas[i: i + args.batch]
             num = i // args.batch + 1
             print(f"  lote Gemini {num}/{n_lotes} n={len(lote)}", flush=True)
-            raw = clasificar_lote(client, lote)
+            raw = clasificar_lote(client, lote, supa=supa)
             resultados.extend(aplicar_respuestas(lote, raw))
 
     cats = Counter(cat for _, cat in resultados)
@@ -1894,8 +1939,9 @@ def main() -> int:
         type=int,
         default=MAX_LLAMADAS_DIA_DEFAULT,
         help=(
-            f"Tope diario C4 en data/clasificacion_cuota.json "
-            f"(default {MAX_LLAMADAS_DIA_DEFAULT}; exit {EXIT_CUPO_C4})"
+            f"Tope diario C4 (BD pipeline_cuota_c4; respaldo local "
+            f"data/clasificacion_cuota.json). "
+            f"Default {MAX_LLAMADAS_DIA_DEFAULT}; exit {EXIT_CUPO_C4}"
         ),
     )
     args = ap.parse_args()

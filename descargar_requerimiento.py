@@ -43,6 +43,7 @@ from playwright.sync_api import sync_playwright
 from supabase import create_client
 
 from ingesta_completa import registrar_rechazo
+from pipeline_log import PASO_OCR, PASO_PDF, registrar_run
 
 _env = Path(__file__).parent / ".env"
 if _env.exists():
@@ -1624,7 +1625,8 @@ def ocr_contrato_selectivo(
     }
 
 
-def escribir_ocr_log(stats: dict) -> None:
+def escribir_ocr_log(supa, stats: dict) -> None:
+    registrar_run(supa, PASO_OCR, stats)
     lines = [
         f"ts={datetime.now(timezone.utc).isoformat()}",
         *[f"{k}={v}" for k, v in stats.items()],
@@ -1753,8 +1755,8 @@ def run_ocr_selectivo(
         )
         print(f"  motivo_parada={motivo}  exit=0", flush=True)
         print("=" * 60, flush=True)
-        escribir_ocr_log(stats)
-        escribir_resumen(stats)
+        escribir_ocr_log(supa, stats)
+        escribir_resumen(supa, stats)
 
     if int(cuota["requests"]) >= max_dia:
         print("Tope diario ya alcanzado. Reanudar mañana.", flush=True)
@@ -2208,10 +2210,11 @@ def conteo_pdf(supa) -> dict[str, int]:
     }
 
 
-def escribir_resumen(stats: dict) -> None:
+def escribir_resumen(supa, stats: dict) -> None:
     """Log de corrida: OCR_PAGINAS_TOTAL para vigilar el free tier de Flash."""
     from datetime import datetime, timezone
 
+    registrar_run(supa, PASO_PDF, stats)
     lines = [
         f"ts={datetime.now(timezone.utc).isoformat()}",
         *[f"{k}={v}" for k, v in stats.items()],
@@ -2448,7 +2451,7 @@ def main() -> None:
             for k, v in tipos.items():
                 print(f"  {k}={v}", flush=True)
             extra.update(tipos)
-        escribir_resumen({**counts, **extra, "ok": 0, "modo": modo_sel,
+        escribir_resumen(supa, {**counts, **extra, "ok": 0, "modo": modo_sel,
                           "limit": args.limit, "dry_run": args.dry_run,
                           "elapsed_s": 0})
         return
@@ -2631,7 +2634,7 @@ def main() -> None:
         flush=True,
     )
     print("=" * 60, flush=True)
-    escribir_resumen({
+    escribir_resumen(supa, {
         "modo": modo_sel,
         "ok": ok,
         "nativo_puro_cola": n_puro,

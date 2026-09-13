@@ -30,6 +30,8 @@ import pandas as pd
 from playwright.sync_api import sync_playwright
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
+from pipeline_log import PASO_INGESTA, registrar_run
+
 _env = Path(__file__).parent / ".env"
 if _env.exists():
     for line in _env.read_text(encoding="utf-8").splitlines():
@@ -722,6 +724,16 @@ def main():
                 f"rechazados_esta_corrida=0\n"
                 f"alerta_anomala=1\n"
             )
+        registrar_run(
+            supa,
+            PASO_INGESTA,
+            {
+                "total_registros": 0,
+                "nuevos_esta_corrida": 0,
+                "rechazados_esta_corrida": 0,
+                "alerta_anomala": 1,
+            },
+        )
         sys.exit(1)
 
     # ── 4. Validar (G2) + clasificar ───────────────────────────────────
@@ -815,6 +827,16 @@ def main():
             f"rechazados_esta_corrida={n_rech}\n"
             f"alerta_anomala={alerta_anomala}\n"
         )
+    registrar_run(
+        supa,
+        PASO_INGESTA,
+        {
+            "total_registros": n_total,
+            "nuevos_esta_corrida": len(nuevas_raw),
+            "rechazados_esta_corrida": n_rech,
+            "alerta_anomala": alerta_anomala,
+        },
+    )
     print(f"[log] {ts}")
 
     print("\n===== RESUMEN FINAL =====")
