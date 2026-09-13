@@ -235,6 +235,13 @@ todas las keys del dashboard. **No** la trates como secreto de servidor.
 - **`pipeline_cuota_ocr`** (13 sep): RLS habilitada; lectura/escritura solo
   `service_role` (dato interno de gasto Flash OCR; no se expone al front).
   SQL: `docs/pipeline_cuota_ocr.sql`.
+- **`pipeline_cuota_c4`** (13 sep): RLS habilitada; lectura/escritura solo
+  `service_role` (dato interno de gasto Gemini C4; no se expone al front).
+  SQL: `docs/pipeline_cuota_c4.sql`.
+- **`pipeline_runs`** (13 sep): RLS habilitada; escritura `service_role`,
+  lectura `SELECT` solo `es_admin()` (historial de corridas). Vista
+  `v_pipeline_runs` con `security_invoker=true` hereda la misma regla; sin
+  grant a `anon`. SQL: `docs/pipeline_runs.sql` + `docs/vista_pipeline_runs.sql`.
 - Worker: chat / analizar / cotizar exigen JWT de sesión (o `X-Service-Token`).
 - Secret scanning + push protection: activar en repos **públicos**
   (`seace-monitor`, `seace-web`) → Settings → Code security.

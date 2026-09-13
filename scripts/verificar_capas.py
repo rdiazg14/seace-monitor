@@ -31,6 +31,7 @@ if _ENV.is_file():
             os.environ.setdefault(k.strip(), v.strip())
 
 from clasificacion_capa import conectar_pg  # noqa: E402
+from pipeline_log import PASO_CAPAS, registrar_run  # noqa: E402
 
 IDS_C1 = [
     273, 10353, 11435, 11988, 12399, 20626, 32171, 32378, 34382, 34492,
@@ -323,8 +324,8 @@ def persistir(linea: str) -> None:
 def main() -> int:
     nums = via_pg()
     origen = "psycopg"
+    supa = _init_supa()
     if nums is None:
-        supa = _init_supa()
         if supa is None:
             print("ERROR: falta DATABASE_URL y SUPABASE_SERVICE_KEY", flush=True)
             return 2
@@ -340,6 +341,18 @@ def main() -> int:
     print(linea, flush=True)
     print(f"[capas] backend={origen}", flush=True)
     persistir(linea)
+    registrar_run(
+        supa,
+        PASO_CAPAS,
+        {
+            "sin_clasificar": sin_clasificar,
+            "capa_null": capa_null,
+            "c1": c1,
+            "sin_chunks": sin_chunks,
+            "sin_pdf_intento": sin_pdf_intento,
+            "items_desync": items_desync,
+        },
+    )
 
     dispatch_h = horas_ultimo_run("workflow_dispatch")
     schedule_h = horas_ultimo_run("schedule")

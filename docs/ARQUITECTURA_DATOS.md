@@ -41,6 +41,11 @@
 - **`pipeline_cuota_ocr`** (tabla nueva, una fila por `fecha_lima`): contador de gasto Flash de OCR. Sustituye `data/flash_ocr_cuota.json` como fuente de verdad, para que el diario y la detección temprana compartan el tope sin pisarse por un archivo git. RLS habilitada; escritura/lectura solo service_role (dato interno, no se expone al front). SQL: `docs/pipeline_cuota_ocr.sql`.
 - **`sincronizar_items.py` también en `deteccion_temprana.yml`:** antes solo corría en el diario; la detección temprana enriquecía `items_json` sin espejarlo a `contrato_items` (desync medido **323**, drenado a **0**).
 
+### Adiciones del 13 sep (2026) — cupo C4 e historial de corridas a BD
+
+- **`pipeline_cuota_c4`** (tabla nueva, una fila por `fecha_lima`): contador de gasto Gemini de C4. Sustituye `data/clasificacion_cuota.json` como fuente de verdad (el JSON queda como respaldo/auditoría local, no como fuente). Mismo patrón que `pipeline_cuota_ocr`: `cargar_cuota_c4`/`guardar_cuota_c4` leen/escriben BD con fallback al archivo. RLS habilitada; escritura/lectura solo service_role. SQL: `docs/pipeline_cuota_c4.sql`.
+- **`pipeline_runs`** (tabla nueva, append-only) + **`v_pipeline_runs`** (vista `security_invoker=true`): historial de corridas del pipeline. Reemplaza los logs sobrescritos `data/ultima_ingesta.txt`, `ultima_ocr.txt`, `ultima_pdf.txt` y `ultima_capas.txt` como fuente de análisis histórico (los `.txt` siguen como sidecar). Una fila por corrida con `paso` (`ingesta` | `ocr` | `pdf` | `capas`), `run_id` (`GITHUB_RUN_ID`) y `payload jsonb` con los stats `k=v`. Módulo compartido `pipeline_log.py` (`registrar_run`, fail-soft). Lectura: `SELECT` solo `es_admin()` (no se expone a `anon`). SQL: `docs/pipeline_runs.sql` + `docs/vista_pipeline_runs.sql`.
+
 ### Vuelta atrás (única)
 
 `categoria_it_snapshot_capas_fase6` — **4 593** filas capturadas inmediatamente antes del DROP (`migraciones_datos.nombre='capas_fase6_snapshot'`, aplicada 2026-09-10 03:31:45 UTC). Verificado post-DROP: **0** filas del snapshot ausentes en `clasificacion_contrato` y **0** diferencias de valor. Es la única forma de recrear las columnas si alguna vez hiciera falta.

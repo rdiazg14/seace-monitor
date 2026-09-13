@@ -180,7 +180,7 @@ Un job diario: altas (keywords desde `it_keywords`) → **frescura de estado en 
 
 Hay un segundo workflow, `deteccion_temprana.yml`, cron `"0 0,2,4,6,8,10,12,16,18,20,22 * * *"` (cada 2 h, salvo las 14:00 UTC que coincide con el diario): ingesta + detalle + **sincronizar contrato_items** + **refresh de estado acotado** (`refresh_estados.py --solo-postulables`: solo Vigentes IT/IA postulables o por abrir, ~16 vs ~2061) + PDF nativo + OCR selectivo (páginas imagen, mismo tope del diario) + análisis IA de postulables nuevos (`--limit 25`). Sin G1 completo, sin chunking, sin embeddings, sin git push de `data/`. El objetivo: un contrato nuevo TI queda analizado y con estado fresco en ~2 h en vez de esperar al diario. Commits `e4f238a`, `666f108` (OCR+análisis+refresh acotado) + paso `sincronizar_items` (fix items_desync 12 sep).
 
-Tercer workflow: `clasificacion_semanal.yml`, cron `"0 15 * * 1"` (lunes 10:00 Lima): 3× `--proponer --filtro vigentes` + `--consenso` + `--aplicar`. Nunca aplica consenso de menos de 3 corridas. Cupo propio `data/clasificacion_cuota.json` (no toca `flash_ocr_cuota.json`).
+Tercer workflow: `clasificacion_semanal.yml`, cron `"0 15 * * 1"` (lunes 10:00 Lima): 3× `--proponer --filtro vigentes` + `--consenso` + `--aplicar`. Nunca aplica consenso de menos de 3 corridas. Cupo propio en BD `pipeline_cuota_c4` (respaldo local `data/clasificacion_cuota.json`; no toca `flash_ocr_cuota.json`).
 
 ### Cómo
 
@@ -264,7 +264,7 @@ agregó el paso a `deteccion_temprana.yml` y se drenó a **0** (`items_desync=0`
 1. **Keywords** (`ingesta_completa.py` lee `it_keywords` activa, C2 fase 2). `clasificar_categoria_it(r, cats)`. Única escritura en **altas nuevas**: `preparar_fila_db`. Concatena API `desObjetoContrato`, `desContratacion`, `nomObjetoContrato`, `nomEntidad`. **No** lee `tdr_texto`, `items_json` ni `nom_area_usuaria`. Primera categoría por `prioridad` gana. `tipo=excluye` salta esa categoría y sigue la cascada. `limite_palabra` → `\b...\b`. `tolera_plural` en tabla. `IT_CATS` en código queda como **FALLBACK**. `relevancia_ia` es independiente (`KW_ALTA` / `KW_GENERICOS`).
 2. **Reclasificar diario C4** (`reclasificar_categoria.py` en `pipeline.yml`, post-detalle / pre-OCR): misma cascada `it_keywords`. **Post-fase 6 el universo son los contratos SIN fila en `clasificacion_contrato`** (antes: ambas columnas NULL en `contratos`), restringido a **Vigente** y **En Evaluación**. Nunca desetiqueta. Motivo: la ingesta solo clasifica ids nuevos (caso **92056** `tablet` quedó NULL hasta re-evaluar). Primera corrida medida: **16 481** evaluados, **1** etiquetado, **68 s**.
 3. **Backfill keywords histórico** (`scripts/backfill_categoria.py`, C2 fase 4): cascada de la tabla sobre **todas** las filas; puede **desetiquetar**. No reutiliza `reclasificar_categoria.py`. Snapshot previo `categoria_it_snapshot_c2` (3255 filas). Aplicado: 697 altas, 53 cambios, 222 desetiquetadas. Excluidos: los 54 ids de C1 y **90331**.
-4. **C1 / C4 Gemini** (`clasificar_gemini.py`): `--proponer` / `--consenso` / `--aplicar`. **Post-fase 6 el SELECT es «sin fila en `clasificacion_contrato`»** (antes: `categoria_it IS NULL AND relevancia_ia IS NULL`), y `--aplicar` re-lee la clasificación vigente desde `clasificacion_contrato`, no desde `contratos`. `--filtro vigentes` = Vigente + ventana abierta o futura (postulables y por abrir). `ninguna` → NULL. **No** escribe `relevancia_ia`. **No** toca `flash_ocr_cuota.json`; cupo propio `data/clasificacion_cuota.json` + `--max-llamadas-dia` (default 150, exit 8). Semanal: `clasificacion_semanal.yml` (3 corridas; aborta si &lt;3 OK). Ledger `data/clasificacion_rechazadas.json` + filas `clasificacion_pendiente.estado='rechazada'`. Cola `clasificacion_pendiente` (C3; también se sigue el JSON).
+4. **C1 / C4 Gemini** (`clasificar_gemini.py`): `--proponer` / `--consenso` / `--aplicar`. **Post-fase 6 el SELECT es «sin fila en `clasificacion_contrato`»** (antes: `categoria_it IS NULL AND relevancia_ia IS NULL`), y `--aplicar` re-lee la clasificación vigente desde `clasificacion_contrato`, no desde `contratos`. `--filtro vigentes` = Vigente + ventana abierta o futura (postulables y por abrir). `ninguna` → NULL. **No** escribe `relevancia_ia`. **No** toca `flash_ocr_cuota.json`; cupo propio en BD `pipeline_cuota_c4` + `--max-llamadas-dia` (default 150, exit 8). Semanal: `clasificacion_semanal.yml` (3 corridas; aborta si &lt;3 OK). Ledger `data/clasificacion_rechazadas.json` + filas `clasificacion_pendiente.estado='rechazada'`. Cola `clasificacion_pendiente` (C3; también se sigue el JSON).
 
 **Medición C1 (1802 contratos × 3 corridas):** 54 unánimes escritos, 1738 ninguna estable, 9 inestables (4 son el mismo texto «colector de datos»). `--aplicar`: 54 escritos, 0 descartados por re-SELECT. Commits `6de09f9`, `dd084c2`.
 
@@ -292,7 +292,7 @@ Huevo-gallina OCR: `--solo-ti` exige etiqueta; el paso keywords diario + C4 sema
 | OCR no masivo | **HEREDADA** — cupo Flash vs chat; `--solo-ti` + 2 h en el yaml |
 | `--gc` apagado | **POR-CONFIRMAR** — el flag existe; no está en el workflow. PLAN G1 sí pedía borrar chunks al cerrar |
 | G1 no usa `fecha_fin_cotizacion` para GC | **HEREDADA** — comentario en `refresh_estados.py` L166–172: esa fecha es ventana de cotización, no cierre del contrato. Terminal = `idEstadoContrato` 4 (L45–48, observado 2026-08-16 en el mismo archivo) |
-| Gemini IT **semanal** (no diario) | **MEDIDA** C4 6 sep — 264 contratos, ~USD 0,19, 3× consenso; cupo `clasificacion_cuota.json` separado del OCR |
+| Gemini IT **semanal** (no diario) | **MEDIDA** C4 6 sep — 264 contratos, ~USD 0,19, 3× consenso; cupo C4 en BD `pipeline_cuota_c4` separado del OCR |
 
 ### Alternativas
 
@@ -517,9 +517,11 @@ CORS expone `X-Analisis-Cache`, `X-Cotizar-Cache`, `X-Cotizar-Intent`. Métodos 
 
 Backstop de facturación Gemini (~S/10/mes AI Studio): **[por confirmar con Rolando]** — no está en el código.
 
-`clasificar_gemini.py` (C4 semanal) **no** descuenta `flash:` / `analyze:` / `cotizar:` ni escribe `flash_ocr_cuota.json`. Cupo propio `data/clasificacion_cuota.json` (fecha Lima, `--max-llamadas-dia` default 150). Misma API key de AI Studio que OCR/embeddings: el tope de C4 es chico para que el OCR siempre tenga margen. Cupos del Worker: por usuario (JWT), no por IP (CF `46fec43a-6b9a-4ada-af27-df41c68ec3c4` = HEAD `16c50ff`).
+`clasificar_gemini.py` (C4 semanal) **no** descuenta `flash:` / `analyze:` / `cotizar:` ni escribe `flash_ocr_cuota.json`. Cupo propio en BD `pipeline_cuota_c4` (fecha Lima, `--max-llamadas-dia` default 150; respaldo local `data/clasificacion_cuota.json`). Misma API key de AI Studio que OCR/embeddings: el tope de C4 es chico para que el OCR siempre tenga margen. Cupos del Worker: por usuario (JWT), no por IP (CF `46fec43a-6b9a-4ada-af27-df41c68ec3c4` = HEAD `16c50ff`).
 
 **Cuota Flash OCR movida a BD (12 sep 2026):** el contador de gasto OCR dejó de vivir solo en `data/flash_ocr_cuota.json` y ahora es la tabla `pipeline_cuota_ocr` (una fila por `fecha_lima`). Así el diario y la detección temprana comparten el mismo tope sin pisarse por un archivo git que solo commitea el diario. El archivo sigue escribiéndose como respaldo/auditoría local, pero la fuente de verdad es la BD (`cargar_cuota_ocr`/`guardar_cuota_ocr` leen/escriben BD con fallback al archivo). SQL: `docs/pipeline_cuota_ocr.sql`.
+
+**Cupo C4 e historial de corridas a BD (13 sep 2026):** el cupo Gemini C4 se movió de `data/clasificacion_cuota.json` a la tabla `pipeline_cuota_c4` (mismo patrón que OCR; el JSON queda de respaldo). Además, los logs sobrescritos `data/ultima_{ingesta,ocr,pdf,capas}.txt` ahora se espejan en la tabla append-only `pipeline_runs` vía `pipeline_log.py` (`registrar_run`, fail-soft): una fila por corrida con `paso`, `run_id` y `payload jsonb`. Los `.txt` se conservan como sidecar. Vista de consulta `v_pipeline_runs` (`security_invoker=true`, SELECT solo `es_admin()`). SQL: `docs/pipeline_cuota_c4.sql`, `docs/pipeline_runs.sql`, `docs/vista_pipeline_runs.sql`.
 
 ### 502 / JSON inválido de Gemini (contrato 66461, 18 ago 2026)
 
@@ -760,13 +762,13 @@ Lee claves UTC de hoy: `flash:`, `analyze:`, `cotizar:`, `cotizar_tipo:{texto|ta
 | OCR | vigentes+ventana+TI, 2 h, por página | **HEREDADA** cupo | Más cola imagen | Si 1398 no baja |
 | Clasificación IT | keywords diario (`reclasificar`) + C1/C4 Gemini semanal ×3 + C2 tabla + C3 cola | **MEDIDA** C4 6 sep: 264 / 4 unánimes / ~USD 0,19; keywords 16481→1 | C3 UI | C3 **hecho** 8 sep (`clasificacion_pendiente`, `/keywords`) |
 | C1 | `--proponer` / `--consenso` / `--aplicar`; ledger | **MEDIDA** 54/1802 | — | base del semanal |
-| C4 | `clasificacion_semanal.yml` lun 10:00 Lima; cupo `clasificacion_cuota.json` | **MEDIDA** 6 sep | ajustar tope | no meter Gemini al diario |
+| C4 | `clasificacion_semanal.yml` lun 10:00 Lima; cupo BD `pipeline_cuota_c4` | **MEDIDA** 6 sep | ajustar tope | no meter Gemini al diario |
 | C2 | `it_keywords` + backfill | **MEDIDA** 3–5 sep | vista admin keywords | ruido residual |
 | G1 GC | flag existe, cron **no** lo usa | **POR-CONFIRMAR** | `--gc` | Chunks culminados |
 | Ruta 0–100 | score enriquecido desde `analisis_contrato`; techos 35/55; fallback heurística | **MEDIDA** 6 sep (91688=93, 92065=92, 91696=35) | home = Ruta | sin análisis = heurística |
 | #10 caché | `analyze:id:hash` 3 d | **HEREDADA** (clave) / **POR-DEFECTO** (TTL) | TTL | PDF que cambia seguido |
 | #11 | `/cotizar` self-routing + JWT sesión | **HEREDADA** + seguridad 6 sep | Caché semántica | Tokens |
-| Cupos | prefijos KV + cupo C4 archivo + OCR `pipeline_cuota_ocr` (BD) | **HEREDADA** / **MEDIDA** C4 | KV aparte | no mezclar C4 con OCR |
+| Cupos | prefijos KV + cupo C4 BD `pipeline_cuota_c4` + OCR `pipeline_cuota_ocr` (BD) | **HEREDADA** / **MEDIDA** C4 | KV aparte | no mezclar C4 con OCR |
 | 502 Gemini | `/analizar` 502 estructurado + banner; cupo ANALYZE se cobra | **HEREDADA** | Retry 1× | Si 66461-like se repite |
 | Métricas Dashboard | Vistas SQL + fallback TS; conversión 30d | **HEREDADA** | Materializar KPIs | Timeout `v_kpis_dashboard` |
 | Disparo pipeline | CF Cron → dispatch; GHA respaldo; detección 2h; C4 semanal | **MEDIDA** B20 4h04m / Worker ~26s | Solo schedule GHA | B12 residual 17.5 % |
