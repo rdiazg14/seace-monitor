@@ -3,41 +3,24 @@
 Documento operativo. **Nunca pegues valores de secretos aquí ni en issues/chat.**
 Si sospechás filtración: rotá primero, investigá después.
 
-Estado de repos (sep 2026):
+Estado de repos (13 sep 2026):
 
 | Repo | GitHub | Notas |
 |---|---|---|
 | `seace-monitor` | público | pipeline + scripts |
 | `seace-web` | público | SPA; anon key en bundle |
 | `seace-ai-proxy` | **privado** | Worker chat/analizar/cotizar |
-| `seace-pipeline-trigger` | **no existe remoto** | solo disco local + CF |
+| `seace-pipeline-trigger` | **privado** | `rdiazg14/seace-pipeline-trigger` |
 
 ---
 
-## 1. `seace-pipeline-trigger` sin git
+## 1. `seace-pipeline-trigger` (versionado como repo privado)
 
-**Hecho:** no hay `.git`, no hay `rdiazg14/seace-pipeline-trigger` en GitHub.
+**Hecho (13 sep 2026):** ya versionado como repo **privado**
+`rdiazg14/seace-pipeline-trigger` (`main` `520aff7`), sincronizado con origin.
 El Worker **sí** está en Cloudflare (`crons = ["0 14 * * *"]`) con secrets
-`GITHUB_PAT` y `TRIGGER_TEST_TOKEN`. El código vive solo en la máquina de
-Rolando: si se pierde el disco, no hay fuente para redeploy (salvo el bundle
-ya desplegado en CF, que no es editable como repo).
-
-**Conviene versionarlo** como repo **privado** (no suma minutos de Pages;
-sí cuenta Actions si algún día tiene workflows — hoy no hace falta CI).
-
-Pasos sugeridos para Rolando:
-
-```bash
-cd seace-pipeline-trigger
-git init
-git add .
-# Confirmá que .gitignore cubre .dev.vars, .env, node_modules, .wrangler
-git commit -m "Initial: Worker que dispara pipeline.yml"
-gh repo create seace-pipeline-trigger --private --source=. --remote=origin --push
-```
-
-No hace falta tocar Cloudflare: el Worker ya desplegado sigue; los próximos
-`wrangler deploy` salen del repo.
+`GITHUB_PAT` y `TRIGGER_TEST_TOKEN`. Los próximos `wrangler deploy` salen del
+repo; ya no depende del disco de Rolando como única fuente.
 
 ### PAT mínimo (fine-grained)
 
@@ -249,6 +232,9 @@ todas las keys del dashboard. **No** la trates como secreto de servidor.
 ## 5. Controles ya aplicados (contexto)
 
 - RLS en `migraciones_datos` y snapshots (`docs/sec_rls_faltante.sql`).
+- **`pipeline_cuota_ocr`** (13 sep): RLS habilitada; lectura/escritura solo
+  `service_role` (dato interno de gasto Flash OCR; no se expone al front).
+  SQL: `docs/pipeline_cuota_ocr.sql`.
 - Worker: chat / analizar / cotizar exigen JWT de sesión (o `X-Service-Token`).
 - Secret scanning + push protection: activar en repos **públicos**
   (`seace-monitor`, `seace-web`) → Settings → Code security.

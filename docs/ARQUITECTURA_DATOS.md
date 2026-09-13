@@ -35,6 +35,12 @@
 | Postulables | **~21–22** (varía con el reloj) |
 | `analisis_contrato` | persistido; lectura BD → KV → Gemini |
 
+### Adiciones del cierre 12–13 sep (2026)
+
+- **`contratos.resultado`** (`text`: `'ADJUDICADO'` | `'DESIERTO'` | NULL), `proveedor_ganador`, `ruc_ganador`, `monto_adjudicado`, `resultado_cargado` (bool). Las escribe `capturar_resultado.py` para IT culminados; el desenlace vive a nivel de ÍTEM (`nomEstadoCotiza`, `codRuc`/`nomRazonSocial`/`precioTotal`), no en el estado del contrato. SQL: `docs/resultado_contrato.sql`. Backfill completo: **3 741** IT culminados (2 026 adjudicado / 1 715 desierto).
+- **`pipeline_cuota_ocr`** (tabla nueva, una fila por `fecha_lima`): contador de gasto Flash de OCR. Sustituye `data/flash_ocr_cuota.json` como fuente de verdad, para que el diario y la detección temprana compartan el tope sin pisarse por un archivo git. RLS habilitada; escritura/lectura solo service_role (dato interno, no se expone al front). SQL: `docs/pipeline_cuota_ocr.sql`.
+- **`sincronizar_items.py` también en `deteccion_temprana.yml`:** antes solo corría en el diario; la detección temprana enriquecía `items_json` sin espejarlo a `contrato_items` (desync medido **323**, drenado a **0**).
+
 ### Vuelta atrás (única)
 
 `categoria_it_snapshot_capas_fase6` — **4 593** filas capturadas inmediatamente antes del DROP (`migraciones_datos.nombre='capas_fase6_snapshot'`, aplicada 2026-09-10 03:31:45 UTC). Verificado post-DROP: **0** filas del snapshot ausentes en `clasificacion_contrato` y **0** diferencias de valor. Es la única forma de recrear las columnas si alguna vez hiciera falta.

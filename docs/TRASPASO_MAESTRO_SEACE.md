@@ -1,7 +1,7 @@
 # Traspaso maestro — SEACE Monitor
 
 Contexto completo para retomar el proyecto **sin chat previo**.
-Snapshot: **10 sep 2026** (Perú) — cierre del proyecto, arquitectura por capas completa (fases 0–6). Un solo punto de entrada; el detalle vive en los docs enlazados.
+Snapshot: **13 sep 2026** (Perú) — cierre de etapa: refresco de estado en bloque, captura de resultado (desierto/adjudicado), cuota Flash OCR a BD y detección temprana con IA. Arquitectura por capas completa (fases 0–6). Un solo punto de entrada; el detalle vive en los docs enlazados.
 
 | Doc | Para qué |
 |---|---|
@@ -54,12 +54,12 @@ Al retomar: leé **§6 (cierres hasta 7–8 sep)** + §7 (gotchas) + [CHANGELOG_
 
 ## 1. Mapa de los 4 repos
 
-Hashes de este corte (HEAD `origin/main` al **10 sep 2026**, cierre del proyecto):
+Hashes de este corte (HEAD `origin/main` al **13 sep 2026**, cierre de etapa):
 
 | Repo | GitHub | Visibilidad | Rama | HEAD |
 |---|---|---|---|---|
-| seace-monitor | https://github.com/rdiazg14/seace-monitor | **público** | `main` | `e2549fc` fase 6 (DROP) + `2674966` datos del run verde |
-| seace-web | https://github.com/rdiazg14/seace-web | **público** | `main` | `5eb8a73` (tarjeta de expiración del token) · Pages [34301018030](https://github.com/rdiazg14/seace-web/actions/runs/34301018030) **success**, mismo SHA |
+| seace-monitor | https://github.com/rdiazg14/seace-monitor | **público** | `main` | `2527bce` `capturar_resultado` reconexión + docs cierre 12–13 sep |
+| seace-web | https://github.com/rdiazg14/seace-web | **público** | `main` | `8601d17` (encabezado + `cierraEn` día calendario Lima) · Pages **success**, mismo SHA |
 | seace-ai-proxy | https://github.com/rdiazg14/seace-ai-proxy | **privado** | `main` | `e8e7604` (`adminStats` expone `token-expira`) · CF versión viva `3c9b7b5d` (Secret Change de la rotación de Gemini; **mismo etag de script** que el upload `fa68fe1b`, o sea no revirtió código) |
 | seace-pipeline-trigger | https://github.com/rdiazg14/seace-pipeline-trigger | **privado** | `main` | `520aff7` · CF versión viva `dcfa9287` · Worker `seace-pipeline-trigger.rdiazg14.workers.dev` |
 
@@ -529,6 +529,55 @@ Capas 4–5b + verificar_capas en el cron + bug de paginación PostgREST. Detall
 - **B20:** el `schedule` de GitHub llega con ~4 h de atraso medio; el cron de Cloudflare llega con segundos. El primario es el Worker; el `schedule` es respaldo.
 - B20: schedule GHA atraso medio 4h; cron Cloudflare ~26 s.
 - 30 códigos CUBSO sin aparecer en el catálogo vigente.
+
+### Cierre 12–13 sep 2026
+
+Refresco de estado en bloque + captura de resultado + cuota Flash OCR a BD + detección temprana con IA. Detalle: [ARQUITECTURA_TECNICA.md](./ARQUITECTURA_TECNICA.md) §C; SQL en `docs/resultado_contrato.sql` y `docs/pipeline_cuota_ocr.sql`.
+
+**Refresco de estado en bloque — IMPLEMENTADO** (`refrescar_estados_bloque.py`)
+
+- G1 (`refresh_estados.py`) scrapeaba el detalle (`listar-completo?id=X`) uno por uno: ~6000 requests, ~40 min, solo ~6000 contratos.
+- Verificado: el **listado** (`buscador`) trae los mismos campos de estado que el detalle (`idEstadoContrato` + `nomEstadoContrato`). 0/40 diferencias.
+- `refrescar_estados_bloque.py` relee el listado completo (~826 páginas, 82 574 contratos) y hace UPSERT de `{estado, cotizar, fecha_ini_cotizacion, fecha_fin_cotizacion, estado_verificado_at}`. Medido: **18m26s** (run 34737563230, 04:19:24 → 04:37:50 UTC). Red de seguridad contra deltas: no se escapa ningún contrato nuevo ni cambio de estado.
+- `refresh_estados.py` queda solo para el acotado de 2h (`--solo-postulables`, ~16 contratos) y el `--gc` manual.
+
+**Refresco acotado cada 2h (deteccion_temprana)**
+
+- `--solo-postulables` refresca solo Vigentes IT/IA postulables o por abrir: **16** vs 2061 Vigentes. En segundos. Detecta cierres tempranos entre la corrida diaria y la siguiente.
+
+**Hallazgo de estados (menores ≤ 8 UIT)**
+
+- Solo existen 3 estados en la API: `Vigente` / `En Evaluación` / `Culminado`. **Desierto, Anulado y Adjudicado terminan TODOS como `Culminado` (idEstadoContrato=4)**. `"DESIERTO"` es un rótulo a nivel de ÍTEM, no un estado de contrato.
+- Lo publicado es inmutable: cuando una convocatoria falla, la entidad la cierra temprano y vuelve a publicar como contrato **nuevo** (nuevo id), no edita fechas.
+- Cierres tempranos: **61** Culminado con ventana aún abierta en BD (7 recientes validados contra SEACE). Ejemplos: 93438, 91969, 93406 (republicados como 93442, 93614).
+
+**Captura de resultado — IMPLEMENTADA** (`capturar_resultado.py`)
+
+- El estado no distingue el desenlace; vive a nivel de ÍTEM: `nomEstadoCotiza` (`"DESIERTO"`), `codRuc` / `nomRazonSocial` / `precioTotal` (ganador).
+- Relee el detalle **solo** de IT culminados con `resultado_cargado=false` y guarda: `resultado`, `proveedor_ganador`, `ruc_ganador`, `monto_adjudicado`, `resultado_cargado`. Columnas nuevas (`docs/resultado_contrato.sql`).
+- Universo IT: 4 611 (116 Vigente + 757 En Evaluación + 3 738 Culminado). Backfill completo: **3 741** capturados = **2 026 ADJUDICADO** / **1 715 DESIERTO** / 0 sin resultado (~54/46). `capturar_resultado.py` reconecta a BD si la conexión se corta en runs largos.
+- Ciclo de vida: Culminado queda congelado (TDR/PDF/items/embeddings no se re-descargan); solo recibe el upsert ligero diario del bloque + la captura única de resultado. `--gc` (chunks >60d) **no** corre en cron.
+
+**Cuota Flash OCR a BD — APLICADA** (`docs/pipeline_cuota_ocr.sql`)
+
+- El contador pasó de `data/flash_ocr_cuota.json` a la tabla `pipeline_cuota_ocr` (una fila por `fecha_lima`). Diario y detección temprana comparten el mismo tope sin pisarse por un archivo git que solo commitea el diario. El archivo queda como respaldo local.
+
+**Detección temprana con IA — AMPLIADA**
+
+- Además de altas + detalle, corre OCR selectivo (páginas imagen) y análisis IA de postulables nuevos, con refresco de estado acotado. Un contrato nuevo TI queda analizado en ~2h en vez de esperar al diario.
+- Cron: cada 2h, salvo 14:00 UTC (coincide con el diario).
+
+**Fix items_desync — APLICADO**
+
+- `deteccion_temprana` enriquecía `items_json` (paso "Detalle web", `--limit 150`) pero **no** corría `sincronizar_items.py` (solo el diario). Medido: **323** Vigentes con `items_json` sin filas en `contrato_items` acumulados en el día. Se agregó el paso idempotente a `deteccion_temprana.yml` y se drenó a **0** (`[capas] ... items_desync=0`).
+
+**Pendientes del cierre 12–13 sep**
+
+- Contenedores no-PDF: **72** vigentes (39 docx, 17 zip, 15 rar, 1 doc). Orden costo/beneficio: docx, zip, rar. Medir primero cuántos son IT.
+- Regenerar `GITHUB_PAT` antes del **2026-09-29 15:08 UTC**.
+- `COMMENT ON COLUMN` en `contratos.cotizar` (ahora también lo refresca `refrescar_estados_bloque.py`, pero sigue derivado; no usar para postulabilidad: usar `es_postulable`).
+- Aprendizaje de vocabulario implementado y sin activar.
+- **13** contratos de agosto con `analizado=true` sin payload.
 
 ### Backlog (todo opcional)
 

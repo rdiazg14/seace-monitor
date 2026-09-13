@@ -5,7 +5,7 @@ No sustituye al PLAN: si código y PLAN divergen, se anota aquí.
 
 - Foto de prod (iter. 1–11): [ESTADO_CIERRE_2026-08-29.md](./ESTADO_CIERRE_2026-08-29.md) (histórico 1–9: [ESTADO_CIERRE_2026-08-20.md](./ESTADO_CIERRE_2026-08-20.md))
 - Historia de sprints: [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md)
-- Punto de entrada / bitácora: [TRASPASO_MAESTRO_SEACE.md](./TRASPASO_MAESTRO_SEACE.md) — cierre **30–31 ago**, clasificación **1 sep**, cierre **3–5 sep**, cierre **6 sep 2026** (C4, score, capas, seguridad) y cierre **7–8 sep** (fases 4–5b, verificar_capas, paginación) en §6
+- Punto de entrada / bitácora: [TRASPASO_MAESTRO_SEACE.md](./TRASPASO_MAESTRO_SEACE.md) — cierre **30–31 ago**, clasificación **1 sep**, cierre **3–5 sep**, cierre **6 sep 2026** (C4, score, capas, seguridad), cierre **7–8 sep** (fases 4–5b, verificar_capas, paginación) y cierre **12–13 sep** (refresco en bloque, resultado desierto/adjudicado, cuota OCR a BD, detección con IA) en §6
 
 ---
 
@@ -33,14 +33,14 @@ Cierre: tabla de decisiones · discrepancias vs PLAN · commits
 
 | Pieza | Path | HEAD documentado |
 |---|---|---|
-| Pipeline / SQL / evals | `seace-monitor` | `f2c0e14` (cierre) · `2def0f7` `sin_chunks` · `ea18471` vocabulario · `227f7ef` paginación |
-| Worker Gemini | `seace-ai-proxy` | `16c50ff` (Fase 5b `v_contratos`) · CF `46fec43a-6b9a-4ada-af27-df41c68ec3c4`. JWT: `6e62b74` |
-| Front | `seace-web` | `b1ffc2b` (paginación `ORDER BY` + `v_contratos`) · Pages `https://seace.rdiaz-lab.xyz` |
-| Trigger del cron | `seace-pipeline-trigger` | repo privado `main` `060a215` · Worker `https://seace-pipeline-trigger.rdiazg14.workers.dev` |
+| Pipeline / SQL / evals | `seace-monitor` | `2527bce` (capturar_resultado reconexión) · `refrescar_estados_bloque.py` · `capturar_resultado.py` · cuota OCR a BD |
+| Worker Gemini | `seace-ai-proxy` | `e8e7604` (`adminStats` expone `token-expira`) · CF viva `3c9b7b5d`. JWT: `6e62b74` |
+| Front | `seace-web` | `8601d17` (encabezado + `cierraEn` día calendario Lima) · Pages `https://seace.rdiaz-lab.xyz` |
+| Trigger del cron | `seace-pipeline-trigger` | repo privado `main` `520aff7` · CF viva `dcfa9287` · Worker `https://seace-pipeline-trigger.rdiazg14.workers.dev` |
 
 Worker vivo: `https://seace-ai-proxy.rdiazg14.workers.dev`. Front: `AI_PROXY` = esa URL (`seace-web/src/lib/supabase.ts`).
 
-Fecha de este corte: **8 sep 2026** (Perú). Capas **5b** + verificación en cron + paginación PostgREST. C3 (cola admin) **hecho**. Foto previa: [ESTADO_CIERRE_2026-08-29.md](./ESTADO_CIERRE_2026-08-29.md).
+Fecha de este corte: **13 sep 2026** (Perú). Refresco de estado en bloque + captura de resultado (desierto/adjudicado) + cuota Flash OCR a BD + detección temprana con IA. Foto previa: [ESTADO_CIERRE_2026-08-29.md](./ESTADO_CIERRE_2026-08-29.md).
 
 Etiquetas de «por qué»:
 
@@ -57,7 +57,7 @@ Números de producto en este corte:
 
 | Universo | Magnitud |
 |---|---|
-| Contratos en BD | **76 509** (pipeline 20 ago, commit `dcf0a29`: nuevos=95, OCR=completo) |
+| Contratos en BD | **77 831** (pipeline 13 sep, run 34737563230: nuevos=0, OCR=completo) |
 | Vigentes | ~2 083 (ancla 18 ago; no se re-contó en este cierre) |
 | Chunks con `embedding_v2` | ~9 169 (ancla; backfill PDF `e5f58d6`) |
 | PDF | 679 nativo / 102 mixto / 1 398 imagen / 150 sin_pdf (ancla 18 ago) |
@@ -178,7 +178,7 @@ A/B header vs body (contrato **87164**, 16 ago 2026, `probar_pdf_rag.py`): mean 
 
 Un job diario: altas (keywords desde `it_keywords`) → **frescura de estado en bloque (listado)** → **captura de resultado (Desierto/Adjudicado)** → detalle web → **reclasificar keywords (NULL Vigente/En Evaluación)** → PDF nativo → OCR acotado → chunk → embed v2. **No** escribe `embedding(768)` ni llama `POST /embed`. Gemini de `categoria_it` **no** va en el yaml diario: vive en `clasificacion_semanal.yml` (C4).
 
-Hay un segundo workflow, `deteccion_temprana.yml`, cron `"0 0,2,4,6,8,10,12,16,18,20,22 * * *"` (cada 2 h, salvo las 14:00 UTC que coincide con el diario): ingesta + detalle + **refresh de estado acotado** (`refresh_estados.py --solo-postulables`: solo Vigentes IT/IA postulables o por abrir, ~16 vs ~2061) + PDF nativo + OCR selectivo (páginas imagen, mismo tope del diario) + análisis IA de postulables nuevos (`--limit 25`). Sin G1 completo, sin chunking, sin embeddings, sin git push de `data/`. El objetivo: un contrato nuevo TI queda analizado y con estado fresco en ~2 h en vez de esperar al diario. Commits `e4f238a`, `666f108` (OCR+análisis+refresh acotado).
+Hay un segundo workflow, `deteccion_temprana.yml`, cron `"0 0,2,4,6,8,10,12,16,18,20,22 * * *"` (cada 2 h, salvo las 14:00 UTC que coincide con el diario): ingesta + detalle + **sincronizar contrato_items** + **refresh de estado acotado** (`refresh_estados.py --solo-postulables`: solo Vigentes IT/IA postulables o por abrir, ~16 vs ~2061) + PDF nativo + OCR selectivo (páginas imagen, mismo tope del diario) + análisis IA de postulables nuevos (`--limit 25`). Sin G1 completo, sin chunking, sin embeddings, sin git push de `data/`. El objetivo: un contrato nuevo TI queda analizado y con estado fresco en ~2 h en vez de esperar al diario. Commits `e4f238a`, `666f108` (OCR+análisis+refresh acotado) + paso `sincronizar_items` (fix items_desync 12 sep).
 
 Tercer workflow: `clasificacion_semanal.yml`, cron `"0 15 * * 1"` (lunes 10:00 Lima): 3× `--proponer --filtro vigentes` + `--consenso` + `--aplicar`. Nunca aplica consenso de menos de 3 corridas. Cupo propio `data/clasificacion_cuota.json` (no toca `flash_ocr_cuota.json`).
 
@@ -201,9 +201,9 @@ Orden (`pipeline.yml`):
 | 10 | Funnel | `reconciliar_funnel.py` | `continue-on-error`; GET `/funnel-pendientes`; upsert ISO del KV |
 | 11 | G3 | `alerta_g3.py` por paso si falla + alerta final `always()` | incluye `--paso funnel` / `keywords` |
 
-**Estado en bloque** (`refrescar_estados_bloque.py`): relee el **listado** (`buscador`) completo —no el detalle por contrato— y hace UPSERT de `{id, estado, cotizar, fecha_ini_cotizacion, fecha_fin_cotizacion, estado_verificado_at}` para **todo** el corpus (~82 k, ~826 páginas, ~15 min). Reemplaza el scraping individual de G1 (~6000 requests, ~40 min). También es la red de seguridad contra deltas: al leer el listado completo no se escapa ningún contrato nuevo ni cambio de estado. Verificado que el listado trae el mismo `idEstadoContrato`/`nomEstadoContrato` que el detalle (0/40 diferencias).
+**Estado en bloque** (`refrescar_estados_bloque.py`): relee el **listado** (`buscador`) completo —no el detalle por contrato— y hace UPSERT de `{id, estado, cotizar, fecha_ini_cotizacion, fecha_fin_cotizacion, estado_verificado_at}` para **todo** el corpus (~82 574, ~826 páginas). Medido: **18m26s** (run 34737563230, 04:19:24 → 04:37:50 UTC). Reemplaza el scraping individual de G1 (~6000 requests, ~40 min). También es la red de seguridad contra deltas: al leer el listado completo no se escapa ningún contrato nuevo ni cambio de estado. Verificado que el listado trae el mismo `idEstadoContrato`/`nomEstadoContrato` que el detalle (0/40 diferencias).
 
-**Resultado** (`capturar_resultado.py`): para IT culminados, relee el **detalle** y captura el desenlace, que el estado no distingue. Menores ≤8 UIT solo tiene 3 estados (`Vigente`/`En Evaluación`/`Culminado`); **Desierto, Anulado y Adjudicado terminan todos como `Culminado` (idEstadoContrato=4)**. El desenlace real vive a nivel de ÍTEM: `uitContratoItemProjectionList[].nomEstadoCotiza` (`"DESIERTO"`) y `codRuc`/`nomRazonSocial`/`precioTotal` (ganador). Columnas en `contratos`: `resultado`, `proveedor_ganador`, `ruc_ganador`, `monto_adjudicado`, `resultado_cargado` (SQL: `docs/resultado_contrato.sql`). Para estadísticas de "cuántas veces quedó desierto".
+**Resultado** (`capturar_resultado.py`): para IT culminados, relee el **detalle** y captura el desenlace, que el estado no distingue. Menores ≤8 UIT solo tiene 3 estados (`Vigente`/`En Evaluación`/`Culminado`); **Desierto, Anulado y Adjudicado terminan todos como `Culminado` (idEstadoContrato=4)**. El desenlace real vive a nivel de ÍTEM: `uitContratoItemProjectionList[].nomEstadoCotiza` (`"DESIERTO"`) y `codRuc`/`nomRazonSocial`/`precioTotal` (ganador). Columnas en `contratos`: `resultado`, `proveedor_ganador`, `ruc_ganador`, `monto_adjudicado`, `resultado_cargado` (SQL: `docs/resultado_contrato.sql`). Backfill completo (13 sep): **3 741** IT culminados = **2 026 ADJUDICADO** / **1 715 DESIERTO** / 0 sin resultado (~54/46). Reconecta a BD si la conexión se corta en runs largos (`psycopg.OperationalError`).
 
 **G1 legacy** (`refresh_estados.py`): queda solo para el refresco acotado de 2 h (`--solo-postulables`, ~16 contratos) y el `--gc` manual (borra chunks de cierres &gt;60 días). El scraping individual ya no corre en el diario.
 
@@ -247,6 +247,13 @@ Vigente con `false`, **114** de ellos con la ventana abierta ahora. **NO usar
 esta columna para decidir postulabilidad**: usar `es_postulable`. Refrescarla
 exigiría re-descargar el listado completo (778 páginas) para recalcular algo ya
 derivable de `estado` + fechas que ya tenemos.
+
+**Gotcha — `contrato_items` se desincroniza si la detección temprana no sincroniza (12 sep 2026):**
+`sincronizar_items.py` (DELETE + INSERT idempotente) solo corría en el diario. La
+detección temprana enriquece `items_json` cada 2 h (paso "Detalle web", `--limit
+150`) sin espejarlo a `contrato_items`, así que el desync crecía durante el día.
+Medido: **323** Vigentes con `items_json` sin filas en `contrato_items`. Fix: se
+agregó el paso a `deteccion_temprana.yml` y se drenó a **0** (`items_desync=0`).
 
 **Clasificación IT (cascada, 6 sep 2026):** `categoria_it` no se pinta a mano. Keywords desde tabla (ingesta + paso diario `reclasificar_categoria.py`) + C1/C4 Gemini con consenso semanal. C3 (cola admin) en `/keywords`.
 
@@ -759,7 +766,7 @@ Lee claves UTC de hoy: `flash:`, `analyze:`, `cotizar:`, `cotizar_tipo:{texto|ta
 | Ruta 0–100 | score enriquecido desde `analisis_contrato`; techos 35/55; fallback heurística | **MEDIDA** 6 sep (91688=93, 92065=92, 91696=35) | home = Ruta | sin análisis = heurística |
 | #10 caché | `analyze:id:hash` 3 d | **HEREDADA** (clave) / **POR-DEFECTO** (TTL) | TTL | PDF que cambia seguido |
 | #11 | `/cotizar` self-routing + JWT sesión | **HEREDADA** + seguridad 6 sep | Caché semántica | Tokens |
-| Cupos | prefijos KV + cupo C4 archivo + OCR `flash_ocr_cuota` | **HEREDADA** / **MEDIDA** C4 | KV aparte | no mezclar C4 con OCR |
+| Cupos | prefijos KV + cupo C4 archivo + OCR `pipeline_cuota_ocr` (BD) | **HEREDADA** / **MEDIDA** C4 | KV aparte | no mezclar C4 con OCR |
 | 502 Gemini | `/analizar` 502 estructurado + banner; cupo ANALYZE se cobra | **HEREDADA** | Retry 1× | Si 66461-like se repite |
 | Métricas Dashboard | Vistas SQL + fallback TS; conversión 30d | **HEREDADA** | Materializar KPIs | Timeout `v_kpis_dashboard` |
 | Disparo pipeline | CF Cron → dispatch; GHA respaldo; detección 2h; C4 semanal | **MEDIDA** B20 4h04m / Worker ~26s | Solo schedule GHA | B12 residual 17.5 % |
@@ -785,15 +792,15 @@ Lee claves UTC de hoy: `flash:`, `analyze:`, `cotizar:`, `cotizar_tipo:{texto|ta
 8. **#9 postulabilidad:** criterio de acción diaria **sí** está en el ranking default (`esPostulable` + chip). El universo SQL sigue trayendo En Evaluación; el chip los muestra.  
 9. **CRITERIOS §3 «la IA busca»:** el PLAN/criterio pide precios de mercado; el código **estima a ojo**. B15 (búsqueda web / precios reales) no está dimensionado.
 
-### Commits de referencia (corte 7–8 sep 2026)
+### Commits de referencia (corte 13 sep 2026)
 
 | Repo | HEAD | Qué fija |
 |---|---|---|
-| monitor | `f2c0e14` | Cierre 7–8 sep. `2def0f7` `sin_chunks`. `ea18471` vocabulario. `227f7ef` paginación |
-| worker | `16c50ff` · CF `46fec43a-6b9a-4ada-af27-df41c68ec3c4` | Fase 5b `v_contratos`. JWT: `6e62b74` |
-| web | `b1ffc2b` | Paginación + `v_contratos`. JWT `a7b0023` |
-| trigger | `060a215` (repo privado) | Cron CF → `workflow_dispatch` (B20; ~26s) |
+| monitor | `2527bce` | `capturar_resultado` reconexión. `refrescar_estados_bloque.py`, `capturar_resultado.py`, cuota OCR a BD, `sincronizar_items` en detección temprana |
+| worker | `e8e7604` · CF `3c9b7b5d` | `adminStats` expone `token-expira`. JWT: `6e62b74` |
+| web | `8601d17` | Encabezado + `cierraEn` día calendario Lima |
+| trigger | `520aff7` (repo privado) · CF `dcfa9287` | `leerExpiracionToken`. Cron CF → `workflow_dispatch` (B20; ~26s) |
 
 Iteraciones: [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md). Cierres: [TRASPASO_MAESTRO_SEACE.md](./TRASPASO_MAESTRO_SEACE.md) §6.
 
-Snapshot: **5 sep 2026** (Perú).
+Snapshot: **13 sep 2026** (Perú).
