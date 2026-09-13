@@ -250,6 +250,11 @@ jobs:
         if: ${{ success() }}
         run: python marcar_corrida.py
 
+      - name: Refrescar vistas materializadas
+        if: ${{ success() }}
+        continue-on-error: true
+        run: python refrescar_matviews.py
+
       - name: Commit y push de data/
         if: ${{ success() }}
         run: |
