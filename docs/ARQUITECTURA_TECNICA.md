@@ -176,7 +176,7 @@ A/B header vs body (contrato **87164**, 16 ago 2026, `probar_pdf_rag.py`): mean 
 
 ### Qué hace
 
-Un job diario: altas (keywords desde `it_keywords`) → frescura de estado → detalle web → **reclasificar keywords (NULL Vigente/En Evaluación)** → PDF nativo → OCR acotado → chunk → embed v2. **No** escribe `embedding(768)` ni llama `POST /embed`. Gemini de `categoria_it` **no** va en el yaml diario: vive en `clasificacion_semanal.yml` (C4).
+Un job diario: altas (keywords desde `it_keywords`) → **frescura de estado en bloque (listado)** → **captura de resultado (Desierto/Adjudicado)** → detalle web → **reclasificar keywords (NULL Vigente/En Evaluación)** → PDF nativo → OCR acotado → chunk → embed v2. **No** escribe `embedding(768)` ni llama `POST /embed`. Gemini de `categoria_it` **no** va en el yaml diario: vive en `clasificacion_semanal.yml` (C4).
 
 Hay un segundo workflow, `deteccion_temprana.yml`, cron `"0 0,2,4,6,8,10,12,16,18,20,22 * * *"` (cada 2 h, salvo las 14:00 UTC que coincide con el diario): ingesta + detalle + **refresh de estado acotado** (`refresh_estados.py --solo-postulables`: solo Vigentes IT/IA postulables o por abrir, ~16 vs ~2061) + PDF nativo + OCR selectivo (páginas imagen, mismo tope del diario) + análisis IA de postulables nuevos (`--limit 25`). Sin G1 completo, sin chunking, sin embeddings, sin git push de `data/`. El objetivo: un contrato nuevo TI queda analizado y con estado fresco en ~2 h en vez de esperar al diario. Commits `e4f238a`, `666f108` (OCR+análisis+refresh acotado).
 
@@ -190,7 +190,8 @@ Orden (`pipeline.yml`):
 |---|---|---|---|
 | Disparo | 09:00 Perú | CF `seace-pipeline-trigger` cron `0 14 * * *` → `workflow_dispatch` | Primario. GHA `schedule:` mismo cron queda como **respaldo** (§K) |
 | 1 | Ingesta | `ingesta_completa.py` | incremental; lee `it_keywords` (fallback `IT_CATS`); `relevancia_ia` en el UPSERT |
-| 2 | G1 | `refresh_estados.py` | **sin** `--gc` |
+| 2 | Estado en bloque | `refrescar_estados_bloque.py` | listado completo (~826 páginas); UPSERT `{estado, cotizar, fechas, estado_verificado_at}` de todos; reemplaza el scraping individual de G1 |
+| 2b | Resultado | `capturar_resultado.py --limit 250` | IT culminados; lee desenlace (Desierto/Adjudicado) a nivel de ítem; `continue-on-error` + G3 |
 | 3 | Detalle | `enriquecer_detalle.py` | `continue-on-error` |
 | 4 | Keywords C4 | `reclasificar_categoria.py` | post-detalle, pre-OCR; NULL Vigente/En Evaluación; lee `it_keywords`; **no** desetiqueta; `continue-on-error` + G3 |
 | 5 | PDF nativo | `descargar_requerimiento.py --solo-nativo --limit 0` | PyMuPDF, 0 Flash; sube binario a Storage antes de descartarlo |
@@ -200,7 +201,11 @@ Orden (`pipeline.yml`):
 | 10 | Funnel | `reconciliar_funnel.py` | `continue-on-error`; GET `/funnel-pendientes`; upsert ISO del KV |
 | 11 | G3 | `alerta_g3.py` por paso si falla + alerta final `always()` | incluye `--paso funnel` / `keywords` |
 
-**G1** (`refresh_estados.py`): relee SEACE; UPSERT `{id, estado, estado_verificado_at}`. Vigentes todos cada corrida; En Evaluación por lotes. Terminal = `idEstadoContrato` **4** Culminado (L45–48). `--gc` borra chunks de cierres &gt;60 días (L12, L219) — **el cron no lo pasa**.
+**Estado en bloque** (`refrescar_estados_bloque.py`): relee el **listado** (`buscador`) completo —no el detalle por contrato— y hace UPSERT de `{id, estado, cotizar, fecha_ini_cotizacion, fecha_fin_cotizacion, estado_verificado_at}` para **todo** el corpus (~82 k, ~826 páginas, ~15 min). Reemplaza el scraping individual de G1 (~6000 requests, ~40 min). También es la red de seguridad contra deltas: al leer el listado completo no se escapa ningún contrato nuevo ni cambio de estado. Verificado que el listado trae el mismo `idEstadoContrato`/`nomEstadoContrato` que el detalle (0/40 diferencias).
+
+**Resultado** (`capturar_resultado.py`): para IT culminados, relee el **detalle** y captura el desenlace, que el estado no distingue. Menores ≤8 UIT solo tiene 3 estados (`Vigente`/`En Evaluación`/`Culminado`); **Desierto, Anulado y Adjudicado terminan todos como `Culminado` (idEstadoContrato=4)**. El desenlace real vive a nivel de ÍTEM: `uitContratoItemProjectionList[].nomEstadoCotiza` (`"DESIERTO"`) y `codRuc`/`nomRazonSocial`/`precioTotal` (ganador). Columnas en `contratos`: `resultado`, `proveedor_ganador`, `ruc_ganador`, `monto_adjudicado`, `resultado_cargado` (SQL: `docs/resultado_contrato.sql`). Para estadísticas de "cuántas veces quedó desierto".
+
+**G1 legacy** (`refresh_estados.py`): queda solo para el refresco acotado de 2 h (`--solo-postulables`, ~16 contratos) y el `--gc` manual (borra chunks de cierres &gt;60 días). El scraping individual ya no corre en el diario.
 
 **G2:** inválidos → `ingesta_rechazados` (`ingesta_rechazados.sql`), no a `contratos`.
 
