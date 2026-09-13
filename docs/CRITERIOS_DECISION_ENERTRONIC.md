@@ -103,16 +103,17 @@ El veredicto SIEMPRE explica el porqué (rubro, margen, modalidad, pago, plazo).
 
 ## 5. Presentación (cómo se muestra — clave: no ocultar nada)
 
-### Brief diario (resumen matutino)
-- **Top 15** oportunidades del día, ordenadas por score.
-- Foco en núcleo (IA/cloud/ML/desarrollo), vigentes, y las que cierran pronto.
-- Cada una: rubro, score, condiciones clave, veredicto.
+### Postulables (todos, paginados)
+- **Todos** los postulables, ordenados por **vencimiento** (hoy → mañana → semana → resto) y score como desempate dentro de cada tramo.
+- Paginación de **10 en 10** por defecto (configurable 10/20/50/100).
+- Cada una: rubro, score, condiciones clave, veredicto, hora exacta de cierre y estado de la ventana de consultas.
+- Se puede **ocultar** (menú ⋯) para sacarla de la lista; queda en una sección plegable «Ocultos» para restaurarla.
 
-### Ranking completo expandible (el humano elige cuánto ver)
-- Expandible: **top 15 → 50 → 100 → 500 → 1000 → todos.**
-- Ordenado por score, pero **NUNCA oculta** una oportunidad. La joya del puesto 47 debe ser alcanzable.
+### Otras etapas (sección baja)
+- Por abrir, en evaluación y vencidos, también paginados.
+- El humano quita lo que no le sirve; **nunca** se limita a un top fijo. La joya del puesto 47 debe ser alcanzable.
 
-### Filtros sobre el ranking (para navegar rápido)
+### Filtros (para navegar rápido)
 - Por **rubro** (núcleo, cloud, IA, desarrollo, hardware…).
 - Por **fecha de cierre** (hoy, esta semana, este mes).
 - Por **modalidad** (remoto / presencial).

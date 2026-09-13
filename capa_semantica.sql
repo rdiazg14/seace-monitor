@@ -202,7 +202,8 @@ SELECT
   c.fecha_cotizacion,
   c.pdf_storage_path,
   c.pdf_storage_at,
-  c.pdf_storage_bytes
+  c.pdf_storage_bytes,
+  c.etapas_json
 FROM contratos c
 LEFT JOIN clasificacion_contrato cl ON cl.contrato_id = c.id;
 
@@ -391,5 +392,32 @@ COMMENT ON VIEW v_kpis_dashboard IS
   'Agregados del tablero. total_postulables por instante. cierran_hoy = now..medianoche Lima; manana/semana por dias Lima (2-7).';
 COMMENT ON VIEW v_kpis_negocio IS
   'KPIs ENERTRONIC sobre postulables (instante). Rubro = fn_rubro_energetic.';
+
+-- Proyectos ocultos por usuario en Ruta del día.
+CREATE TABLE IF NOT EXISTS ruta_ocultos (
+  user_id      uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  contrato_id  bigint      NOT NULL REFERENCES contratos(id) ON DELETE CASCADE,
+  ocultado_at  timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, contrato_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ruta_ocultos_user
+  ON ruta_ocultos(user_id);
+
+ALTER TABLE ruta_ocultos ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "ocultos_lectura_propia" ON ruta_ocultos;
+CREATE POLICY "ocultos_lectura_propia" ON ruta_ocultos
+  FOR SELECT TO authenticated USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "ocultos_insercion_propia" ON ruta_ocultos;
+CREATE POLICY "ocultos_insercion_propia" ON ruta_ocultos
+  FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "ocultos_borrado_propio" ON ruta_ocultos;
+CREATE POLICY "ocultos_borrado_propio" ON ruta_ocultos
+  FOR DELETE TO authenticated USING (auth.uid() = user_id);
+
+GRANT SELECT, INSERT, DELETE ON ruta_ocultos TO authenticated;
 
 NOTIFY pgrst, 'reload schema';
