@@ -15,6 +15,7 @@ import argparse
 import json
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 from supabase import create_client
@@ -38,6 +39,21 @@ DELAY_S      = 0.3   # pausa entre llamadas a la API SEACE
 
 
 PAGE_DB = 1_000  # PostgREST/Supabase recorta selects a 1000 por defecto
+
+_FMT_SEACE = "%d/%m/%Y %H:%M:%S"
+
+
+def parsear_fecha(s):
+    """'dd/mm/yyyy HH:MM:SS' (pared Lima) → ISO 8601 con offset -05:00.
+
+    Mismo criterio que ingesta_completa.parsear_fecha: Perú no tiene DST.
+    """
+    if not s:
+        return None
+    try:
+        return datetime.strptime(s.strip(), _FMT_SEACE).isoformat() + "-05:00"
+    except Exception:
+        return None
 
 
 def get_vigentes_sin_detalle(supa, limit: int) -> list[dict]:
@@ -95,11 +111,23 @@ def fetch_detalle(page, contrato_id: int, retries: int = 2) -> dict | None:
                 for i in items
             ]
 
+            # Cronograma de etapas (consultas/absoluciones, cotización, …).
+            etapas = body.get("uitContratoEtapaProjectionList") or []
+            etapas_clean = [
+                {
+                    "etapa":   e.get("nomEtapaContrato"),
+                    "fec_ini": parsear_fecha(e.get("fecIni")),
+                    "fec_fin": parsear_fecha(e.get("fecFin")),
+                }
+                for e in etapas
+            ]
+
             tdr = (proj.get("desObjetoContrato") or "").strip() or None
             return {
                 "nom_area_usuaria": proj.get("nomAreaUsuaria"),
                 "descripcion":      tdr,
                 "items_json":       items_clean,
+                "etapas_json":      etapas_clean,
             }
         except Exception as e:
             last_err = str(e)
@@ -160,6 +188,7 @@ def main():
                     "id":               cid,
                     "nom_area_usuaria": detalle["nom_area_usuaria"],
                     "items_json":       detalle["items_json"],
+                    "etapas_json":      detalle["etapas_json"],
                     "detalle_cargado":  True,
                 }
                 if detalle.get("descripcion"):
