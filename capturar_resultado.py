@@ -126,61 +126,89 @@ def main():
     print(f"  limit={args.limit}  dry-run={args.dry_run}", flush=True)
     print("=" * 60, flush=True)
 
-    with psycopg.connect(DATABASE_URL) as conn:
+    conn = psycopg.connect(DATABASE_URL)
+    holder = [conn]  # mutable para que la reconexión persista entre filas
+
+    def _conectar() -> "psycopg.Connection":
+        return psycopg.connect(DATABASE_URL)
+
+    def _escribir(fila: dict) -> None:
+        """UPDATE de una fila; reconecta y reintenta si la BD cortó la conexión."""
+        sql = """
+            UPDATE contratos
+            SET resultado = %s,
+                proveedor_ganador = %s,
+                ruc_ganador = %s,
+                monto_adjudicado = %s,
+                resultado_cargado = true
+            WHERE id = %s
+        """
+        params = (
+            fila.get("resultado"),
+            fila.get("proveedor_ganador"),
+            fila.get("ruc_ganador"),
+            fila.get("monto_adjudicado"),
+            fila["id"],
+        )
+        for intento in (0, 1):
+            try:
+                cur = holder[0].cursor()
+                cur.execute(sql, params)
+                holder[0].commit()
+                return
+            except psycopg.OperationalError as e:
+                print(f"    [reconexión] BD cortó la conexión ({e}); reintentando...",
+                      flush=True)
+                try:
+                    holder[0].close()
+                except Exception:
+                    pass
+                holder[0] = _conectar()
+
+    try:
         ids = _ids_pendientes(conn, args.limit)
-        total = len(ids)
-        print(f"IT culminados sin resultado: {total:,}", flush=True)
-        if total == 0:
-            print("Nada que hacer.", flush=True)
-            return
+    except psycopg.OperationalError:
+        holder[0] = _conectar()
+        ids = _ids_pendientes(holder[0], args.limit)
 
-        t0 = time.time()
-        ok = 0
-        errores = 0
-        conteo: dict[str, int] = {}
+    total = len(ids)
+    print(f"IT culminados sin resultado: {total:,}", flush=True)
+    if total == 0:
+        holder[0].close()
+        print("Nada que hacer.", flush=True)
+        return
 
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=not args.headed)
-            page = browser.new_context(ignore_https_errors=True).new_page()
-            page.goto(SPA_URL, wait_until="networkidle", timeout=90_000)
-            page.wait_for_timeout(2_000)
+    t0 = time.time()
+    ok = 0
+    errores = 0
+    conteo: dict[str, int] = {}
 
-            for i, cid in enumerate(ids, 1):
-                res = _fetch_resultado(page, cid)
-                if res is None:
-                    errores += 1
-                else:
-                    resultado = res.get("resultado") or "SIN_RESULTADO"
-                    conteo[resultado] = conteo.get(resultado, 0) + 1
-                    if not args.dry_run:
-                        cur = conn.cursor()
-                        cur.execute(
-                            """
-                            UPDATE contratos
-                            SET resultado = %s,
-                                proveedor_ganador = %s,
-                                ruc_ganador = %s,
-                                monto_adjudicado = %s,
-                                resultado_cargado = true
-                            WHERE id = %s
-                            """,
-                            (
-                                res.get("resultado"),
-                                res.get("proveedor_ganador"),
-                                res.get("ruc_ganador"),
-                                res.get("monto_adjudicado"),
-                                cid,
-                            ),
-                        )
-                        conn.commit()
-                    ok += 1
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=not args.headed)
+        page = browser.new_context(ignore_https_errors=True).new_page()
+        page.goto(SPA_URL, wait_until="networkidle", timeout=90_000)
+        page.wait_for_timeout(2_000)
 
-                if i % 25 == 0 or i == total:
-                    elapsed = time.time() - t0
-                    print(f"  [{i}/{total}] {elapsed:.0f}s  {conteo}", flush=True)
-                time.sleep(DELAY_S)
+        for i, cid in enumerate(ids, 1):
+            res = _fetch_resultado(page, cid)
+            if res is None:
+                errores += 1
+            else:
+                resultado = res.get("resultado") or "SIN_RESULTADO"
+                conteo[resultado] = conteo.get(resultado, 0) + 1
+                if not args.dry_run:
+                    fila = {"id": cid, **res}
+                    _escribir(fila)
+                ok += 1
 
-            browser.close()
+            if i % 25 == 0 or i == total:
+                elapsed = time.time() - t0
+                print(f"  [{i}/{total}] {elapsed:.0f}s  {conteo}", flush=True)
+            time.sleep(DELAY_S)
+
+        browser.close()
+
+    holder[0].close()
 
     elapsed = time.time() - t0
     print(f"\n{'=' * 60}", flush=True)
