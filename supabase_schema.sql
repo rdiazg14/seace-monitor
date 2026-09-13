@@ -149,20 +149,28 @@ GRANT EXECUTE ON FUNCTION buscar_contratos(TEXT, TEXT, TEXT, TEXT, INT, INT)
 
 GRANT SELECT ON contratos TO anon, authenticated;
 
--- 7. Vista: resumen para dashboard (contratos por mes, objeto, estado, categoría IT)
-CREATE OR REPLACE VIEW dashboard_resumen AS
+-- 7. Resumen para dashboard (contratos por mes, objeto, estado, categoría IT).
+--    MATERIALIZADA: con 82k+ filas, el GROUP BY en vivo excedía el
+--    statement_timeout (8s). Se refresca vía pg_cron (cada 5 min) y al
+--    final del pipeline diario (refrescar_matviews.py).
+--    Ver docs/materializar_dashboard_resumen.sql.
+CREATE MATERIALIZED VIEW IF NOT EXISTS dashboard_resumen AS
 SELECT
-  objeto,
-  estado,
-  categoria_it,
-  DATE_TRUNC('month', fecha_publica)::DATE AS mes,
-  COUNT(*)::INT                            AS total
-FROM v_contratos
+  c.objeto,
+  c.estado,
+  cl.categoria_it,
+  DATE_TRUNC('month', c.fecha_publica)::DATE AS mes,
+  COUNT(*)::INT                          AS total
+FROM contratos c
+LEFT JOIN clasificacion_contrato cl ON cl.contrato_id = c.id
 GROUP BY
-  objeto,
-  estado,
-  categoria_it,
-  DATE_TRUNC('month', fecha_publica)::DATE;
+  c.objeto,
+  c.estado,
+  cl.categoria_it,
+  DATE_TRUNC('month', c.fecha_publica)::DATE;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_dashboard_resumen_uq
+  ON dashboard_resumen (objeto, estado, categoria_it, mes);
 
 GRANT SELECT ON dashboard_resumen TO anon, authenticated;
 
