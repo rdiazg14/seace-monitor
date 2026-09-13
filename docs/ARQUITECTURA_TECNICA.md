@@ -523,6 +523,8 @@ Backstop de facturación Gemini (~S/10/mes AI Studio): **[por confirmar con Rola
 
 **Cupo C4 e historial de corridas a BD (13 sep 2026):** el cupo Gemini C4 se movió de `data/clasificacion_cuota.json` a la tabla `pipeline_cuota_c4` (mismo patrón que OCR; el JSON queda de respaldo). Además, los logs sobrescritos `data/ultima_{ingesta,ocr,pdf,capas}.txt` ahora se espejan en la tabla append-only `pipeline_runs` vía `pipeline_log.py` (`registrar_run`, fail-soft): una fila por corrida con `paso`, `run_id` y `payload jsonb`. Los `.txt` se conservan como sidecar. Vista de consulta `v_pipeline_runs` (`security_invoker=true`, SELECT solo `es_admin()`). SQL: `docs/pipeline_cuota_c4.sql`, `docs/pipeline_runs.sql`, `docs/vista_pipeline_runs.sql`.
 
+**Fix `maybe_single()` en supabase-py 2.x (13 sep 2026):** con supabase-py ≥2.31, `maybe_single().execute()` devuelve `None` (no un objeto con `.data`) cuando no hay fila para la clave consultada. `cargar_cuota_ocr` y `cargar_cuota_c4` hacían `row = res.data`, lo que lanzaba `'NoneType' object has no attribute 'data'` en la primera lectura del día (antes de insertar la fila) y caía al fallback del archivo local. Se cambió a `row = getattr(res, "data", None)`. Verificado contra BD: con fila devuelve el objeto, sin fila devuelve cuota en cero sin warning.
+
 ### 502 / JSON inválido de Gemini (contrato 66461, 18 ago 2026)
 
 Comportamiento **real**:

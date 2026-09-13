@@ -45,6 +45,7 @@
 
 - **`pipeline_cuota_c4`** (tabla nueva, una fila por `fecha_lima`): contador de gasto Gemini de C4. Sustituye `data/clasificacion_cuota.json` como fuente de verdad (el JSON queda como respaldo/auditoría local, no como fuente). Mismo patrón que `pipeline_cuota_ocr`: `cargar_cuota_c4`/`guardar_cuota_c4` leen/escriben BD con fallback al archivo. RLS habilitada; escritura/lectura solo service_role. SQL: `docs/pipeline_cuota_c4.sql`.
 - **`pipeline_runs`** (tabla nueva, append-only) + **`v_pipeline_runs`** (vista `security_invoker=true`): historial de corridas del pipeline. Reemplaza los logs sobrescritos `data/ultima_ingesta.txt`, `ultima_ocr.txt`, `ultima_pdf.txt` y `ultima_capas.txt` como fuente de análisis histórico (los `.txt` siguen como sidecar). Una fila por corrida con `paso` (`ingesta` | `ocr` | `pdf` | `capas`), `run_id` (`GITHUB_RUN_ID`) y `payload jsonb` con los stats `k=v`. Módulo compartido `pipeline_log.py` (`registrar_run`, fail-soft). Lectura: `SELECT` solo `es_admin()` (no se expone a `anon`). SQL: `docs/pipeline_runs.sql` + `docs/vista_pipeline_runs.sql`.
+- **Fix `maybe_single()` (13 sep):** con supabase-py ≥2.31, `maybe_single().execute()` devuelve `None` (no un objeto con `.data`) cuando no hay fila. `cargar_cuota_ocr` y `cargar_cuota_c4` usan `getattr(res, "data", None)` para no lanzar `'NoneType' object has no attribute 'data'` en la primera lectura del día (antes de insertar la fila).
 
 ### Vuelta atrás (única)
 
