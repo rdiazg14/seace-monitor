@@ -35,7 +35,7 @@ Cierre: tabla de decisiones · discrepancias vs PLAN · commits
 |---|---|---|
 | Pipeline / SQL / evals | `seace-monitor` | `2527bce` (capturar_resultado reconexión) · `refrescar_estados_bloque.py` · `capturar_resultado.py` · cuota OCR a BD |
 | Worker Gemini | `seace-ai-proxy` | `e8e7604` (`adminStats` expone `token-expira`) · CF viva `3c9b7b5d`. JWT: `6e62b74` |
-| Front | `seace-web` | `8601d17` (encabezado + `cierraEn` día calendario Lima) · Pages `https://seace.rdiaz-lab.xyz` |
+| Front | `seace-web` | `d55788c` (página `/clave` cambiar contraseña) · Pages `https://seace.rdiaz-lab.xyz` |
 | Trigger del cron | `seace-pipeline-trigger` | repo privado `main` `520aff7` · CF viva `dcfa9287` · Worker `https://seace-pipeline-trigger.rdiazg14.workers.dev` |
 
 Worker vivo: `https://seace-ai-proxy.rdiazg14.workers.dev`. Front: `AI_PROXY` = esa URL (`seace-web/src/lib/supabase.ts`).
@@ -804,7 +804,7 @@ Lee claves UTC de hoy: `flash:`, `analyze:`, `cotizar:`, `cotizar_tipo:{texto|ta
 |---|---|---|
 | monitor | `2527bce` | `capturar_resultado` reconexión. `refrescar_estados_bloque.py`, `capturar_resultado.py`, cuota OCR a BD, `sincronizar_items` en detección temprana |
 | worker | `e8e7604` · CF `3c9b7b5d` | `adminStats` expone `token-expira`. JWT: `6e62b74` |
-| web | `8601d17` | Encabezado + `cierraEn` día calendario Lima |
+| web | `d55788c` | Página `/clave` cambiar contraseña (self-service) |
 | trigger | `520aff7` (repo privado) · CF `dcfa9287` | `leerExpiracionToken`. Cron CF → `workflow_dispatch` (B20; ~26s) |
 
 Iteraciones: [CHANGELOG_ITERACIONES.md](./CHANGELOG_ITERACIONES.md). Cierres: [TRASPASO_MAESTRO_SEACE.md](./TRASPASO_MAESTRO_SEACE.md) §6.

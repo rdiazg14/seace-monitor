@@ -59,7 +59,7 @@ Hashes de este corte (HEAD `origin/main` al **13 sep 2026**, cierre de etapa):
 | Repo | GitHub | Visibilidad | Rama | HEAD |
 |---|---|---|---|---|
 | seace-monitor | https://github.com/rdiazg14/seace-monitor | **público** | `main` | `206eb22` `dashboard_resumen` materializado (fix statement_timeout) |
-| seace-web | https://github.com/rdiazg14/seace-web | **público** | `main` | `8601d17` (encabezado + `cierraEn` día calendario Lima) · Pages **success**, mismo SHA |
+| seace-web | https://github.com/rdiazg14/seace-web | **público** | `main` | `d55788c` (página `/clave` cambiar contraseña) · Pages **success** |
 | seace-ai-proxy | https://github.com/rdiazg14/seace-ai-proxy | **privado** | `main` | `e8e7604` (`adminStats` expone `token-expira`) · CF versión viva `3c9b7b5d` (Secret Change de la rotación de Gemini; **mismo etag de script** que el upload `fa68fe1b`, o sea no revirtió código) |
 | seace-pipeline-trigger | https://github.com/rdiazg14/seace-pipeline-trigger | **privado** | `main` | `520aff7` · CF versión viva `dcfa9287` · Worker `seace-pipeline-trigger.rdiazg14.workers.dev` |
 
@@ -121,7 +121,7 @@ Workflows: `pipeline.yml` (activo, schedule **respaldo** + dispatch) · `embed_v
 
 **Stack:** React 19 + Vite 8 + TypeScript + Tailwind 3 + react-router 7 + supabase-js. Host: **GitHub Pages** (no Cloudflare Pages), dominio `seace.rdiaz-lab.xyz`.
 
-**`src/` clave:** `App.tsx` rutas · `lib/supabase.ts` URL + `AI_PROXY` · `lib/rutaDia.ts` score #9 + `esPostulable` · `lib/capaSemantica.ts` Dashboard + `cargarKpisConversion` · `lib/analisis.ts` tipos #10/#11 · `pages/RutaDia.tsx` · `AnalisisContrato.tsx` (página #10 + panel #11) · `Observabilidad.tsx` · `Dashboard.tsx` (capa + conversión 30d) · `components/AnalisisV2.tsx` · `TimelineFishbone.tsx` · `ChatTable.tsx` / `ChatChart.tsx` · `Pills.tsx` (`CatItIaPill`) · `Chat.tsx` (RAG) · `Login.tsx` · `RequireAuth.tsx` · `supabase/perfiles.sql` + Edge Functions `crear-usuario` / `desactivar-usuario`.
+**`src/` clave:** `App.tsx` rutas · `lib/supabase.ts` URL + `AI_PROXY` · `lib/rutaDia.ts` score #9 + `esPostulable` · `lib/capaSemantica.ts` Dashboard + `cargarKpisConversion` · `lib/analisis.ts` tipos #10/#11 · `pages/RutaDia.tsx` · `AnalisisContrato.tsx` (página #10 + panel #11) · `Observabilidad.tsx` · `Dashboard.tsx` (capa + conversión 30d) · `components/AnalisisV2.tsx` · `TimelineFishbone.tsx` · `ChatTable.tsx` / `ChatChart.tsx` · `Pills.tsx` (`CatItIaPill`) · `Chat.tsx` (RAG) · `Login.tsx` · `CambiarClave.tsx` (cambio de clave self-service, ruta `/clave`) · `RequireAuth.tsx` · `supabase/perfiles.sql` + Edge Functions `crear-usuario` / `desactivar-usuario`.
 
 **Local:**
 
@@ -132,7 +132,7 @@ npm run dev          # Vite, puerto 5173 (CORS del Worker lo permite)
 
 `npm run build` → `tsc -b && vite build`. El workflow copia `dist/index.html` a `dist/404.html` (SPA en Pages).
 
-**Deploy:** push a `main` → `.github/workflows/deploy.yml` (`Deploy seace-web → GitHub Pages`). HEAD de este corte: `8a0b596` (sin cambios en esta sesion; no re-verificado el 5 sep).
+**Deploy:** push a `main` → `.github/workflows/deploy.yml` (`Deploy seace-web → GitHub Pages`). HEAD de este corte: `d55788c` (página `/clave`).
 
 ### 1.3 seace-ai-proxy
 
@@ -253,7 +253,7 @@ CORS orígenes: `https://seace.rdiaz-lab.xyz`, `https://rdiazg14.github.io`, `ht
 
 ## 3. El producto — qué ve y hace el usuario
 
-Login: `/login` → `signInWithPassword`. Signup público **cerrado**. Roles `admin` \| `normal`. Altas: página `/usuarios` (admin) → Edge Functions. Home de la app sigue siendo `/` Dashboard; la pieza de trabajo diario es `/ruta-dia`.
+Login: `/login` → `signInWithPassword`. Signup público **cerrado**. Roles `admin` \| `normal`. Altas: página `/usuarios` (admin) → Edge Functions. Cambio de clave self-service: `/clave` (re-auth con clave actual + `updateUser({ password })`, accesible desde el Navbar). Home de la app sigue siendo `/` Dashboard; la pieza de trabajo diario es `/ruta-dia`.
 
 Criterios (resumen; detalle en [CRITERIOS_DECISION_ENERTRONIC.md](./CRITERIOS_DECISION_ENERTRONIC.md)):
 
@@ -593,6 +593,16 @@ Medido: lectura ~10 s → **~0.3 s**, mismas 837 filas. Commit monitor `206eb22`
 
 > Distinto del matiz histórico `v_kpis_dashboard` (57014, con fallback TS): ese sigue siendo una vista regular; su fallback TS ya cubre el caso. El culpable del Dashboard en blanco era `dashboard_resumen`, que **no** tenía fallback.
 
+### Cierre 13 sep (tarde) — Login: reseteo + cambio de clave self-service
+
+**Síntoma:** dos usuarios (`pruebas@gmail.com`, `landa.mg24@gmail.com`) no podían loguearse.
+
+**Diagnóstico (descartado todo lo estructural):** ambas cuentas están sanas en `auth.users` (email confirmado, `banned_until` NULL, identidad `email`, última sesión 18 ago); tienen fila en `perfiles` (`rol=normal`); el endpoint de auth responde (`signInWithPassword` con clave incorrecta → `400 invalid_credentials`); la anon key compilada en el JS coincide con la del proyecto (no hubo rotación). El `auth.audit_log_entries` no persiste logins (tabla sin filas), así que no había traza del motivo exacto. **Conclusión:** clave olvidada/incorrecta.
+
+**Resolución:** reseteo de contraseñas vía API admin (`PUT /auth/v1/admin/users/{id}` con service_role) y verificación de login 200 para ambas. Para que el admin no sea el único capaz de resetear, se agregó la página `/clave` (self-service): re-auth con clave actual (`signInWithPassword`) + `updateUser({ password })`. Commit web `d55788c`.
+
+**Pendiente opcional:** no hay «Olvidé mi clave» en `/login` (exigiría configurar el envío de email de Supabase, hoy sin SMTP).
+
 ### Backlog (todo opcional)
 
 | Ítem | Esfuerzo | Valor | Notas |
@@ -678,10 +688,10 @@ Medido: lectura ~10 s → **~0.3 s**, mismas 837 filas. Commit monitor `206eb22`
 | Worker local | `d:\ROLANDO\DEV_APPS\seace8uit\seace-ai-proxy` |
 | Trigger local | `d:\ROLANDO\DEV_APPS\seace8uit\seace-pipeline-trigger` |
 | HEAD monitor | `206eb22` |
-| HEAD web | `8a0b596` (sin cambios en esta sesion; no re-verificado el 5 sep) |
+| HEAD web | `d55788c` (página `/clave` cambiar contraseña) |
 | HEAD worker | `da3caf8` (sin cambios en esta sesion; no re-verificado el 5 sep) |
 | Worker CF Gemini | `cbf31b49-e3e7-44b0-a8cf-6cd4f5113ad4` |
-| Pages | push `main` → Actions GitHub Pages (HEAD `8a0b596`, sin cambios en esta sesion; no re-verificado el 5 sep) |
+| Pages | push `main` → Actions GitHub Pages (HEAD `d55788c`, página `/clave`) |
 | Disparo pipeline | CF Cron `0 14 * * *` → `workflow_dispatch` (GHA `schedule:` respaldo) |
 | Chat local | `npm run dev` (5173) |
 | Worker local | `npx wrangler dev` |
