@@ -30,3 +30,6 @@ data/clasificacion_cuota.json
 /docs/SEACE Monitor 2.html
 /docs/SEACE Monitor_files/
 /docs/SEACE Monitor 2_files/
+
+# Exportes CSV locales para revisión (no son fuente)
+/exports/
