@@ -77,6 +77,16 @@ jobs:
         continue-on-error: true
         run: python enriquecer_detalle.py --limit 150
 
+      # Espejo de items_json -> contrato_items (idempotente). El diario lo corre
+      # tras enriquecer_detalle; acá también porque "Detalle web" (--limit 150)
+      # enriquece items_json cada 2h y sin este paso el desync crece hasta la
+      # próxima corrida diaria (medido: 323 Vigentes desync).
+      - name: Sincronizar contrato_items
+        id: items
+        if: ${{ success() && steps.detalle.outcome == 'success' }}
+        continue-on-error: true
+        run: python sincronizar_items.py
+
       # Refresco acotado de estado: solo Vigentes IT/IA postulables o por abrir
       # (~15-40), no los ~1900 del diario. Rápido (segundos), para que un
       # contrato que SEACE ya cerró no siga apareciendo postulable entre diarios.
