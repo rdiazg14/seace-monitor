@@ -557,7 +557,7 @@ Sin este trigger, hay que cambiar Ruta del día, Buscador, Dashboard fallback, C
 |---|---|---|
 | `cargarCapaSemantica()` | `v_kpis_dashboard`, `v_kpis_negocio`, `v_contratos_estado` (fallback: `contratos` + `IT_OR`) | Sí |
 | `cargarKpisConversion()` | `v_kpis_conversion` / `_rubro` (JOIN `v_contratos_estado`) | Sí, vía la vista |
-| `dashboard_resumen` | vista `GROUP BY categoria_it` | Sí |
+| `dashboard_resumen` | **vista materializada** `GROUP BY categoria_it` (13 sep: era vista regular y timeout ~10 s sobre 82k filas; ver `docs/materializar_dashboard_resumen.sql`) | Sí |
 | `contratos` select `*` limit 10 | recientes | Pinta `ItPill` si hay cat |
 | `contratos.fecha_publica` limit 1 | “última alta” | No |
 

@@ -629,6 +629,8 @@ Dashboard (`Dashboard.tsx`): `cargarCapaSemantica()` prefiere SQL; si `v_kpis_da
 
 `v_contratos_estado` y `v_kpis_negocio` responden. Un `SELECT *` de `v_kpis_dashboard` puede **timeout** (Postgres 57014). En ese caso el Dashboard usa TS y **no** se rompe. Backlog: aligerar esa vista.
 
+**Cierre 13 sep tarde:** el Dashboard en blanco real no era `v_kpis_dashboard` sino **`dashboard_resumen`** (vista regular con `GROUP BY` en vivo sobre 82k filas vía `v_contratos`, columnas TOAST): ~10 s, sin fallback, tumbaba el `Promise.all`. Se **materializó** (`docs/materializar_dashboard_resumen.sql`): ~837 filas, refresco por `pg_cron` (5 min) + `refrescar_matviews.py` en el pipeline. Lectura ~10 s → ~0.3 s.
+
 Las columnas `analizado`/`cotizado` **sí existen** desde iter. 11 (`docs/migracion_funnel_conversion.sql`). No hay monto referencial. Detalle: §J.
 
 ### Por qué
@@ -637,7 +639,7 @@ Las columnas `analizado`/`cotizado` **sí existen** desde iter. 11 (`docs/migrac
 
 ### Alternativas
 
-Materializar KPIs (tabla+cron) si el timeout molesta. Que Ruta también lea `v_contratos_estado`. Chat que responda KPIs: no está.
+Materializar KPIs (tabla+cron) si el timeout molesta — **hecho para `dashboard_resumen` (13 sep)**. `v_kpis_dashboard` sigue como vista con fallback TS. Que Ruta también lea `v_contratos_estado`. Chat que responda KPIs: no está.
 
 ---
 

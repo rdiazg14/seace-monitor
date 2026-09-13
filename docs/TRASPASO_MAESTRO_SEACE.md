@@ -58,7 +58,7 @@ Hashes de este corte (HEAD `origin/main` al **13 sep 2026**, cierre de etapa):
 
 | Repo | GitHub | Visibilidad | Rama | HEAD |
 |---|---|---|---|---|
-| seace-monitor | https://github.com/rdiazg14/seace-monitor | **público** | `main` | `2527bce` `capturar_resultado` reconexión + docs cierre 12–13 sep |
+| seace-monitor | https://github.com/rdiazg14/seace-monitor | **público** | `main` | `206eb22` `dashboard_resumen` materializado (fix statement_timeout) |
 | seace-web | https://github.com/rdiazg14/seace-web | **público** | `main` | `8601d17` (encabezado + `cierraEn` día calendario Lima) · Pages **success**, mismo SHA |
 | seace-ai-proxy | https://github.com/rdiazg14/seace-ai-proxy | **privado** | `main` | `e8e7604` (`adminStats` expone `token-expira`) · CF versión viva `3c9b7b5d` (Secret Change de la rotación de Gemini; **mismo etag de script** que el upload `fa68fe1b`, o sea no revirtió código) |
 | seace-pipeline-trigger | https://github.com/rdiazg14/seace-pipeline-trigger | **privado** | `main` | `520aff7` · CF versión viva `dcfa9287` · Worker `seace-pipeline-trigger.rdiazg14.workers.dev` |
@@ -86,12 +86,14 @@ Hashes de este corte (HEAD `origin/main` al **13 sep 2026**, cierre de etapa):
 | `generar_embeddings.py` | Solo `embedding_v2`, `RETRIEVAL_DOCUMENT` + L2 |
 | `alerta_g3.py` | Issue si un paso del job falla (`--paso funnel` incluido) |
 | `reconciliar_funnel.py` | GET Worker → upsert marcas `analizado`/`cotizado` (ISO del KV, no `now()`) |
+| `refrescar_matviews.py` | Refresca `dashboard_resumen` (materializada) `CONCURRENTLY` al final del pipeline |
 | `eval_retrieval.py` | G4 híbrido **pre-rerank** |
 | `buscar_tdr_v2.sql` | RPC vector 1536 |
 | `.github/workflows/pipeline.yml` | Job diario (schedule GHA = respaldo; disparo primario = CF) |
 | `.github/workflows/deteccion_temprana.yml` | Cada 2 h: solo ingesta + detalle. Cron `"0 */2 * * *"` |
 | `docs/` | Traspaso, arquitectura, cierres 20/29-ago, changelog, criterios, PLAN, SQL funnel/conversión/`cotizar_tipo_log` / C2 / B21 |
 | `capa_semantica.sql` | Vistas Dashboard (iter. 9). Ya aplicado. **No** incluye `v_kpis_conversion` |
+| `docs/materializar_dashboard_resumen.sql` | `dashboard_resumen` → vista materializada + `pg_cron` (fix timeout). Ya aplicado |
 | `docs/migracion_funnel_conversion.sql` | Columnas `analizado`/`cotizado`/`fecha_*`. Ya aplicado |
 | `docs/vista_kpis_conversion.sql` | `v_kpis_conversion` + `_rubro`. Ya aplicado (GRANT anon) |
 | `docs/cotizar_tipo_log.sql` | Tabla + RLS admin SELECT. Ya aplicado |
@@ -579,6 +581,18 @@ Refresco de estado en bloque + captura de resultado + cuota Flash OCR a BD + det
 - Aprendizaje de vocabulario implementado y sin activar.
 - **13** contratos de agosto con `analizado=true` sin payload.
 
+### Cierre 13 sep (tarde) — Dashboard: `dashboard_resumen` materializado
+
+Incidente real en prod: Dashboard en blanco con «canceling statement due to statement timeout» (Postgres 57014). Causa raíz: `dashboard_resumen` era una **vista regular** con `GROUP BY` en vivo sobre las 82 574 filas de `contratos` (vía `v_contratos`, que arrastra columnas TOAST `tdr_texto`/`descripcion`/`items_json`/`etapas_json`) y tardaba ~10 s, superando el `statement_timeout` del rol `authenticated` (8 s). El `Promise.all` del Dashboard incluía `dashboard_resumen` **sin fallback**, así que su timeout tumbaba toda la página.
+
+**Fix (aplicado en Supabase):** `dashboard_resumen` pasa a **vista materializada** (~837 filas), refrescada por doble vía:
+1. `pg_cron` cada 5 min (extensión `pg_cron` habilitada; job `refresh_dashboard_resumen`).
+2. `refrescar_matviews.py` al final de `pipeline.yml` (`REFRESH MATERIALIZED VIEW CONCURRENTLY`, no bloquea lecturas).
+
+Medido: lectura ~10 s → **~0.3 s**, mismas 837 filas. Commit monitor `206eb22`. DDL idempotente en `docs/materializar_dashboard_resumen.sql`.
+
+> Distinto del matiz histórico `v_kpis_dashboard` (57014, con fallback TS): ese sigue siendo una vista regular; su fallback TS ya cubre el caso. El culpable del Dashboard en blanco era `dashboard_resumen`, que **no** tenía fallback.
+
 ### Backlog (todo opcional)
 
 | Ítem | Esfuerzo | Valor | Notas |
@@ -592,7 +606,7 @@ Refresco de estado en bloque + captura de resultado + cuota Flash OCR a BD + det
 | B18 firma blockchain | Investigar | Mercado | Medir corpus antes de construir. No tocado |
 | B19 2ª fuente SEACE | Alto | Cobertura | prod4 / OpenEgocio; hay bot-detection. No tocado |
 | Home = Ruta del día | Bajo | Enfoque | `/` = Dashboard |
-| Aligerar `v_kpis_dashboard` | Bajo–medio | Estabilidad | timeout 57014; fallback TS |
+| Aligerar `v_kpis_dashboard` | Bajo–medio | Estabilidad | timeout 57014; fallback TS. `dashboard_resumen` (el timeout del Dashboard en blanco) **ya se materializó** (13 sep tarde) |
 | Caché semántica `/cotizar` | Medio | Tokens | Hoy solo exacta + `esCacheable` |
 | No cobrar ANALYZE si 502 | Medio | Honestidad de cupo | Deliberado |
 | **#4 chunking** | Eval offline | Fruta POR-DEFECTO | **Sigue abierto.** Overlap + tamaño vs 63 %. |
@@ -625,7 +639,7 @@ Refresco de estado en bloque + captura de resultado + cuota Flash OCR a BD + det
 16. **`/cotizar` gasta 0 o 1 Flash:** HIT=0; MISS=1 generate (self-routing). Ya no hay clasificador Flash ni Δ2. El streaming de la iteración 7 **no** es token-a-token del modelo. No reintroducir `clasificarPorReglas` / `clasificarIntentFlash`.
 17. **Query de #11:** `trim` + lowercase + colapsar espacios. **No** se quitan tildes (`dónde` ≠ `donde`). Hash SHA-256 de esa forma.
 18. **Ruta default = postulables** (`esPostulable`). El chip «En evaluación / cerrados» muestra el resto. Dashboard usa la misma regla. B1 confirmó que el filtro no oculta; no “arreglarlo” para mostrar más mercado.
-19. **`v_kpis_dashboard` puede timeout** (57014). El Dashboard no se cae: `cargarCapaSemantica` usa TS. No «arreglar» dropeando las vistas.
+19. **`v_kpis_dashboard` puede timeout** (57014). El Dashboard no se cae: `cargarCapaSemantica` usa TS. No «arreglar» dropeando las vistas. **Distinto de `dashboard_resumen`**: esa era una vista regular que timeout (10 s sobre 82k filas) y **tumbaba todo el Dashboard** (sin fallback); ya se materializó (pg_cron 5 min + `refrescar_matviews.py`).
 20. **502 `/analizar` ya no es JSON crudo**, pero el cupo ANALYZE se cobra igual. Funnel **no** se marca en 502. No reordenar el cupo sin pedido (es deliberado).
 21. **`GET /funnel-pendientes` no es del front.** Auth `FUNNEL_TOKEN`. `GET /admin/stats` **sí** es del SPA admin: JWT de sesión, **no** el token del funnel.
 22. **Flags `analizado`/`cotizado` son acumulativos.** TRUE no vuelve a FALSE. Marca cotizado **independiente** de `esCacheable`. HIT también marca. 409/502 no marcan cotizado.
@@ -663,7 +677,7 @@ Refresco de estado en bloque + captura de resultado + cuota Flash OCR a BD + det
 | Web local | `d:\ROLANDO\DEV_APPS\seace8uit\seace-web` |
 | Worker local | `d:\ROLANDO\DEV_APPS\seace8uit\seace-ai-proxy` |
 | Trigger local | `d:\ROLANDO\DEV_APPS\seace8uit\seace-pipeline-trigger` |
-| HEAD monitor | `c7d5b7c` |
+| HEAD monitor | `206eb22` |
 | HEAD web | `8a0b596` (sin cambios en esta sesion; no re-verificado el 5 sep) |
 | HEAD worker | `da3caf8` (sin cambios en esta sesion; no re-verificado el 5 sep) |
 | Worker CF Gemini | `cbf31b49-e3e7-44b0-a8cf-6cd4f5113ad4` |
