@@ -113,18 +113,19 @@ jobs:
       # pendientes. Mismas reglas/topes del diario (--max-segundos 7200,
       # --rpm 6, --max-ocr-dia 6000). La cola acá es chica (contratos nuevos TI),
       # así que termina rápido pese al reloj de 2 h.
-      - name: OCR selectivo (TI, páginas imagen)
+      - name: OCR selectivo (TI, incl. por-abrir, páginas imagen)
         id: ocr
         if: ${{ success() && steps.pdf.outcome == 'success' }}
         continue-on-error: true
         timeout-minutes: 30
-        run: python descargar_requerimiento.py --solo-ocr --solo-ti \
+        run: python descargar_requerimiento.py --solo-ocr --solo-ti --incluir-por-abrir \
           --max-segundos 7200 --rpm 6 --max-ocr-dia 6000 --limit 0
 
-      # Análisis IA de postulables (mismo script y flag del diario). Idempotente:
-      # solo procesa postulables sin fila previa con el mismo pdf_hash. Con el
-      # TDR recién extraído (nativo + OCR) ya puede analizar sin esperar al diario.
-      - name: Analizar postulables
+      # Análisis IA de postulables y por-abrir (mismo script y flag del diario).
+      # Idempotente: solo procesa contratos sin fila previa con el mismo pdf_hash.
+      # Con el TDR recién extraído (nativo + OCR) ya puede analizar, incluidos los
+      # por-abrir, sin esperar al diario de las 09:00.
+      - name: Analizar postulables y por-abrir (anticipado)
         id: analizar
         if: ${{ !cancelled() }}
         continue-on-error: true

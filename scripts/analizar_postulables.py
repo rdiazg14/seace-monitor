@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
-"""Backfill de analisis_contrato para postulables actuales.
+"""Backfill de analisis_contrato para postulables y por-abrir (anticipado).
 
 Llama POST /analizar del Worker (el Worker persiste). No escribe SQL.
 No toca categoria_it ni contratos.
 
-Cola: v_contratos_estado.es_postulable + texto + no hay fila con el
-pdf_hash actual y prompt_version. Si SEACE reemplaza el PDF, pdf_hash
-cambia y el análisis viejo no cuenta: vuelve a entrar.
+Cola: v_contratos_estado (universo TI/IA) con es_postulable O es_por_abrir
++ texto + sin fila con el pdf_hash actual y prompt_version. Si SEACE
+reemplaza el PDF, pdf_hash cambia y el análisis viejo no cuenta: vuelve a
+entrar.
+
+Análisis anticipado: los es_por_abrir (ventana todavía no abierta) que ya
+tienen su TDR se analizan igual que los postulables, siguiendo la misma
+lógica (universo TI/IA + gate de texto). Así el score llega con IA antes
+de que abra la ventana. El orden prioriza el cierre más próximo: lo que
+vence antes se analiza antes, sea postulable o por-abrir.
 
 Gate de texto: tdr_texto >= 200 chars, o chunks con fuente='pdf'. Los
 chunks fuente='api' son metadatos de la ficha (descripcion + item +
@@ -60,10 +67,11 @@ _SQL_COLA = """
                 ELSE btrim(c.pdf_hash)
               END
               AND a.prompt_version = %s
-          ) AS ya_en_bd
+          ) AS ya_en_bd,
+          v.es_postulable AS es_postulable
         FROM v_contratos_estado v
         JOIN contratos c ON c.id = v.id
-        WHERE v.es_postulable
+        WHERE (v.es_postulable OR v.es_por_abrir)
         ORDER BY c.fecha_fin_cotizacion ASC NULLS LAST, c.id
         """
 
@@ -110,6 +118,7 @@ def _map_rows(rows: list[tuple]) -> list[dict]:
             "n_chunks_pdf": n_chunks_pdf,
             "ya_en_bd": bool(r[7]),
             "con_texto": _tiene_texto(tdr_len, n_chunks_pdf),
+            "postulable": bool(r[8]),
         })
     return out
 
@@ -122,32 +131,35 @@ def cargar_postulables_pg(dsn: str) -> list[dict]:
     return _map_rows(rows)
 
 
-def _rest_ids_postulables(supa) -> list[int]:
-    ids: list[int] = []
+def _rest_ids_cola(supa) -> dict[int, bool]:
+    """Ids del universo TI/IA postulables o por-abrir, con flag postulable."""
+    out: dict[int, bool] = {}
     offset = 0
     page = 1000
     while True:
         res = (
             supa.table("v_contratos_estado")
-            .select("id")
-            .eq("es_postulable", True)
+            .select("id,es_postulable")
+            .or_("es_postulable.eq.true,es_por_abrir.eq.true")
             .order("id")
             .range(offset, offset + page - 1)
             .execute()
         )
         batch = res.data or []
-        ids.extend(int(r["id"]) for r in batch)
+        for r in batch:
+            out[int(r["id"])] = bool(r.get("es_postulable"))
         if len(batch) < page:
             break
         offset += page
-    return ids
+    return out
 
 
 def cargar_postulables_rest(supa) -> list[dict]:
     """Cola vía PostgREST (GitHub Actions si no hay DATABASE_URL)."""
-    ids = _rest_ids_postulables(supa)
-    if not ids:
+    cola = _rest_ids_cola(supa)
+    if not cola:
         return []
+    ids = list(cola.keys())
     by_id: dict[int, dict] = {}
     for i in range(0, len(ids), 80):
         lote = ids[i : i + 80]
@@ -203,6 +215,7 @@ def cargar_postulables_rest(supa) -> list[dict]:
                 "n_chunks_pdf": n_chunks_pdf,
                 "ya_en_bd": actual in hashes.get(cid, set()),
                 "con_texto": _tiene_texto(tdr_len, n_chunks_pdf),
+                "postulable": cola.get(cid, False),
                 "fin": c.get("fecha_fin_cotizacion") or "",
             }
     ordered = [by_id[i] for i in ids if i in by_id]
@@ -267,7 +280,7 @@ def _es_cupo(status: int, body: dict) -> bool:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Backfill /analizar de postulables")
+    ap = argparse.ArgumentParser(description="Backfill /analizar de postulables y por-abrir")
     ap.add_argument("--dry-run", action="store_true", help="Lista sin llamar al Worker")
     ap.add_argument("--limit", type=int, default=0, help="Tope de llamadas (0 = todos)")
     args = ap.parse_args()
@@ -301,11 +314,14 @@ def main() -> int:
     ya = [r for r in filas if r["ya_en_bd"]]
     sin_texto = [r for r in filas if not r["ya_en_bd"] and not r["con_texto"]]
     candidatos = [r for r in filas if not r["ya_en_bd"] and r["con_texto"]]
+    n_post = sum(1 for r in filas if r["postulable"])
+    n_abrir = sum(1 for r in filas if not r["postulable"])
     if args.limit > 0:
         candidatos = candidatos[: args.limit]
 
     print(
-        f"postulables={len(filas)} ya_existentes={len(ya)} "
+        f"cola={len(filas)} (postulables={n_post} por_abrir={n_abrir}) "
+        f"ya_existentes={len(ya)} "
         f"sin_texto={len(sin_texto)} candidatos={len(candidatos)} "
         f"via_servicio={'si' if token else 'no'}",
         flush=True,
