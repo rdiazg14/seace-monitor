@@ -7,10 +7,12 @@ nomEstadoContrato + cotizar + fecIni/fecFinCotizacion para TODO el corpus en
 páginas de 100. Una pasada completa (~778 páginas, ~5-8 min) refresca estado,
 cotizar y fechas de todos los contratos, en vez de ~6000 requests al detalle.
 
-También es la red de seguridad contra deltas: al leer el listado completo no se
-escapa ningún contrato nuevo ni ningún cambio de estado. La ingesta incremental
-sigue capturando los altas con su flujo completo (validación + clasificación);
-este script solo actualiza columnas de estado/fechas, idempotente.
+La ingesta incremental (ingesta_completa.py) captura las altas con su flujo
+completo (validación + clasificación); este script solo actualiza columnas de
+estado/fechas de contratos YA EXISTENTES, idempotente. No inserta filas nuevas:
+el listado trae contratos históricos que nunca pasaron por la ingesta y un
+upsert los crearía como «fantasmas» sin descripcion/entidad (incompletos en el
+Buscador).
 
 Uso:
   python refrescar_estados_bloque.py
@@ -82,6 +84,34 @@ def upsert_lote(supa, lote: list[dict]) -> int:
     return len(lote)
 
 
+def cargar_ids_existentes(supa) -> set[int]:
+    """Ids que ya existen en contratos (los únicos que se refrescan aquí).
+
+    El listado trae contratos históricos que nunca pasaron por la ingesta
+    (id < MAX y fuera del backfill original). Hacerles upsert los insertaría
+    como «fantasmas» con solo estado/fechas y sin descripcion/entidad, que
+    luego aparecen incompletos en el Buscador. Por eso este paso actualiza
+    SOLO ids existentes; las altas las cubre ingesta_completa.py.
+    """
+    ids: set[int] = set()
+    offset = 0
+    page = 1000
+    while True:
+        res = (
+            supa.table("contratos")
+            .select("id")
+            .order("id")
+            .range(offset, offset + page - 1)
+            .execute()
+        )
+        batch = res.data or []
+        ids.update(int(r["id"]) for r in batch)
+        if len(batch) < page:
+            break
+        offset += page
+    return ids
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit-paginas", type=int, default=0,
@@ -99,10 +129,18 @@ def main():
     print("Refresco de estado en bloque (listado)", flush=True)
     print("=" * 60, flush=True)
 
+    ids_existentes = cargar_ids_existentes(supa)
+    print(f"contratos existentes en BD: {len(ids_existentes):,}", flush=True)
+
     t0 = time.time()
     total_vistos = 0
     por_estado: dict[str, int] = {}
     pendiente: list[dict] = []
+    # El listado de SEACE repite el mismo idContrato entre páginas (orden
+    # inestable en la API de búsqueda). Sin dedup, el UPSERT con on_conflict
+    # revienta con «ON CONFLICT DO UPDATE command cannot affect row a second
+    # time» (21000) apenas un lote trae dos filas con el mismo id.
+    vistos: set[int] = set()
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=not args.headed)
@@ -134,11 +172,17 @@ def main():
                 cid = r.get("idContrato")
                 if cid is None:
                     continue
+                cid = int(cid)
+                if cid in vistos:
+                    continue
+                vistos.add(cid)
+                if cid not in ids_existentes:
+                    continue
                 estado = r.get("nomEstadoContrato")
                 por_estado[estado] = por_estado.get(estado, 0) + 1
                 total_vistos += 1
                 pendiente.append({
-                    "id": int(cid),
+                    "id": cid,
                     "estado": estado,
                     "cotizar": bool(r.get("cotizar", False)),
                     "fecha_ini_cotizacion": parsear_fecha(r.get("fecIniCotizacion")),
