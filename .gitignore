@@ -33,3 +33,9 @@ data/clasificacion_cuota.json
 
 # Exportes CSV locales para revisión (no son fuente)
 /exports/
+
+# Documentación: solo local, no subir a GitHub (seguridad)
+docs/
+README.md
+PROYECTO_SEACE_MONITOR.md
+DOCUMENTACION.md
