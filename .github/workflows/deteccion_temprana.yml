@@ -123,8 +123,9 @@ jobs:
         if: ${{ success() && steps.pdf.outcome == 'success' }}
         continue-on-error: true
         timeout-minutes: 30
-        run: python descargar_requerimiento.py --solo-ocr --solo-ti --incluir-por-abrir \
-          --max-segundos 7200 --rpm 6 --max-ocr-dia 6000 --limit 0
+        run: |
+          python descargar_requerimiento.py --solo-ocr --solo-ti --incluir-por-abrir \
+            --max-segundos 7200 --rpm 6 --max-ocr-dia 6000 --limit 0
 
       # Análisis IA de postulables y por-abrir (mismo script y flag del diario).
       # Idempotente: solo procesa contratos sin fila previa con el mismo pdf_hash.
