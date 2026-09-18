@@ -90,9 +90,11 @@ jobs:
       # Refresco acotado de estado: solo Vigentes IT/IA postulables o por abrir
       # (~15-40), no los ~1900 del diario. Rápido (segundos), para que un
       # contrato que SEACE ya cerró no siga apareciendo postulable entre diarios.
+      # No depende de "Detalle web": si ese paso da statement_timeout, el estado
+      # acotado y la descarga del PDF deben seguir (igual que el pipeline diario).
       - name: Refresco de estados (acotado)
         id: g1
-        if: ${{ success() && steps.detalle.outcome == 'success' }}
+        if: ${{ success() }}
         continue-on-error: true
         run: python refresh_estados.py --solo-postulables
 
@@ -101,9 +103,12 @@ jobs:
       # sin analizar. --limit 40 es tope de seguridad; el resto lo hace el
       # diario. PyMuPDF no gasta Flash; el OCR (Flash) viene después, solo
       # para las páginas imagen que este paso marca como pendientes.
+      # No depende de "Detalle web" (descargar_requerimiento solo usa
+      # pdf_descargado=false + estado=Vigente); así el TDR se descarga aunque
+      # el enriquecimiento falle por statement_timeout.
       - name: PDF nativo (PyMuPDF, sin Flash)
         id: pdf
-        if: ${{ success() && steps.detalle.outcome == 'success' }}
+        if: ${{ success() }}
         continue-on-error: true
         timeout-minutes: 8
         run: python descargar_requerimiento.py --solo-nativo --limit 40
