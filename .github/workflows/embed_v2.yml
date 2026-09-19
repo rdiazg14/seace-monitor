@@ -41,13 +41,13 @@ jobs:
           pip install "supabase>=2.0" "httpx>=0.27"
 
       - name: Probar GEMINI_API_KEY
-        run: python generar_embeddings.py --backend gemini --auth-check
+        run: python generar_embeddings.py --auth-check
 
       - name: Embeddings gemini-embedding-001 @1536
         run: |
           LIMIT="${{ github.event.inputs.limit }}"
           if [ -z "$LIMIT" ] || [ "$LIMIT" = "0" ]; then
-            python generar_embeddings.py --backend gemini
+            python generar_embeddings.py
           else
-            python generar_embeddings.py --backend gemini --limit "$LIMIT"
+            python generar_embeddings.py --limit "$LIMIT"
           fi

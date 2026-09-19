@@ -28,10 +28,12 @@ print("=" * 60)
 print("Verificando schema RAG en Supabase...")
 print("=" * 60)
 
-# 1. Verificar columnas nuevas en contratos
-res = supa.rpc("buscar_tdr", {
-    "query_embedding": [0.0] * 768,
+# 1. Verificar la función buscar_tdr_v2 existe (Gemini @1536)
+res = supa.rpc("buscar_tdr_v2", {
+    "query_embedding": [0.0] * 1536,
     "match_count": 1,
+    "filter_estado": "Vigente",
+    "min_similarity": 0.20,
 }).execute()
 funcion_ok = True  # Si llegamos aquí sin excepción, existe
 
@@ -53,7 +55,7 @@ except Exception as e:
     columnas_ok = False
     print(f"  [ERROR] columnas contratos: {e}")
 
-print(f"\n  pgvector + función buscar_tdr : {'✓ OK' if funcion_ok else '✗ FALTA'}")
+print(f"\n  pgvector + función buscar_tdr_v2 : {'✓ OK' if funcion_ok else '✗ FALTA'}")
 print(f"  tabla chunks_tdr             : {'✓ OK' if tabla_ok else '✗ FALTA'}")
 print(f"  columnas en contratos        : {'✓ OK' if columnas_ok else '✗ FALTA'}")
 

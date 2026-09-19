@@ -52,8 +52,8 @@ con_items = q("items_json IS NOT NULL",
 print("\n── Tabla: chunks_tdr ────────────────────────────────────────")
 total_chunks = q("Total chunks",
     lambda: supa.table("chunks_tdr").select("id", count="exact").execute().count)
-con_emb_res = supa.table("chunks_tdr").select("id", count="exact").not_.is_("embedding", "null").execute()
-con_emb = q("embedding IS NOT NULL",
+con_emb_res = supa.table("chunks_tdr").select("id", count="exact").not_.is_("embedding_v2", "null").execute()
+con_emb = q("embedding_v2 IS NOT NULL",
     lambda: con_emb_res.count)
 
 # Distribución por tipo
@@ -72,8 +72,8 @@ sin_detalle_res = supa.table("contratos").select("id", count="exact").eq("estado
 sin_detalle = q("Vigentes sin detalle (esperado: 0)",
     lambda: sin_detalle_res.count)
 
-sin_emb_res = supa.table("chunks_tdr").select("id", count="exact").is_("embedding", "null").execute()
-sin_emb = q("Chunks sin embedding (esperado: 0)",
+sin_emb_res = supa.table("chunks_tdr").select("id", count="exact").is_("embedding_v2", "null").execute()
+sin_emb = q("Chunks sin embedding_v2 (esperado: 0)",
     lambda: sin_emb_res.count)
 
 print("\n── Alertas ──────────────────────────────────────────────────")

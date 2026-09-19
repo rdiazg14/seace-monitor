@@ -2,6 +2,12 @@
 -- FASE 1.2 — Esquema RAG para SEACE Monitor
 -- Ejecutar en Supabase SQL Editor (una sola vez)
 -- ============================================================
+--
+-- ⚠ DEPRECADO (19 sep): este archivo crea el bundle v1 (embedding(768)
+--   bge + índice ivfflat + buscar_tdr(768)). Fue retirado en la FASE 7
+--   (ver fase7_drop_embedding_768.sql). El RAG vigente usa Gemini:
+--   embedding_v2(1536) + buscar_tdr_v2 + HNSW (ver buscar_tdr_v2.sql).
+--   NO re-ejecutar salvo que se quiera recrear el bundle v1.
 
 -- 1. Extensión pgvector
 -- Habilita el tipo vector y operadores de similitud coseno

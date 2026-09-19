@@ -2,16 +2,13 @@
 """
 Embeddings para chunks_tdr.
 
-  bge    (default, cron v1)  → columna embedding(768)  WHERE embedding IS NULL
-  gemini (--backend gemini)  → columna embedding_v2(1536) WHERE embedding_v2 IS NULL
-                               SOLO chunks de contratos Vigente.
-                               No toca embedding(768). Idempotente.
+  gemini → columna embedding_v2(1536) WHERE embedding_v2 IS NULL
+           SOLO chunks de contratos Vigente. Idempotente.
 
 Uso:
   python generar_embeddings.py [--limit N]
-  python generar_embeddings.py --backend gemini [--limit N]
-  python generar_embeddings.py --backend gemini --cobertura
-  python generar_embeddings.py --backend gemini --auth-check
+  python generar_embeddings.py --cobertura
+  python generar_embeddings.py --auth-check
 """
 from __future__ import annotations
 
@@ -37,10 +34,6 @@ if _env.exists():
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
-EMBED_URL = os.environ.get(
-    "EMBED_URL",
-    "https://seace-ai-proxy.rdiazg14.workers.dev/embed",
-)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_EMBED_MODEL = "gemini-embedding-001"
 GEMINI_EMBED_URL = (
@@ -52,9 +45,6 @@ GEMINI_DIM = 1536
 EMBED_USD_PER_M = 0.0375
 
 PAGE = 1_000
-BATCH = 20
-DELAY_S = 1.0
-MAX_CHARS = 2_000  # bge-base-en-v1.5 max 512 tokens
 
 BATCH_GEMINI = 16
 DELAY_GEMINI_S = 0.4
@@ -135,53 +125,6 @@ def l2_normalize(vec: list[float]) -> list[float]:
     if s <= 0:
         return vec
     return [x / s for x in vec]
-
-
-def embed_lote(client: httpx.Client, texts: list[str]) -> list[list[float]]:
-    waits = [2.0, 4.0, 8.0]
-    last_err: Exception | None = None
-    for attempt, wait in enumerate([0.0] + waits):
-        if wait:
-            time.sleep(wait)
-        try:
-            r = client.post(EMBED_URL, json={"texts": texts}, timeout=60.0)
-            r.raise_for_status()
-            body = r.json()
-            embs = body.get("embeddings")
-            if not isinstance(embs, list) or len(embs) != len(texts):
-                raise RuntimeError(f"respuesta inesperada: keys={list(body)[:8]} n={len(embs) if isinstance(embs, list) else None}")
-            if embs and len(embs[0]) != 768:
-                raise RuntimeError(f"dimensión {len(embs[0])} != 768")
-            return embs
-        except Exception as e:
-            last_err = e
-            print(f"    [retry {attempt}] {e}", flush=True)
-    raise RuntimeError(f"embed_lote falló: {last_err}")
-
-
-def chunks_sin_embedding(supa, limit: int) -> list[dict]:
-    out: list[dict] = []
-    offset = 0
-    while True:
-        take = PAGE if not limit else min(PAGE, limit - len(out))
-        if take <= 0:
-            break
-        res = (
-            supa.table("chunks_tdr")
-            .select("id, contrato_id, chunk_index, tipo, texto")
-            .is_("embedding", "null")
-            .order("id")
-            .range(offset, offset + take - 1)
-            .execute()
-        )
-        batch = res.data or []
-        out.extend(batch)
-        if len(batch) < take:
-            break
-        offset += take
-        if limit and len(out) >= limit:
-            break
-    return out[:limit] if limit else out
 
 
 def paginar_ids_vigentes(supa) -> list[int]:
@@ -366,7 +309,6 @@ def cobertura_vigentes(supa) -> dict[str, int]:
     ids = paginar_ids_vigentes(supa)
     total = 0
     con_v2 = 0
-    con_v1 = 0
     for i in range(0, len(ids), 80):
         lote = ids[i:i + 80]
         t = (
@@ -386,20 +328,10 @@ def cobertura_vigentes(supa) -> dict[str, int]:
             .execute()
         )
         con_v2 += v2.count or 0
-        v1 = (
-            supa.table("chunks_tdr")
-            .select("id", count="exact")
-            .in_("contrato_id", lote)
-            .not_.is_("embedding", "null")
-            .limit(1)
-            .execute()
-        )
-        con_v1 += v1.count or 0
     return {
         "vigentes": len(ids),
         "chunks_vigentes": total,
         "chunks_v2": con_v2,
-        "chunks_v1_768": con_v1,
         "chunks_v2_null": total - con_v2,
     }
 
@@ -407,76 +339,12 @@ def cobertura_vigentes(supa) -> dict[str, int]:
 def print_cobertura(cov: dict[str, int]) -> None:
     tot = cov["chunks_vigentes"]
     pct = (100.0 * cov["chunks_v2"] / tot) if tot else 0.0
-    pct768 = (100.0 * cov["chunks_v1_768"] / tot) if tot else 0.0
     print("=" * 60, flush=True)
     print("COBERTURA chunks de VIGENTES", flush=True)
     print(f"  contratos vigentes     : {cov['vigentes']:,}", flush=True)
     print(f"  chunks vigentes        : {tot:,}", flush=True)
     print(f"  embedding_v2 NOT NULL  : {cov['chunks_v2']:,}  ({pct:.1f}%)", flush=True)
     print(f"  embedding_v2 NULL      : {cov['chunks_v2_null']:,}", flush=True)
-    print(f"  embedding(768) NOT NULL: {cov['chunks_v1_768']:,}  ({pct768:.1f}%)", flush=True)
-    print("=" * 60, flush=True)
-
-
-def run_bge(supa, limit: int) -> None:
-    print("=" * 60, flush=True)
-    print("FASE 4 — Embeddings bge-base-en-v1.5 -> embedding(768)", flush=True)
-    print(f"  endpoint: {EMBED_URL}", flush=True)
-    print("=" * 60, flush=True)
-
-    pendientes = chunks_sin_embedding(supa, limit)
-    total = len(pendientes)
-    print(f"Chunks sin embedding(768): {total:,}", flush=True)
-    if total == 0:
-        print("Nada que hacer.", flush=True)
-        return
-
-    t0 = time.time()
-    ok = 0
-    errores = 0
-
-    with httpx.Client() as http:
-        for i in range(0, total, BATCH):
-            lote = pendientes[i:i + BATCH]
-            texts = [(row.get("texto") or "")[:MAX_CHARS] for row in lote]
-            try:
-                embs = embed_lote(http, texts)
-                updates = [
-                    {
-                        "id": row["id"],
-                        "contrato_id": row["contrato_id"],
-                        "chunk_index": row["chunk_index"],
-                        "tipo": row["tipo"],
-                        "texto": row["texto"],
-                        "embedding": vec_literal(vec),
-                    }
-                    for row, vec in zip(lote, embs)
-                ]
-                supa.table("chunks_tdr").upsert(updates, on_conflict="id").execute()
-                ok += len(lote)
-            except Exception as e:
-                errores += len(lote)
-                print(f"  [error] lote {i}-{i+len(lote)}: {e}", flush=True)
-
-            done = min(i + BATCH, total)
-            if done % 100 < BATCH or done == total:
-                elapsed = time.time() - t0
-                print(f"  [{done}/{total}] ok={ok} err={errores} {elapsed:.0f}s", flush=True)
-            time.sleep(DELAY_S)
-
-    elapsed = time.time() - t0
-    con_emb = (
-        supa.table("chunks_tdr")
-        .select("id", count="exact")
-        .not_.is_("embedding", "null")
-        .limit(1)
-        .execute()
-    )
-    print(f"\n{'='*60}", flush=True)
-    print(f"Fase 4 completada en {elapsed:.0f}s", flush=True)
-    print(f"  Procesados OK : {ok:,}", flush=True)
-    print(f"  Errores       : {errores:,}", flush=True)
-    print(f"  Con embedding : {con_emb.count:,}", flush=True)
     print("=" * 60, flush=True)
 
 
@@ -690,12 +558,6 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=0, help="0 = todos")
     ap.add_argument(
-        "--backend",
-        choices=["bge", "gemini"],
-        default="bge",
-        help="bge = embedding(768) cron v1; gemini = embedding_v2(1536) vigentes",
-    )
-    ap.add_argument(
         "--cobertura",
         action="store_true",
         help="Solo reporta cobertura v2 de vigentes; no embebe",
@@ -763,19 +625,16 @@ def main():
         print(f"reset embedding_v2: {n} filas (fuente={args.fuente} ids={ids})", flush=True)
         return
 
-    if args.backend == "gemini":
-        run_gemini(
-            supa,
-            args.limit,
-            fuente=(args.fuente or None),
-            ids=ids,
-            batch=(args.batch or None),
-            embed_mode=args.embed_mode,
-            delay=(None if args.delay < 0 else args.delay),
-            fail_fast=args.fail_fast,
-        )
-    else:
-        run_bge(supa, args.limit)
+    run_gemini(
+        supa,
+        args.limit,
+        fuente=(args.fuente or None),
+        ids=ids,
+        batch=(args.batch or None),
+        embed_mode=args.embed_mode,
+        delay=(None if args.delay < 0 else args.delay),
+        fail_fast=args.fail_fast,
+    )
 
 
 if __name__ == "__main__":
