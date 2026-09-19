@@ -373,48 +373,84 @@ def run_baseline(corpus: dict) -> None:
     print(f"Guardado: {out}", flush=True)
 
 
-def run_variant(corpus: dict, tag: str) -> None:
+def embed_pdf_resumable(texts: list[str], tag: str, delay: float) -> tuple[np.ndarray, bool]:
+    """Embebe con resume en disco (memmap + progress). Devuelve (matriz, completo).
+
+    - fail_fast=True: ante 429/errores PARA de inmediato y guarda progreso
+      (no pierde chunks embebidos; se reanuda re-ejecutando el mismo comando).
+    - Completo = True solo si se embebieron TODOS los chunks.
+    """
+    total = len(texts)
+    dim = ge.GEMINI_DIM
+    emb_path = DATA / f"chunk_emb_{tag}.npy"
+    prog_path = DATA / f"chunk_emb_{tag}.progress.json"
+
+    if emb_path.exists():
+        mm = np.load(emb_path, mmap_mode="r+")
+        if mm.shape != (total, dim):
+            print(f"  [reset] shape {mm.shape} != ({total},{dim}); recreando", flush=True)
+            del mm
+            emb_path.unlink()
+            mm = np.lib.format.open_memmap(emb_path, mode="w+", dtype=np.float32, shape=(total, dim))
+    else:
+        mm = np.lib.format.open_memmap(emb_path, mode="w+", dtype=np.float32, shape=(total, dim))
+
+    done = 0
+    if prog_path.exists():
+        done = int(json.loads(prog_path.read_text(encoding="utf-8")).get("done", 0))
+    done = max(0, min(done, total))
+    print(f"  [resume] {tag}: {done}/{total} ya embebidos", flush=True)
+
+    t0 = time.time()
+    with httpx.Client() as http:
+        i = done
+        while i < total:
+            lote = texts[i:i + ge.BATCH_GEMINI]
+            try:
+                vecs_lote = ge.embed_lote_gemini(http, lote, fail_fast=True)
+            except ge.QuotaExceeded as e:
+                print(f"  [429] lote {i}: {e}", flush=True)
+                print(f"  progreso guardado: {i}/{total}. Reanuda re-ejecutando el mismo comando.", flush=True)
+                mm.flush()
+                return mm, False
+            except Exception as e:
+                print(f"  [error] lote {i}: {e}", flush=True)
+                mm.flush()
+                return mm, False
+            n = len(vecs_lote)
+            for j, v in enumerate(vecs_lote):
+                mm[i + j] = np.array(v, dtype=np.float32)
+            mm.flush()
+            i += n
+            prog_path.write_text(json.dumps({"done": i}), encoding="utf-8")
+            if i % (ge.BATCH_GEMINI * 25) == 0 or i >= total:
+                el = time.time() - t0
+                print(f"    [{i}/{total}] {el:.0f}s  {i/max(el,1):.1f}/s", flush=True)
+            time.sleep(delay)
+    mm.flush()
+    return mm, True
+
+
+def run_variant(corpus: dict, tag: str, delay: float) -> None:
     target, overlap = VARIANTES[tag]
     print(f"== VARIANTE {tag}  (target={target} overlap={overlap}) ==", flush=True)
     vecs, terminos, fts = cargar_queries()
     mcont = meta_contrato(corpus)
 
-    emb_path = DATA / f"chunk_emb_{tag}.npy"
     meta_path = DATA / f"chunk_emb_{tag}_meta.json"
-    if emb_path.exists() and meta_path.exists():
-        print(f"  [cache] reutilizando embeddings {tag}", flush=True)
-        pdf_emb = np.load(emb_path)
-        pdf_meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    else:
-        print(f"  Re-chunkeando TDR y embebiendo (pdf) para {tag}...", flush=True)
-        pdf_rows: list[dict] = []
-        for sid, c in corpus["contratos"].items():
-            pdf_rows.extend(chunks_pdf_variant(c, target, overlap))
-        print(f"  chunks pdf generados: {len(pdf_rows):,}", flush=True)
+    # Chunking determinístico (rápido): se regenera igual en cada resume.
+    pdf_rows: list[dict] = []
+    for sid, c in corpus["contratos"].items():
+        pdf_rows.extend(chunks_pdf_variant(c, target, overlap))
+    pdf_meta = [{"contrato_id": r["contrato_id"], "texto": r["texto"], "fuente": "pdf"} for r in pdf_rows]
+    meta_path.write_text(json.dumps(pdf_meta, ensure_ascii=False), encoding="utf-8")
+    print(f"  chunks pdf generados: {len(pdf_rows):,}", flush=True)
 
-        texts = [(r["chunk_embed_text"] or "")[:MAX_CHARS_GEMINI] for r in pdf_rows]
-        embs: list[np.ndarray] = []
-        t0 = time.time()
-        with httpx.Client() as http:
-            total = len(texts)
-            for i in range(0, total, ge.BATCH_GEMINI):
-                lote = texts[i:i + ge.BATCH_GEMINI]
-                try:
-                    vecs_lote = ge.embed_lote_gemini(http, lote)
-                except Exception as e:
-                    print(f"  [error] lote {i}: {e}", flush=True)
-                    raise
-                embs.extend(np.array(v, dtype=np.float32) for v in vecs_lote)
-                done = min(i + ge.BATCH_GEMINI, total)
-                if done % (ge.BATCH_GEMINI * 25) == 0 or done == total:
-                    el = time.time() - t0
-                    print(f"    [{done}/{total}] {el:.0f}s  {done/max(el,1):.1f}/s", flush=True)
-                time.sleep(ge.DELAY_GEMINI_S)
-        pdf_emb = np.vstack(embs) if embs else np.zeros((0, 1536), np.float32)
-        pdf_meta = [{"contrato_id": r["contrato_id"], "texto": r["texto"], "fuente": "pdf"} for r in pdf_rows]
-        np.save(emb_path, pdf_emb)
-        meta_path.write_text(json.dumps(pdf_meta, ensure_ascii=False), encoding="utf-8")
-        print(f"  embeddings {tag} guardados ({pdf_emb.shape[0]:,} chunks)", flush=True)
+    texts = [(r["chunk_embed_text"] or "")[:MAX_CHARS_GEMINI] for r in pdf_rows]
+    pdf_emb, completo = embed_pdf_resumable(texts, tag, delay)
+    if not completo:
+        print(f"  [incompleto] {tag}: eval no ejecutado. Progreso en disco; reanuda con el mismo comando.", flush=True)
+        return
 
     emb = np.vstack([corpus["api_emb"], pdf_emb])
     meta = corpus["api_meta"] + pdf_meta
@@ -453,6 +489,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--baseline", action="store_true")
     ap.add_argument("--variant", default="", help="tag de variante (300_0|300_60|250_50)")
+    ap.add_argument("--delay", type=float, default=0.5,
+                    help="Pausa entre lotes de embedding en segundos (default 0.5)")
     ap.add_argument("--report", action="store_true")
     args = ap.parse_args()
 
@@ -466,7 +504,7 @@ def main():
     elif args.variant:
         if args.variant not in VARIANTES:
             raise SystemExit(f"variant desconocida: {args.variant} (usar {list(VARIANTES)})")
-        run_variant(corpus, args.variant)
+        run_variant(corpus, args.variant, args.delay)
     else:
         raise SystemExit("Elige --baseline, --variant TAG o --report")
 
