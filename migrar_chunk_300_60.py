@@ -37,6 +37,7 @@ from supabase import create_client
 
 import chunker_contratos as cc
 import generar_embeddings as ge
+from pipeline_log import PASO_EMBEDDING, registrar_evento, registrar_run
 
 _env = Path(__file__).parent / ".env"
 if _env.exists():
@@ -274,6 +275,7 @@ def main() -> int:
     migrados = 0
     cupo = False
     t0 = time.time()
+    tokens_ini = int(ge.EMBED_STATS.get("tokens_api") or 0)
     with httpx.Client() as http:
         for i, c in enumerate(cola, 1):
             cid = int(c["id"])
@@ -311,6 +313,18 @@ def main() -> int:
             insertar_pdf(supa, new_chunks)
             marcar_version(supa, cid)
             migrados += 1
+            cost = estimar_costo(new_chunks)
+            registrar_evento(
+                supa,
+                cid,
+                "migrado_300_60",
+                n_chunks_pdf=cost["chunks"],
+                chars_tdr=cost["chars"],
+                tokens_est=cost["tokens"],
+                costo_usd=cost["usd"],
+                chunk_version=CHUNK_VERSION_DEST,
+                detalle={"target": TARGET, "overlap": OVERLAP},
+            )
             print(
                 f"[{i}/{len(cola)}] id={cid} chunks={len(new_chunks)} "
                 f"offset={offset} -> {CHUNK_VERSION_DEST}",
@@ -318,6 +332,38 @@ def main() -> int:
             )
 
     elapsed = time.time() - t0
+    tok_run = int(ge.EMBED_STATS.get("tokens_api") or 0) - tokens_ini
+    if tok_run > 0:
+        try:
+            supa.table("uso_ia").insert({
+                "componente": "embedding",
+                "modelo": ge.GEMINI_EMBED_MODEL,
+                "tokens_prompt": tok_run,
+                "tokens_total": tok_run,
+                "costo_usd": round(tok_run / 1_000_000.0 * ge.EMBED_USD_PER_M, 8),
+                "cache_hit": False,
+                "detalle": {
+                    "n_contratos": migrados,
+                    "chunk_version": CHUNK_VERSION_DEST,
+                    "target": TARGET,
+                    "overlap": OVERLAP,
+                },
+            }).execute()
+        except Exception as e:
+            print(f"  [warn] log_uso_ia migración: {e}", flush=True)
+    registrar_run(
+        supa,
+        PASO_EMBEDDING,
+        {
+            "migrados": migrados,
+            "cola": len(cola),
+            "tokens_api": tok_run,
+            "costo_usd": round(tok_run / 1_000_000.0 * ge.EMBED_USD_PER_M, 8),
+            "chunk_version": CHUNK_VERSION_DEST,
+            "cupo": cupo,
+            "elapsed_s": round(elapsed, 1),
+        },
+    )
     print(f"\nlisto migrados={migrados}/{len(cola)} en {elapsed:.0f}s cupo={cupo}", flush=True)
     return 1 if cupo else 0
 

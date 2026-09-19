@@ -41,7 +41,9 @@ from supabase import create_client
 from descargar_requerimiento import (
     DELAY_S,
     DESCARGAR_URL,
+    GEMINI_FLASH,
     LISTAR_URL,
+    OCR_USAGE_ACUM,
     SeaceHttp,
     _aplanar_cl,
     chars_utiles,
@@ -52,8 +54,10 @@ from descargar_requerimiento import (
     parse_ids,
     rechunk_embed_pdf,
     resumen_archivos,
+    usd_de_tokens,
 )
 from ingesta_completa import registrar_rechazo
+from pipeline_log import PASO_CONTENEDORES, registrar_evento, registrar_run
 
 # ── Cargar .env ────────────────────────────────────────────────────────────────
 _env = Path(__file__).parent / ".env"
@@ -498,6 +502,8 @@ def _payload_rechazo(c: dict, motivo: str, extra: dict | None = None) -> dict:
 def procesar_contenedor(http: SeaceHttp, supa, c: dict, dry_run: bool) -> str:
     """Intenta extraer el TDR del contenedor no-PDF. Devuelve un estado corto."""
     cid = int(c["id"])
+    # Reset del acumulador OCR para trazar solo este contrato.
+    OCR_USAGE_ACUM.update({"prompt": 0, "candidates": 0, "total": 0, "llamadas": 0})
     _url, archivos = listar_archivos(http, cid)
     es_sin_pdf = (c.get("req_url") or "") == "sin_pdf"
 
@@ -594,6 +600,36 @@ def procesar_contenedor(http: SeaceHttp, supa, c: dict, dry_run: bool) -> str:
     }
     if not dry_run:
         guardar_texto_contenedor(supa, cid, texto, meta)
+        registrar_evento(
+            supa,
+            cid,
+            "contenedor",
+            chars_tdr=chars_utiles(texto),
+            tipo_extraccion=f"contenedor_{tipo}",
+            detalle={"nombre": nombre, "archivos": resumen_archivos(archivos)},
+        )
+        # OCR embebido (imágenes de DOCX/ZIP/RAR): traza a uso_ia.
+        if OCR_USAGE_ACUM.get("llamadas", 0) > 0:
+            try:
+                supa.table("uso_ia").insert({
+                    "componente": "ocr",
+                    "modelo": GEMINI_FLASH,
+                    "tokens_prompt": int(OCR_USAGE_ACUM["prompt"]),
+                    "tokens_completion": int(OCR_USAGE_ACUM["candidates"]),
+                    "tokens_total": int(OCR_USAGE_ACUM["total"]),
+                    "costo_usd": usd_de_tokens(
+                        int(OCR_USAGE_ACUM["prompt"]),
+                        int(OCR_USAGE_ACUM["candidates"]),
+                    ),
+                    "cache_hit": False,
+                    "detalle": {
+                        "paginas_ocr": int(OCR_USAGE_ACUM["llamadas"]),
+                        "origen": f"contenedor_{tipo}",
+                        "contrato_id": cid,
+                    },
+                }).execute()
+            except Exception as e:
+                print(f"  [warn] log_uso_ia OCR contenedor: {e}", flush=True)
         try:
             rechunk_embed_pdf(supa, cid)
         except Exception as e:
@@ -675,6 +711,18 @@ def main() -> None:
     for k, v in sorted(estados.items(), key=lambda kv: -kv[1]):
         print(f"  {k}: {v}", flush=True)
     print("=" * 60, flush=True)
+    registrar_run(
+        supa,
+        PASO_CONTENEDORES,
+        {
+            "ok": ok,
+            "cola": len(filas),
+            "elapsed_s": round(elapsed, 1),
+            "estados": dict(estados),
+            "dry_run": args.dry_run,
+            "ids": ids or None,
+        },
+    )
 
 
 if __name__ == "__main__":

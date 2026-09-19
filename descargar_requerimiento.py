@@ -108,6 +108,10 @@ GASTO_STOP_PEN = 2.0
 FLASH_USD_IN_PER_M = 0.50
 FLASH_USD_OUT_PER_M = 3.00
 LAST_OCR_USAGE: dict = {}
+# Acumulado de tokens OCR entre llamadas a ocr_pagina_gemini (reseteable por el
+# caller). Útil para contenedores (extraer_contenedores.py), que hace OCR de N
+# imágenes sin pasar por registrar_ocr_ok.
+OCR_USAGE_ACUM: dict = {"prompt": 0, "candidates": 0, "total": 0, "llamadas": 0}
 BUCKET_TDR = "tdr"
 MAX_PDF_STORAGE_BYTES = 52_428_800
 _RUTA_ARBOL = re.compile(r"^tdr/\d{4}/\d{2}/\d+/\d+\.pdf$")
@@ -491,6 +495,10 @@ def ocr_pagina_gemini(img_bytes: bytes, mime: str = "image/jpeg") -> str:
                 "candidates": int(um.get("candidatesTokenCount") or 0),
                 "total": int(um.get("totalTokenCount") or 0),
             })
+            OCR_USAGE_ACUM["prompt"] += int(um.get("promptTokenCount") or 0)
+            OCR_USAGE_ACUM["candidates"] += int(um.get("candidatesTokenCount") or 0)
+            OCR_USAGE_ACUM["total"] += int(um.get("totalTokenCount") or 0)
+            OCR_USAGE_ACUM["llamadas"] += 1
             parts = (
                 (body.get("candidates") or [{}])[0]
                 .get("content", {})

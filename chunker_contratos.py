@@ -23,6 +23,8 @@ from pathlib import Path
 
 from supabase import create_client
 
+from pipeline_log import PASO_CHUNKING, registrar_evento, registrar_run
+
 _env = Path(__file__).parent / ".env"
 if _env.exists():
     for line in _env.read_text(encoding="utf-8").splitlines():
@@ -545,7 +547,7 @@ def run_solo_pdf(
     """Inserta chunks fuente=pdf. No borra ni reescribe fuente=api."""
     cols = (
         "id, nro_contratacion, descripcion_contrato, descripcion, entidad, "
-        "objeto, estado, nom_area_usuaria, items_json, tdr_texto"
+        "objeto, estado, nom_area_usuaria, items_json, tdr_texto, chunk_version"
     )
     if ids_fijos:
         res = supa.table("contratos").select(cols).in_("id", ids_fijos).execute()
@@ -600,6 +602,16 @@ def run_solo_pdf(
         buffer.extend(chs)
         n_chunks += len(chs)
         n_contratos += 1
+        chars = sum(len((ch.get("chunk_embed_text") or "")) for ch in chs)
+        registrar_evento(
+            supa,
+            int(c["id"]),
+            "chunked",
+            n_chunks_pdf=len(chs),
+            chars_tdr=chars,
+            chunk_version=(c.get("chunk_version") or "500_0"),
+            detalle={"target": TARGET_SUBCHUNK, "overlap": 0},
+        )
         if len(pendientes) <= 40 or i % 25 == 0 or i == len(pendientes):
             print(
                 f"  [{i}/{len(pendientes)}] id={c['id']} "
@@ -616,6 +628,19 @@ def run_solo_pdf(
     elapsed = time.time() - t0
     print(f"\n{'='*60}", flush=True)
     print(f"PDF chunking en {elapsed:.0f}s  contratos={n_contratos} chunks={n_chunks}", flush=True)
+    registrar_run(
+        supa,
+        PASO_CHUNKING,
+        {
+            "contratos": n_contratos,
+            "chunks": n_chunks,
+            "elapsed_s": round(elapsed, 1),
+            "target": TARGET_SUBCHUNK,
+            "overlap": 0,
+            "ids": ids_fijos or None,
+            "solo_nuevos": solo_nuevos,
+        },
+    )
     if ids_fijos or solo_nuevos:
         print("=" * 60, flush=True)
         return

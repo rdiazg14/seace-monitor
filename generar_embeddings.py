@@ -25,6 +25,7 @@ import httpx
 from supabase import create_client
 
 from chunker_contratos import cuerpo_chunk
+from pipeline_log import PASO_EMBEDDING, registrar_evento, registrar_run
 
 _env = Path(__file__).parent / ".env"
 if _env.exists():
@@ -529,6 +530,7 @@ def run_gemini(
     t0 = time.time()
     ok = 0
     errores = 0
+    por_contrato: dict[int, dict] = {}
 
     with httpx.Client() as http:
         for i in range(0, total, lote_n):
@@ -555,6 +557,11 @@ def run_gemini(
                 ]
                 supa.table("chunks_tdr").upsert(updates, on_conflict="id").execute()
                 ok += len(lote)
+                for row, t in zip(lote, texts):
+                    cid = int(row["contrato_id"])
+                    acc = por_contrato.setdefault(cid, {"chunks": 0, "chars": 0})
+                    acc["chunks"] += 1
+                    acc["chars"] += len(t)
             except QuotaExceeded as e:
                 errores += len(lote)
                 pending = total - ok
@@ -610,10 +617,45 @@ def run_gemini(
                 "detalle": {
                     "texts": EMBED_STATS["texts"],
                     "requests": EMBED_STATS["requests"],
+                    "n_chunks": ok,
+                    "n_contratos": len(por_contrato),
+                    "fuente": fuente,
+                    "ids": ids or None,
                 },
             }).execute()
         except Exception as e:
             print(f"  [warn] log_uso_ia embeddings: {e}", flush=True)
+
+    # Seguimiento por contrato: prorrateo del costo de embedding por chars.
+    for cid, acc in por_contrato.items():
+        chars = acc["chars"]
+        tokens_est = chars // 4
+        costo = tokens_est / 1_000_000.0 * EMBED_USD_PER_M
+        registrar_evento(
+            supa,
+            cid,
+            "embedded",
+            n_chunks_pdf=acc["chunks"] if fuente == "pdf" else None,
+            n_chunks_api=acc["chunks"] if fuente == "api" else None,
+            tokens_est=tokens_est,
+            costo_usd=costo,
+            detalle={"chars": chars, "fuente": fuente, "modelo": GEMINI_EMBED_MODEL},
+        )
+
+    registrar_run(
+        supa,
+        PASO_EMBEDDING,
+        {
+            "ok": ok,
+            "errores": errores,
+            "total": total,
+            "contratos": len(por_contrato),
+            "tokens_api": tok,
+            "costo_usd": round(tok / 1_000_000.0 * EMBED_USD_PER_M, 8),
+            "fuente": fuente,
+            "ids": ids or None,
+        },
+    )
     return {"ok": ok, "err": errores, "total": total, "pendientes": total - ok}
 
 
