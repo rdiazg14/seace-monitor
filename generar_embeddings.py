@@ -47,6 +47,8 @@ GEMINI_EMBED_URL = (
     f"{GEMINI_EMBED_MODEL}:batchEmbedContents"
 )
 GEMINI_DIM = 1536
+# Precio gemini-embedding-001: USD por 1M tokens de entrada (input-only).
+EMBED_USD_PER_M = 0.0375
 
 PAGE = 1_000
 BATCH = 20
@@ -594,6 +596,24 @@ def run_gemini(
         print(f"  embedding_v2 NOT NULL en muestra: {n_pdf.count}", flush=True)
     else:
         print_cobertura(cobertura_vigentes(supa))
+    # Traza unificada de consumo: una fila por corrida de embeddings.
+    tok = EMBED_STATS["tokens_api"]
+    if tok > 0:
+        try:
+            supa.table("uso_ia").insert({
+                "componente": "embedding",
+                "modelo": GEMINI_EMBED_MODEL,
+                "tokens_prompt": tok,
+                "tokens_total": tok,
+                "costo_usd": round(tok / 1_000_000.0 * EMBED_USD_PER_M, 8),
+                "cache_hit": False,
+                "detalle": {
+                    "texts": EMBED_STATS["texts"],
+                    "requests": EMBED_STATS["requests"],
+                },
+            }).execute()
+        except Exception as e:
+            print(f"  [warn] log_uso_ia embeddings: {e}", flush=True)
     return {"ok": ok, "err": errores, "total": total, "pendientes": total - ok}
 
 

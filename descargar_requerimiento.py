@@ -1059,6 +1059,19 @@ def registrar_ocr_ok(supa, cuota: dict, max_dia: int) -> None:
     cuota["out_tokens"] = int(cuota.get("out_tokens") or 0) + out
     cuota["usd_est"] = float(cuota.get("usd_est") or 0) + page_usd
     guardar_cuota_ocr(supa, cuota)
+    if supa is not None:
+        try:
+            supa.table("uso_ia").insert({
+                "componente": "ocr",
+                "modelo": GEMINI_FLASH,
+                "tokens_prompt": prompt,
+                "tokens_completion": out,
+                "tokens_total": prompt + out,
+                "costo_usd": page_usd,
+                "cache_hit": False,
+            }).execute()
+        except Exception as e:
+            print(f"  [warn] log_uso_ia OCR: {e}", flush=True)
     if int(cuota["requests"]) >= max_dia:
         raise CupoFlash(
             f"tope diario {max_dia} Flash (usadas={cuota['requests']})",
