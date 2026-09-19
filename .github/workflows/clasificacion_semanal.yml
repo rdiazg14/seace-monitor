@@ -132,10 +132,10 @@ jobs:
         continue-on-error: true
         run: python scripts/verificar_capas.py
 
-      - name: Evaluar candidatas de vocabulario
+      - name: Activar candidatas de vocabulario (tipo B)
         if: ${{ always() && !cancelled() && steps.aplicar.outcome == 'success' }}
         continue-on-error: true
-        run: python scripts/evaluar_candidatas.py --dry-run
+        run: python scripts/evaluar_candidatas.py
 
       - name: G3 aplicar
         if: ${{ always() && !cancelled() && (steps.consenso.outcome == 'failure' || steps.aplicar.outcome == 'failure') }}

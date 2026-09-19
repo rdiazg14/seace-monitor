@@ -268,7 +268,7 @@ def main() -> int:
             batch = conn.execute(
                 """
                 SELECT id, descripcion, descripcion_contrato, objeto, entidad, categoria_it
-                FROM contratos
+                FROM v_contratos
                 WHERE id > %s
                 ORDER BY id
                 LIMIT 8000
