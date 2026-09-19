@@ -271,24 +271,37 @@ SELECT
 FROM v_contratos c
 WHERE c.categoria_it IS NOT NULL OR c.relevancia_ia IS NOT NULL;
 
+-- Aligerada (19 sep): el CTE `it` ya no hace `SELECT c.*` sobre v_contratos,
+-- lo que materializaba columnas TOAST (tdr_texto, items_json, etapas_json,
+-- descripcion…) de ~4694 filas a disco (temp read/write). Ahora solo selecciona
+-- las columnas que necesita; descripcion/descripcion_contrato se leen SOLO para
+-- los postulables (~16 filas) en por_rubro. De 3.1 s a ~100 ms.
 CREATE OR REPLACE VIEW v_kpis_dashboard AS
 WITH hoy AS (
   SELECT seace_hoy_lima() AS d
 ),
 it AS (
   SELECT
-    c.*,
-    seace_fecha_lima(c.fecha_fin_cotizacion) AS fin,
-    seace_fecha_lima(c.fecha_publica) AS pub
-  FROM v_contratos c, hoy
-  WHERE c.categoria_it IS NOT NULL OR c.relevancia_ia IS NOT NULL
+    c.id,
+    c.estado,
+    c.fecha_ini_cotizacion,
+    c.fecha_fin_cotizacion,
+    c.fecha_publica,
+    cl.categoria_it,
+    cl.relevancia_ia
+  FROM contratos c
+  JOIN clasificacion_contrato cl ON cl.contrato_id = c.id
+  WHERE cl.categoria_it IS NOT NULL OR cl.relevancia_ia IS NOT NULL
 ),
 post AS (
-  SELECT *
+  SELECT
+    it.*,
+    seace_fecha_lima(it.fecha_fin_cotizacion) AS fin,
+    seace_fecha_lima(it.fecha_publica) AS pub
   FROM it
-  WHERE estado = 'Vigente'
-    AND (fecha_ini_cotizacion IS NULL OR fecha_ini_cotizacion <= now())
-    AND (fecha_fin_cotizacion IS NULL OR fecha_fin_cotizacion >= now())
+  WHERE it.estado = 'Vigente'
+    AND (it.fecha_ini_cotizacion IS NULL OR it.fecha_ini_cotizacion <= now())
+    AND (it.fecha_fin_cotizacion IS NULL OR it.fecha_fin_cotizacion >= now())
 )
 SELECT
   (SELECT count(*)::int FROM post) AS total_postulables,
@@ -306,8 +319,12 @@ SELECT
   ) AS vigentes_ventana_vencida,
   (SELECT count(*)::int FROM it WHERE estado = 'En Evaluación') AS en_evaluacion,
   (SELECT count(*)::int FROM it WHERE estado = 'Culminado') AS culminados_it,
-  (SELECT count(*)::int FROM it WHERE pub BETWEEN (SELECT d FROM hoy) - 6 AND (SELECT d FROM hoy)) AS altas_it_7d,
-  (SELECT count(*)::int FROM it WHERE pub BETWEEN (SELECT d FROM hoy) - 13 AND (SELECT d FROM hoy) - 7) AS altas_it_7d_prev,
+  (SELECT count(*)::int FROM it
+    WHERE seace_fecha_lima(fecha_publica) BETWEEN (SELECT d FROM hoy) - 6 AND (SELECT d FROM hoy)
+  ) AS altas_it_7d,
+  (SELECT count(*)::int FROM it
+    WHERE seace_fecha_lima(fecha_publica) BETWEEN (SELECT d FROM hoy) - 13 AND (SELECT d FROM hoy) - 7
+  ) AS altas_it_7d_prev,
   (
     SELECT coalesce(jsonb_agg(x ORDER BY x.total DESC), '[]'::jsonb)
     FROM (
@@ -325,11 +342,12 @@ SELECT
     FROM (
       SELECT
         coalesce(
-          fn_rubro_energetic(categoria_it, relevancia_ia, descripcion, descripcion_contrato),
+          fn_rubro_energetic(p.categoria_it, p.relevancia_ia, c.descripcion, c.descripcion_contrato),
           'sin_clasificar'
         ) AS rubro,
         count(*)::int AS total
-      FROM post
+      FROM post p
+      JOIN contratos c ON c.id = p.id
       GROUP BY 1
     ) x
   ) AS por_rubro;
@@ -392,6 +410,13 @@ COMMENT ON VIEW v_kpis_dashboard IS
   'Agregados del tablero. total_postulables por instante. cierran_hoy = now..medianoche Lima; manana/semana por dias Lima (2-7).';
 COMMENT ON VIEW v_kpis_negocio IS
   'KPIs ENERTRONIC sobre postulables (instante). Rubro = fn_rubro_energetic.';
+
+-- Índice cubriente para v_kpis_dashboard: index-only scan sobre las columnas
+-- que necesita el CTE `it` (id + estado + 3 fechas), evitando ~4694 lecturas de
+-- heap (~147 MB en caché fría) del join contra contratos_pkey.
+CREATE INDEX IF NOT EXISTS contratos_kpi_cover_idx
+  ON contratos(id)
+  INCLUDE (estado, fecha_ini_cotizacion, fecha_fin_cotizacion, fecha_publica);
 
 -- Proyectos ocultos por usuario en Ruta del día.
 CREATE TABLE IF NOT EXISTS ruta_ocultos (
