@@ -116,10 +116,13 @@ def fetch_detalle(page, contrato_id: int, retries: int = 2) -> dict | None:
                 for e in etapas
             ]
 
-            tdr = (proj.get("desObjetoContrato") or "").strip() or None
+            # OJO: `desObjetoContrato` es la DESCRIPCIÓN del objeto, NO el TDR.
+            # No debe pisar `contratos.descripcion` (señal de C1). El upsert la
+            # escribe solo si el campo está vacío (ver upsert_lote).
+            des_obj = (proj.get("desObjetoContrato") or "").strip() or None
             return {
                 "nom_area_usuaria": proj.get("nomAreaUsuaria"),
-                "descripcion":      tdr,
+                "descripcion":      des_obj,
                 "items_json":       items_clean,
                 "etapas_json":      etapas_clean,
             }
@@ -146,7 +149,9 @@ def upsert_lote(conn, lote: list[dict]) -> None:
                 "items_json = excluded.items_json, "
                 "etapas_json = excluded.etapas_json, "
                 "detalle_cargado = excluded.detalle_cargado, "
-                "descripcion = coalesce(excluded.descripcion, contratos.descripcion)",
+                "descripcion = case "
+                "  when coalesce(contratos.descripcion, '') = '' then excluded.descripcion "
+                "  else contratos.descripcion end",
                 (
                     fila["id"],
                     fila.get("nom_area_usuaria"),

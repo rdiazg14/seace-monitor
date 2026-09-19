@@ -32,6 +32,8 @@ data/query_emb.json
 data/query_fts.json
 data/chunk_emb_*.npy
 data/chunk_emb_*_meta.json
+data/chunk_emb_*.progress.json
+chunk_*.txt
 
 # Export estático de Penpot
 /docs/SEACE Monitor.html
