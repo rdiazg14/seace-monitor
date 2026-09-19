@@ -419,7 +419,7 @@ def print_cobertura(cov: dict[str, int]) -> None:
 
 def run_bge(supa, limit: int) -> None:
     print("=" * 60, flush=True)
-    print("FASE 4 — Embeddings bge-base-en-v1.5 → embedding(768)", flush=True)
+    print("FASE 4 — Embeddings bge-base-en-v1.5 -> embedding(768)", flush=True)
     print(f"  endpoint: {EMBED_URL}", flush=True)
     print("=" * 60, flush=True)
 
@@ -497,7 +497,7 @@ def run_gemini(
         (2.0 if fail_fast else 8.0) if lote_n <= 2 else DELAY_GEMINI_S
     )
     print("=" * 60, flush=True)
-    print("Embeddings gemini-embedding-001 @1536 → embedding_v2", flush=True)
+    print("Embeddings gemini-embedding-001 @1536 -> embedding_v2", flush=True)
     print("  taskType=RETRIEVAL_DOCUMENT  WHERE embedding_v2 IS NULL", flush=True)
     print(
         f"  fuente={fuente or '(todas)'}  ids={ids or '(vigentes)'}  "

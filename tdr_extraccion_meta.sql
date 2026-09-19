@@ -12,11 +12,14 @@ ALTER TABLE contratos DROP CONSTRAINT IF EXISTS contratos_tdr_tipo_extraccion_ch
 ALTER TABLE contratos ADD CONSTRAINT contratos_tdr_tipo_extraccion_chk
   CHECK (
     tdr_tipo_extraccion IS NULL
-    OR tdr_tipo_extraccion IN ('nativo_puro', 'mixto', 'imagen_total')
+    OR tdr_tipo_extraccion IN (
+      'nativo_puro', 'mixto', 'imagen_total',
+      'contenedor_docx', 'contenedor_zip', 'contenedor_rar', 'contenedor_doc'
+    )
   );
 
 COMMENT ON COLUMN contratos.tdr_tipo_extraccion IS
-  'nativo_puro | mixto | imagen_total. NULL si no hay PDF (sin_pdf).';
+  'nativo_puro | mixto | imagen_total | contenedor_docx | contenedor_zip | contenedor_rar | contenedor_doc. NULL si no hay PDF (sin_pdf).';
 COMMENT ON COLUMN contratos.paginas_ocr_pendientes IS
   'Páginas 1-based que aún faltan OCR. [] si no hay pendientes.';
 COMMENT ON COLUMN contratos.paginas_ocr_hechas IS

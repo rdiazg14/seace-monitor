@@ -11,5 +11,7 @@ dependencies = [
     "pyarrow>=14.0",
     "pydantic>=2.0",
     "pymupdf>=1.24",
+    "python-docx>=1.2.0",
+    "rarfile>=4.5",
     "supabase>=2.0",
 ]
