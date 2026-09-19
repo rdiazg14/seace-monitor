@@ -495,6 +495,35 @@ def upsert_supabase(client, filas: list[dict]) -> int:
     return errores
 
 
+_COLS_CONTRATOS = [
+    "id", "nro_contratacion", "descripcion_contrato", "objeto", "descripcion",
+    "entidad", "estado", "fecha_publica", "fecha_ini_cotizacion",
+    "fecha_fin_cotizacion", "tipo_cotizacion", "cotizar",
+]
+
+
+def upsert_contratos_pg(dsn: str, filas: list[dict]) -> None:
+    """Upsert de contratos por conexión directa (evita el statement_timeout
+    de PostgREST). Los lotes de ingesta incremental son ~72 altas, pero
+    --forzar-completa puede reintentar decenas de miles bajo contención con
+    el REFRESH de dashboard_resumen."""
+    import psycopg
+
+    cols = ", ".join(_COLS_CONTRATOS)
+    ph = ", ".join(["%s"] * len(_COLS_CONTRATOS))
+    sets = ", ".join(
+        f"{c} = EXCLUDED.{c}" for c in _COLS_CONTRATOS if c != "id"
+    )
+    sql = (
+        f"INSERT INTO contratos ({cols}) VALUES ({ph}) "
+        f"ON CONFLICT (id) DO UPDATE SET {sets}"
+    )
+    params = [[fila.get(c) for c in _COLS_CONTRATOS] for fila in filas]
+    with psycopg.connect(dsn) as conn:
+        with conn.cursor() as cur:
+            cur.executemany(sql, params)
+
+
 # ── Descarga desde API SEACE ─────────────────────────────────────────────────
 
 def _api_call(page, page_num: int) -> tuple[int, list[dict], int]:
@@ -783,8 +812,19 @@ def main():
             print("[keywords] diffs tabla vs codigo: 0 / 0", flush=True)
 
     # ── 5. Upsert a Supabase (hechos SEACE, sin inferencia) ────────────
-    if supa and filas_db:
-        upsert_supabase(supa, filas_db)
+    if filas_db:
+        dsn = (os.getenv("DATABASE_URL") or "").strip()
+        if dsn:
+            try:
+                upsert_contratos_pg(dsn, filas_db)
+                print(f"[upsert] backend=psycopg ({len(filas_db)} filas)", flush=True)
+            except Exception as e:
+                print(f"[upsert] psycopg falló ({e}); fallback a supabase-py", flush=True)
+                if supa:
+                    upsert_supabase(supa, filas_db)
+        elif supa:
+            upsert_supabase(supa, filas_db)
+
         if filas_cls:
             from clasificacion_capa import anunciar_backend_capa3
             anunciar_backend_capa3(supa=supa)

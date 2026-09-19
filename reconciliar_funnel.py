@@ -36,6 +36,7 @@ FUNNEL_WORKER_URL = os.getenv(
     "FUNNEL_WORKER_URL",
     "https://seace-ai-proxy.rdiazg14.workers.dev",
 )
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 BATCH_DB = 100
 
 
@@ -190,12 +191,47 @@ def upsert_lote(supa, lote: list[dict]) -> None:
     supa.table("contratos").upsert(lote, on_conflict="id").execute()
 
 
-def flush_upsert(supa, pendiente: list[dict], dry_run: bool) -> None:
+def upsert_lote_pg(dsn: str, lote: list[dict]) -> None:
+    """Escribe marcas vía psycopg (evita el statement_timeout de PostgREST).
+
+    Monotónico: analizado/cotizado nunca vuelven a false y la fecha conserva
+    la primera marca no-nula (la del KV). El id siempre existe en contratos.
+    """
+    import psycopg
+
+    sql = """
+        INSERT INTO contratos (id, analizado, cotizado, fecha_analisis, fecha_cotizacion)
+        VALUES (%s, %s, %s, %s, %s)
+        ON CONFLICT (id) DO UPDATE SET
+          analizado = contratos.analizado OR EXCLUDED.analizado,
+          cotizado = contratos.cotizado OR EXCLUDED.cotizado,
+          fecha_analisis = COALESCE(EXCLUDED.fecha_analisis, contratos.fecha_analisis),
+          fecha_cotizacion = COALESCE(EXCLUDED.fecha_cotizacion, contratos.fecha_cotizacion)
+    """
+    params = [
+        (
+            r["id"],
+            bool(r.get("analizado", False)),
+            bool(r.get("cotizado", False)),
+            r.get("fecha_analisis"),
+            r.get("fecha_cotizacion"),
+        )
+        for r in lote
+    ]
+    with psycopg.connect(dsn) as conn:
+        with conn.cursor() as cur:
+            cur.executemany(sql, params)
+
+
+def flush_upsert(supa, pendiente: list[dict], dry_run: bool, dsn: str = "") -> None:
     if not pendiente or dry_run:
         pendiente.clear()
         return
     try:
-        upsert_lote(supa, pendiente)
+        if dsn:
+            upsert_lote_pg(dsn, pendiente)
+        else:
+            upsert_lote(supa, pendiente)
         print(f"    → upsert lote {len(pendiente)} filas OK", flush=True)
     except Exception as e:
         print(f"    → upsert lote FALLÓ: {e}", flush=True)
@@ -254,12 +290,15 @@ def main() -> None:
         print("ERROR: SUPABASE_URL / SUPABASE_SERVICE_KEY no encontrados", flush=True)
         raise SystemExit(1)
 
+    dsn = (DATABASE_URL or "").strip()
+    print(f"  backend_escritura={'psycopg' if dsn else 'supabase-py'}", flush=True)
+
     pendiente: list[dict] = []
     for row in filas:
         pendiente.append(row)
         if len(pendiente) >= BATCH_DB:
-            flush_upsert(supa, pendiente, False)
-    flush_upsert(supa, pendiente, False)
+            flush_upsert(supa, pendiente, False, dsn)
+    flush_upsert(supa, pendiente, False, dsn)
 
     print(
         f"reconciliados: {n_a} analizados, {n_c} cotizados (escrito)",

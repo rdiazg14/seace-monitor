@@ -537,13 +537,21 @@ def run_gemini(
                 print(f"  preview embed[0]={preview!r}", flush=True)
             try:
                 embs = embed_lote_gemini(http, texts, fail_fast=fail_fast)
-                for row, vec in zip(lote, embs):
-                    (
-                        supa.table("chunks_tdr")
-                        .update({"embedding_v2": vec_literal(vec)})
-                        .eq("id", row["id"])
-                        .execute()
-                    )
+                # Un solo upsert por lote (no N requests): recorta ~N-1 round-trips
+                # HTTP a PostgREST. Las filas ya existen (se seleccionaron de
+                # chunks_tdr), así que on_conflict=id solo actualiza embedding_v2.
+                updates = [
+                    {
+                        "id": row["id"],
+                        "contrato_id": row["contrato_id"],
+                        "chunk_index": row["chunk_index"],
+                        "tipo": row["tipo"],
+                        "texto": row["texto"],
+                        "embedding_v2": vec_literal(vec),
+                    }
+                    for row, vec in zip(lote, embs)
+                ]
+                supa.table("chunks_tdr").upsert(updates, on_conflict="id").execute()
                 ok += len(lote)
             except QuotaExceeded as e:
                 errores += len(lote)

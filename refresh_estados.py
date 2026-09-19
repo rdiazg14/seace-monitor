@@ -35,6 +35,7 @@ if _env.exists():
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 SPA_URL      = "https://prod6.seace.gob.pe/buscador-publico/contrataciones"
 API_DETALLE  = ("https://prod6.seace.gob.pe/v1/s8uit-services/buscadorpublico"
                 "/contrataciones/listar-completo")
@@ -152,6 +153,23 @@ def upsert_lote(supa, lote: list[dict]):
     supa.table("contratos").upsert(lote, on_conflict="id").execute()
 
 
+def upsert_lote_pg(dsn: str, lote: list[dict]) -> None:
+    """Upsert de estado/verificado por conexión directa (evita PostgREST)."""
+    import psycopg
+
+    sql = (
+        "insert into contratos (id, estado, estado_verificado_at) "
+        "values (%s, %s, %s) "
+        "on conflict (id) do update set "
+        "estado = excluded.estado, "
+        "estado_verificado_at = excluded.estado_verificado_at"
+    )
+    params = [(r["id"], r["estado"], r["estado_verificado_at"]) for r in lote]
+    with psycopg.connect(dsn) as conn:
+        with conn.cursor() as cur:
+            cur.executemany(sql, params)
+
+
 def borrar_chunks(supa, contrato_id: int) -> int:
     res = (
         supa.table("chunks_tdr")
@@ -262,6 +280,7 @@ def main():
         raise SystemExit("ERROR: SUPABASE_URL / SUPABASE_SERVICE_KEY no encontrados")
 
     supa = create_client(SUPABASE_URL, SUPABASE_KEY)
+    dsn = (DATABASE_URL or "").strip()
     now_iso = datetime.now(timezone.utc).isoformat()
 
     print("=" * 60, flush=True)
@@ -295,7 +314,10 @@ def main():
             pendiente.clear()
             return
         try:
-            upsert_lote(supa, pendiente)
+            if dsn:
+                upsert_lote_pg(dsn, pendiente)
+            else:
+                upsert_lote(supa, pendiente)
             print(f"    → upsert lote {len(pendiente)} filas OK", flush=True)
         except Exception as e:
             print(f"    → upsert lote FALLÓ: {e}", flush=True)

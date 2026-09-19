@@ -151,7 +151,7 @@ GRANT SELECT ON contratos TO anon, authenticated;
 
 -- 7. Resumen para dashboard (contratos por mes, objeto, estado, categoría IT).
 --    MATERIALIZADA: con 82k+ filas, el GROUP BY en vivo excedía el
---    statement_timeout (8s). Se refresca vía pg_cron (cada 5 min) y al
+--    statement_timeout (8s). Se refresca vía pg_cron (cada 15 min) y al
 --    final del pipeline diario (refrescar_matviews.py).
 --    Ver docs/materializar_dashboard_resumen.sql.
 CREATE MATERIALIZED VIEW IF NOT EXISTS dashboard_resumen AS
@@ -173,6 +173,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_dashboard_resumen_uq
   ON dashboard_resumen (objeto, estado, categoria_it, mes);
 
 GRANT SELECT ON dashboard_resumen TO anon, authenticated;
+
+-- Refresco automático de dashboard_resumen cada 15 min (antes 5 min).
+-- El REFRESH CONCURRENTLY bajo contención con el pipeline que escribe
+-- contratos provocaba statement_timeout (57014) en PostgREST; bajar la
+-- frecuencia reduce esa contención. Idempotente (desprograma por nombre).
+SELECT cron.unschedule('refresh_dashboard_resumen');
+
+SELECT cron.schedule(
+  'refresh_dashboard_resumen',
+  '*/15 * * * *',
+  $$REFRESH MATERIALIZED VIEW CONCURRENTLY dashboard_resumen$$
+);
 
 -- 8. Vista: contratos vigentes ordenados por urgencia de cierre
 CREATE OR REPLACE VIEW vigentes_urgentes AS
