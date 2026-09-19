@@ -42,7 +42,7 @@ API_DETALLE  = ("https://prod6.seace.gob.pe/v1/s8uit-services/buscadorpublico"
 BATCH_DB     = 100
 DELAY_S      = 0.3
 PAGE_DB      = 1_000
-GC_DIAS      = 60
+GC_DIAS      = 5 * 365  # 5 años. GC apagado por defecto (--gc es flag manual); conserva histórico.
 
 # idEstadoContrato validado en listar-completo (2026-08-16):
 #   2 = Vigente, 3 = En Evaluación (87099, 87067), 4 = Culminado.
@@ -182,13 +182,17 @@ def borrar_chunks(supa, contrato_id: int) -> int:
 
 def gc_cierres_antiguos(supa, dry_run: bool) -> int:
     """
-    GC acotado (solo con --gc).
+    GC acotado (solo con --gc, apagado por defecto).
 
     No usamos fecha_fin_cotizacion: es el fin de la ventana de cotización, no
     el cierre del contrato. La antigüedad del cierre es estado_verificado_at
     (momento en que G1 registró el paso a terminal). Los chunks se borran
-    60 días después de ese timestamp; los cierres recientes se conservan
-    para el chat. idx_chunks_contrato_id cubre el DELETE.
+    5 años (GC_DIAS) después de ese timestamp; todo lo más reciente se conserva
+    íntegro para analítica y chat. idx_chunks_contrato_id cubre el DELETE.
+
+    POLÍTICA DE RETENCIÓN: este GC está intencionalmente DESACTIVADO (--gc no
+    se pasa en ningún workflow). Conserva 5 años de chunks/vectores; si algún
+    día se activa manualmente, jamás borra data más reciente que ese umbral.
     """
     corte = (datetime.now(timezone.utc) - timedelta(days=GC_DIAS)).isoformat()
     out: list[dict] = []
@@ -210,7 +214,7 @@ def gc_cierres_antiguos(supa, dry_run: bool) -> int:
         offset += PAGE_DB
 
     borrados = 0
-    print(f"  GC candidatos (cierre >{GC_DIAS}d): {len(out):,}", flush=True)
+    print(f"  GC candidatos (cierre >{GC_DIAS}d = {GC_DIAS//365} años): {len(out):,}", flush=True)
     for row in out:
         cid = int(row["id"])
         if dry_run:
@@ -270,7 +274,7 @@ def main():
     ap.add_argument("--dry-run", action="store_true",
                     help="Consulta API y loguea; no escribe en BD")
     ap.add_argument("--gc", action="store_true",
-                    help="Borra chunks de cierres con estado_verificado_at >60d")
+                    help="(OFF por defecto) Borra chunks de cierres con estado_verificado_at >5 años")
     ap.add_argument("--solo-postulables", action="store_true",
                     help="Solo Vigentes IT/IA postulables o por abrir (rápido, detección temprana)")
     ap.add_argument("--headed", action="store_true")
