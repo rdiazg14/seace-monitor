@@ -25,6 +25,14 @@ data/backfill_c2_*.json
 data/clasificacion_cuota.json
 *.bak
 
+# Cache local del eval de chunking (corpus + embeddings numpy). No versionar.
+data/corpus_*.npy
+data/corpus_*.json
+data/query_emb.json
+data/query_fts.json
+data/chunk_emb_*.npy
+data/chunk_emb_*_meta.json
+
 # Export estático de Penpot
 /docs/SEACE Monitor.html
 /docs/SEACE Monitor 2.html

@@ -4,6 +4,11 @@
 -- NO toca buscar_tdr ni embedding(768) ni el ivfflat.
 -- Usa idx_chunks_embedding_v2_hnsw sobre embedding_v2 vector(1536).
 -- Ejecutar en: Supabase → SQL Editor.
+--
+-- 19 sep: se fuerza hnsw.ef_search=200 (default 40 perdía recall: ~145 vs
+-- 190 relevantes en el top-20). set_config(..., true) es local a la
+-- transacción (PostgREST envuelve el RPC en una), así que es determinista
+-- incluso con el pooler Supavisor (que reutiliza backends).
 -- =====================================================================
 
 CREATE OR REPLACE FUNCTION buscar_tdr_v2(
@@ -20,23 +25,26 @@ RETURNS TABLE (
   similarity    FLOAT,
   fuente        TEXT
 )
-LANGUAGE SQL
-STABLE
+LANGUAGE plpgsql
 AS $$
-  SELECT
-    ct.contrato_id,
-    ct.chunk_index,
-    ct.tipo,
-    ct.texto,
-    (1 - (ct.embedding_v2 <=> query_embedding))::FLOAT AS similarity,
-    ct.fuente
-  FROM chunks_tdr ct
-  JOIN contratos c ON c.id = ct.contrato_id
-  WHERE ct.embedding_v2 IS NOT NULL
-    AND (filter_estado IS NULL OR c.estado = filter_estado)
-    AND (1 - (ct.embedding_v2 <=> query_embedding)) > min_similarity
-  ORDER BY ct.embedding_v2 <=> query_embedding
-  LIMIT match_count;
+BEGIN
+  PERFORM set_config('hnsw.ef_search', '200', true);
+  RETURN QUERY
+    SELECT
+      ct.contrato_id,
+      ct.chunk_index,
+      ct.tipo,
+      ct.texto,
+      (1 - (ct.embedding_v2 <=> query_embedding))::FLOAT AS similarity,
+      ct.fuente
+    FROM chunks_tdr ct
+    JOIN contratos c ON c.id = ct.contrato_id
+    WHERE ct.embedding_v2 IS NOT NULL
+      AND (filter_estado IS NULL OR c.estado = filter_estado)
+      AND (1 - (ct.embedding_v2 <=> query_embedding)) > min_similarity
+    ORDER BY ct.embedding_v2 <=> query_embedding
+    LIMIT match_count;
+END;
 $$;
 
 GRANT EXECUTE ON FUNCTION buscar_tdr_v2(VECTOR, INT, TEXT, FLOAT)
