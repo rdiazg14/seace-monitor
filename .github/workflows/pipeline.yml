@@ -5,8 +5,9 @@
 name: Pipeline diario SEACE
 
 on:
-  schedule:
-    - cron: "0 14 * * *"   # 09:00 America/Lima (UTC-5)
+  # Sin schedule nativo: el disparo a las 09:00 Lima (14:00 UTC) lo hace el
+  # Worker seace-pipeline-trigger vía workflow_dispatch. El schedule nativo se
+  # retrasaba horas con carga y re-corria el diario pisando el timestamp.
   workflow_dispatch:
     inputs:
       ocr_max_segundos:
@@ -82,7 +83,10 @@ jobs:
       - name: Refresco de estado en bloque (listado)
         id: g1
         if: ${{ success() && github.event.inputs.solo_ocr != 'true' }}
-        run: python refrescar_estados_bloque.py
+        # Tope de reloj 60 min: el listado viene ordenado por id descendente
+        # (los vigentes/nuevos primero), así que si corta, corta en la cola de
+        # culminados viejos. Los postulables TI se refrescan aparte cada 2h.
+        run: python refrescar_estados_bloque.py --max-segundos 3600
 
       - name: Capturar resultado (Desierto/Adjudicado)
         id: resultado

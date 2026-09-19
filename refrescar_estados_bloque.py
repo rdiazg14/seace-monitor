@@ -116,6 +116,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit-paginas", type=int, default=0,
                     help="Tope de páginas (0 = todo el listado). Para smoke test.")
+    ap.add_argument("--max-segundos", type=int, default=0,
+                    help=(
+                        "Tope de reloj en segundos (0 = sin tope). Al alcanzarlo "
+                        "corta y lo restante corre en la próxima pasada. El "
+                        "listado viene por id descendente (vigentes/nuevos "
+                        "primero), así que cortar no pierde los importantes."
+                    ))
     ap.add_argument("--headed", action="store_true")
     args = ap.parse_args()
 
@@ -160,6 +167,14 @@ def main():
 
         pagina = 1
         while pagina <= total_pags:
+            if args.max_segundos and (time.time() - t0) >= args.max_segundos:
+                print(
+                    f"[tope] {args.max_segundos}s alcanzados en p{pagina}/"
+                    f"{total_pags}; el resto corre en la próxima pasada.",
+                    flush=True,
+                )
+                break
+
             if pagina > 1:
                 _, lote, status = _api_call(page, pagina)
                 if status != 200:
