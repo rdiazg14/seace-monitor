@@ -15,6 +15,9 @@
 -- Guard: solo es_admin() (42501 si no).
 -- =====================================================================
 
+-- Idempotencia: elimina la firma anterior (3 args) si aún existiera.
+DROP FUNCTION IF EXISTS public.fn_seguimiento_contrato(integer, integer, text);
+
 CREATE OR REPLACE FUNCTION public.fn_seguimiento_contrato(
   p_limite integer DEFAULT 50,
   p_offset integer DEFAULT 0,
