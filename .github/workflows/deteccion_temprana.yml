@@ -16,11 +16,10 @@
 name: Deteccion temprana (altas + detalle)
 
 on:
+  # Sin schedule nativo: el disparo lo hace el Worker seace-pipeline-trigger
+  # vía workflow_dispatch (cron híbrido: 60 min hábil / 2h madrugada). El
+  # schedule nativo se retrasaba y duplicaba la corrida con el Worker.
   workflow_dispatch:
-  schedule:
-    # Cada 2h UTC, salvo las 14:00 UTC (09:00 Lima) que coincide con el diario:
-    # ahí el pipeline completo ya corre OCR + análisis y no queremos solapar.
-    - cron: "0 0,2,4,6,8,10,12,16,18,20,22 * * *"
 
 permissions:
   issues: write

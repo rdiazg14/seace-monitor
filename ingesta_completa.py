@@ -263,9 +263,14 @@ def parsear_fecha(s: str | None) -> str | None:
     if not s:
         return None
     try:
-        return datetime.strptime(s.strip(), _FMT_SEACE).isoformat() + "-05:00"
+        dt = datetime.strptime(s.strip(), _FMT_SEACE)
     except Exception:
         return None
+    # Año fuera de rango = dato corrupto en el origen SEACE (p. ej.
+    # fecFinCotizacion legacy con año 2052/2206/4202). Se descarta.
+    if dt.year < 2000 or dt.year > datetime.now().year + 2:
+        return None
+    return dt.isoformat() + "-05:00"
 
 
 class RegistroSeace(BaseModel):

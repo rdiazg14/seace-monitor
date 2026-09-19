@@ -57,9 +57,15 @@ def parsear_fecha(s: str | None) -> str | None:
     if not s:
         return None
     try:
-        return datetime.strptime(s.strip(), _FMT_SEACE).isoformat() + "-05:00"
+        dt = datetime.strptime(s.strip(), _FMT_SEACE)
     except Exception:
         return None
+    # SEACE entrega hora de pared Lima. Un año fuera de rango es dato corrupto
+    # en el origen (p. ej. fecFinCotizacion con año 2052/2206/4202 en contratos
+    # legacy): devolver None evita escribir fechas futuras absurdas.
+    if dt.year < 2000 or dt.year > datetime.now().year + 2:
+        return None
+    return dt.isoformat() + "-05:00"
 
 
 def _api_call(page, page_num: int) -> tuple[int, list[dict], int]:
@@ -95,8 +101,8 @@ def upsert_lote(conn, lote: list[dict]) -> int:
                 "on conflict (id) do update set "
                 "estado = excluded.estado, "
                 "cotizar = excluded.cotizar, "
-                "fecha_ini_cotizacion = excluded.fecha_ini_cotizacion, "
-                "fecha_fin_cotizacion = excluded.fecha_fin_cotizacion, "
+                "fecha_ini_cotizacion = coalesce(excluded.fecha_ini_cotizacion, contratos.fecha_ini_cotizacion), "
+                "fecha_fin_cotizacion = coalesce(excluded.fecha_fin_cotizacion, contratos.fecha_fin_cotizacion), "
                 "estado_verificado_at = excluded.estado_verificado_at",
                 (
                     fila["id"],
