@@ -12,6 +12,8 @@ Uso:
 """
 from __future__ import annotations
 
+from seace_monitor.config import cargar_env
+
 import argparse
 import os
 import sys
@@ -21,13 +23,7 @@ from pathlib import Path
 
 import httpx
 
-_env = Path(__file__).parent / ".env"
-if _env.exists():
-    for line in _env.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, _, v = line.partition("=")
-            os.environ.setdefault(k.strip(), v.strip())
+cargar_env()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")

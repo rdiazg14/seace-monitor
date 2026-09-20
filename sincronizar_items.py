@@ -24,17 +24,12 @@ from __future__ import annotations
 
 import os
 import time
-from pathlib import Path
 
 import psycopg
 
-_env = Path(__file__).parent / ".env"
-if _env.exists():
-    for line in _env.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, _, v = line.partition("=")
-            os.environ.setdefault(k.strip(), v.strip())
+from seace_monitor.config import cargar_env
+
+cargar_env()
 
 # Mismo mapeo que docs/capas_fase3_items.sql. Espejo exacto de items_json.
 SQL_DELETE = "DELETE FROM contrato_items"

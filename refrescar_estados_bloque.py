@@ -25,6 +25,9 @@ Uso:
 """
 from __future__ import annotations
 
+from seace_monitor.config import cargar_env
+from seace_monitor.seace_api import API_BUSCADOR, SPA_URL, parsear_fecha
+
 import argparse
 import os
 import time
@@ -34,43 +37,18 @@ from pathlib import Path
 import psycopg
 from playwright.sync_api import sync_playwright
 
-_env = Path(__file__).parent / ".env"
-if _env.exists():
-    for line in _env.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, _, v = line.partition("=")
-            os.environ.setdefault(k.strip(), v.strip())
+cargar_env()
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
-SPA_URL      = "https://prod6.seace.gob.pe/buscador-publico/contrataciones"
-API_LISTA    = ("https://prod6.seace.gob.pe/v1/s8uit-services/buscadorpublico"
-                "/contrataciones/buscador")
 ANIO         = datetime.now().year
 PAGE_SIZE    = 100
 BATCH_DB     = 500
 DELAY_S      = 0.2
-_FMT_SEACE   = "%d/%m/%Y %H:%M:%S"
-
-
-def parsear_fecha(s: str | None) -> str | None:
-    if not s:
-        return None
-    try:
-        dt = datetime.strptime(s.strip(), _FMT_SEACE)
-    except Exception:
-        return None
-    # SEACE entrega hora de pared Lima. Un año fuera de rango es dato corrupto
-    # en el origen (p. ej. fecFinCotizacion con año 2052/2206/4202 en contratos
-    # legacy): devolver None evita escribir fechas futuras absurdas.
-    if dt.year < 2000 or dt.year > datetime.now().year + 2:
-        return None
-    return dt.isoformat() + "-05:00"
 
 
 def _api_call(page, page_num: int) -> tuple[int, list[dict], int]:
     r = page.request.get(
-        API_LISTA,
+        API_BUSCADOR,
         params={
             "anio": ANIO, "palabra_clave": "",
             "orden": 2, "page": page_num, "page_size": PAGE_SIZE,

@@ -16,11 +16,13 @@ Uso: uv run python enriquecer_detalle.py [--limit N] [--headed]
 """
 from __future__ import annotations
 
+from seace_monitor.config import cargar_env
+from seace_monitor.seace_api import API_DETALLE, SPA_URL, parsear_fecha
+
 import argparse
 import json
 import os
 import time
-from datetime import datetime
 from pathlib import Path
 
 import psycopg
@@ -28,35 +30,11 @@ from playwright.sync_api import sync_playwright
 from psycopg.types.json import Jsonb
 
 # ── Cargar .env ────────────────────────────────────────────────────────────────
-_env = Path(__file__).parent / ".env"
-if _env.exists():
-    for line in _env.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, _, v = line.partition("=")
-            os.environ.setdefault(k.strip(), v.strip())
+cargar_env()
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
-SPA_URL      = "https://prod6.seace.gob.pe/buscador-publico/contrataciones"
-API_DETALLE  = ("https://prod6.seace.gob.pe/v1/s8uit-services/buscadorpublico"
-                "/contrataciones/listar-completo")
 BATCH_DB     = 100    # contratos por lote de upsert a la BD
 DELAY_S      = 0.3    # pausa entre llamadas a la API SEACE
-
-_FMT_SEACE = "%d/%m/%Y %H:%M:%S"
-
-
-def parsear_fecha(s):
-    """'dd/mm/yyyy HH:MM:SS' (pared Lima) → ISO 8601 con offset -05:00.
-
-    Mismo criterio que ingesta_completa.parsear_fecha: Perú no tiene DST.
-    """
-    if not s:
-        return None
-    try:
-        return datetime.strptime(s.strip(), _FMT_SEACE).isoformat() + "-05:00"
-    except Exception:
-        return None
 
 
 def get_vigentes_sin_detalle(conn, limit: int) -> list[dict]:

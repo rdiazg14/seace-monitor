@@ -27,6 +27,8 @@ Uso:
 """
 from __future__ import annotations
 
+from seace_monitor.config import cargar_env
+
 import argparse
 import os
 import time
@@ -37,15 +39,9 @@ from supabase import create_client
 
 import chunker_contratos as cc
 import generar_embeddings as ge
-from pipeline_log import PASO_EMBEDDING, registrar_evento, registrar_run
+from seace_monitor.logging import PASO_EMBEDDING, registrar_evento, registrar_run
 
-_env = Path(__file__).parent / ".env"
-if _env.exists():
-    for line in _env.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, _, v = line.partition("=")
-            os.environ.setdefault(k.strip(), v.strip())
+cargar_env()
 
 TARGET = 300
 OVERLAP = 60

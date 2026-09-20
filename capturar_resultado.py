@@ -19,6 +19,9 @@ Uso:
 """
 from __future__ import annotations
 
+from seace_monitor.config import cargar_env
+from seace_monitor.seace_api import API_DETALLE, SPA_URL
+
 import argparse
 import os
 import time
@@ -28,18 +31,9 @@ from pathlib import Path
 import psycopg
 from playwright.sync_api import sync_playwright
 
-_env = Path(__file__).parent / ".env"
-if _env.exists():
-    for line in _env.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, _, v = line.partition("=")
-            os.environ.setdefault(k.strip(), v.strip())
+cargar_env()
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
-SPA_URL      = "https://prod6.seace.gob.pe/buscador-publico/contrataciones"
-API_DETALLE  = ("https://prod6.seace.gob.pe/v1/s8uit-services/buscadorpublico"
-                "/contrataciones/listar-completo")
 DELAY_S      = 0.3
 
 

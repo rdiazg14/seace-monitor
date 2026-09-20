@@ -13,11 +13,11 @@ from __future__ import annotations
 import argparse
 import os
 import time
-from datetime import datetime
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 from supabase import create_client
+from seace_monitor.seace_api import API_DETALLE, SPA_URL, parsear_fecha
 
 _env = Path(__file__).parent / ".env"
 if _env.exists():
@@ -29,23 +29,8 @@ if _env.exists():
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
-SPA_URL = "https://prod6.seace.gob.pe/buscador-publico/contrataciones"
-API_DETALLE = ("https://prod6.seace.gob.pe/v1/s8uit-services/buscadorpublico"
-               "/contrataciones/listar-completo")
 DELAY_S = 0.3
 PAGE_DB = 1000
-
-_FMT_SEACE = "%d/%m/%Y %H:%M:%S"
-
-
-def parsear_fecha(s):
-    """'dd/mm/yyyy HH:MM:SS' (pared Lima) → ISO 8601 con offset -05:00."""
-    if not s:
-        return None
-    try:
-        return datetime.strptime(s.strip(), _FMT_SEACE).isoformat() + "-05:00"
-    except Exception:
-        return None
 
 
 def get_universo(supa) -> list[dict]:

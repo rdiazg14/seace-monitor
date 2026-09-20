@@ -25,6 +25,8 @@ Uso:
 """
 from __future__ import annotations
 
+from seace_monitor.config import cargar_env
+
 import argparse
 import hashlib
 import io
@@ -57,16 +59,10 @@ from descargar_requerimiento import (
     usd_de_tokens,
 )
 from ingesta_completa import registrar_rechazo
-from pipeline_log import PASO_CONTENEDORES, registrar_evento, registrar_run
+from seace_monitor.logging import PASO_CONTENEDORES, registrar_evento, registrar_run
 
 # ── Cargar .env ────────────────────────────────────────────────────────────────
-_env = Path(__file__).parent / ".env"
-if _env.exists():
-    for line in _env.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, _, v = line.partition("=")
-            os.environ.setdefault(k.strip(), v.strip())
+cargar_env()
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")

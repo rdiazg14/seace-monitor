@@ -8,19 +8,15 @@ corrida, en lugar de la fecha de hoy.
 """
 from __future__ import annotations
 
+from seace_monitor.config import cargar_env
+
 import os
 from datetime import datetime, timezone
 from pathlib import Path
 
 from supabase import create_client
 
-_env = Path(__file__).parent / ".env"
-if _env.exists():
-    for line in _env.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, _, v = line.partition("=")
-            os.environ.setdefault(k.strip(), v.strip())
+cargar_env()
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")

@@ -16,6 +16,8 @@ Salidas:
 """
 from __future__ import annotations
 
+from seace_monitor.config import cargar_env
+
 import argparse
 import json
 import os
@@ -30,22 +32,23 @@ import pandas as pd
 from playwright.sync_api import sync_playwright
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
-from pipeline_log import PASO_INGESTA, registrar_run
+from seace_monitor.logging import PASO_INGESTA, registrar_run
+from seace_monitor.clasificacion import (
+    IT_CATS,
+    KW_ALTA,
+    KW_GENERICOS,
+    _norm,
+    _contiene,
+    _texto_contrato,
+    _match_kw_tabla,
+    clasificar_categoria_it,
+    clasificar_relevancia_ia,
+)
+from seace_monitor.seace_api import API_BUSCADOR, SPA_URL, parsear_fecha
 
-_env = Path(__file__).parent / ".env"
-if _env.exists():
-    for line in _env.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, _, v = line.partition("=")
-            os.environ.setdefault(k.strip(), v.strip())
+cargar_env()
 
 # ── Configuración ──────────────────────────────────────────────────────────
-URL_SPA  = "https://prod6.seace.gob.pe/buscador-publico/contrataciones"
-API_BASE = (
-    "https://prod6.seace.gob.pe/v1/s8uit-services/buscadorpublico"
-    "/contrataciones/buscador"
-)
 ANIO        = datetime.now().year
 PAGE_SIZE   = 100
 BATCH_SIZE  = 500                   # registros por lote de upsert a Supabase
@@ -59,106 +62,6 @@ OUT_LOG     = "data/ultima_ingesta.txt"
 # Credenciales (GitHub Secrets en Actions; .env local en desarrollo)
 SUPABASE_URL         = os.getenv("SUPABASE_URL", "")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
-
-# ── Clasificación: categoría IT ────────────────────────────────────────────
-# Primera coincidencia en la lista gana (orden = prioridad).
-IT_CATS: list[tuple[str, list[str]]] = [
-    ("Firma digital", [
-        "firma digital", "certificado digital", "certificado electronico",
-        "token criptografico",
-    ]),
-    ("IA/analytics", [
-        "inteligencia artificial", "machine learning", "ia generativa",
-        "chatbot", "asistente virtual", "llm", "gpt", "copilot",
-        "gemini", "claude", "openai", "azure openai",
-        "analytics", "business intelligence", "ciencia de datos", "big data",
-        "procesamiento de lenguaje", "red neuronal", "deep learning",
-        "tokens de procesamiento",
-    ]),
-    ("Ciberseguridad", [
-        "ciberseguridad", "seguridad informatica", "seguridad de la informacion",
-        "firewall", "pentest", "ethical hacking",
-    ]),
-    ("Cloud/hosting", [
-        "nube publica", "cloud computing", "hosting", "servidor virtual",
-        " aws ", "google cloud",
-    ]),
-    ("Microsoft", [
-        "microsoft", "office 365", "microsoft 365",
-        "sharepoint", "exchange", "windows server",
-    ]),
-    ("Oracle", ["oracle database", "oracle ebs", "peoplesoft"]),
-    ("Base de datos/ERP", [
-        "base de datos", "sql server", "postgresql", "mysql", "mongodb",
-        "data warehouse", " sap ", " erp ",
-    ]),
-    ("Desarrollo software", [
-        "desarrollo de software", "desarrollo de sistema",
-        "sistema de informacion", "aplicativo", "software a medida",
-        "plataforma web", "portal web", "sistema web",
-        "sistema administrativo", "aplicacion movil", "app movil",
-        "implementacion de software",
-    ]),
-    ("Licencias", [
-        "licencia de software", "licenciamiento", "suscripcion de software",
-    ]),
-    ("Soporte tecnico", [
-        "soporte tecnico", "mantenimiento de software",
-        "mantenimiento de sistema", "mesa de ayuda", "helpdesk", "help desk",
-    ]),
-    ("Redes/cableado", [
-        "red de datos", "cableado estructurado", " switch ", "router",
-        "fibra optica", " wifi", "wireless", "access point", "punto de acceso",
-    ]),
-    ("Correo electronico", [
-        "correo electronico", "mensajeria electronica",
-    ]),
-    ("Hardware", [
-        "computadora", "laptop", "impresora", " monitor ", "disco duro",
-        "memoria ram", " ups ", "proyector", " tablet ",
-        "equipos informaticos", "equipos de computo", "scanner", "escaner",
-    ]),
-]
-
-# Relevancia IA
-KW_ALTA = [
-    "token", "azure openai", "openai", "gpt", "llm",
-    "claude", "copilot", "gemini",
-]
-KW_GENERICOS = [
-    "inteligencia artificial", "ia generativa", "chatbot", "asistente virtual",
-    "machine learning", "aprendizaje automatico", "procesamiento de lenguaje",
-    "vision computacional", "deep learning", "red neuronal",
-    "modelo de lenguaje", "ciencia de datos", "big data",
-]
-_KW_LIMITE_PALABRA: set[str] = {"ia"}
-
-
-def _norm(texto: str) -> str:
-    """Minúsculas y sin tildes."""
-    if not texto:
-        return ""
-    t = unicodedata.normalize("NFKD", str(texto))
-    t = "".join(c for c in t if not unicodedata.combining(c))
-    return t.lower()
-
-
-def _contiene(texto_norm: str, kw: str, limite_palabra: bool | None = None) -> bool:
-    kn = _norm(kw)
-    if limite_palabra is None:
-        limite_palabra = kn in _KW_LIMITE_PALABRA
-    if limite_palabra:
-        return bool(re.search(r"\b" + re.escape(kn) + r"\b", texto_norm))
-    return kn in texto_norm
-
-
-def _texto_contrato(r: dict) -> str:
-    """Concatena campos de texto de un registro API para clasificación."""
-    return " " + " ".join(
-        _norm(str(r.get(k, "")))
-        for k in ("desObjetoContrato", "desContratacion",
-                  "nomObjetoContrato", "nomEntidad")
-    ) + " "
 
 
 def cargar_keywords(supa) -> list[tuple[str, list[dict]]] | None:
@@ -195,82 +98,6 @@ def cargar_keywords(supa) -> list[tuple[str, list[dict]]] | None:
             "tolera_plural": bool(f.get("tolera_plural")),
         })
     return list(grupos.items())
-
-
-def _match_kw_tabla(texto_norm: str, d: dict) -> bool:
-    """Misma regla que backfill_categoria: tolera_plural o substring/\\b."""
-    kw = d["keyword"]
-    if d.get("tolera_plural"):
-        kn = _norm(kw)
-        words = kn.split()
-        if not words:
-            return False
-        parts = [re.escape(w) + r"e?s?" for w in words]
-        return bool(re.search(r"\b" + r"\s+".join(parts) + r"\b", texto_norm))
-    return _contiene(texto_norm, kw, bool(d.get("limite_palabra")))
-
-
-def clasificar_categoria_it(
-    r: dict,
-    cats: list[tuple[str, list[dict]]] | None = None,
-) -> str | None:
-    """Primera categoria por prioridad. cats=None usa IT_CATS (fallback).
-
-    tipo 'excluye': si matchea, esa categoria no gana y la cascada sigue.
-    tipo 'incluye': si matchea, gana. limite_palabra True = \\b...\\b.
-    tolera_plural True = s/es opcional por palabra (solo keywords de tabla).
-    """
-    t = _texto_contrato(r)
-    if cats is None:
-        for cat, kws in IT_CATS:
-            if any(_contiene(t, kw) for kw in kws):
-                return cat
-        return None
-    for cat, kws in cats:
-        if any(
-            _match_kw_tabla(t, d)
-            for d in kws if d.get("tipo") == "excluye"
-        ):
-            continue
-        if any(
-            _match_kw_tabla(t, d)
-            for d in kws if d.get("tipo") != "excluye"
-        ):
-            return cat
-    return None
-
-
-def clasificar_relevancia_ia(r: dict) -> str | None:
-    t = _texto_contrato(r)
-    if any(_contiene(t, kw) for kw in KW_ALTA):
-        return "ALTA"
-    gen = [kw for kw in KW_GENERICOS if _contiene(t, kw)]
-    if len(gen) >= 2:
-        return "MEDIA"
-    if len(gen) == 1:
-        return "BAJA"
-    return None
-
-
-_FMT_SEACE = "%d/%m/%Y %H:%M:%S"
-
-
-# SEACE entrega hora de pared de Lima sin zona ('dd/mm/yyyy HH:MM:SS').
-# Peru no tiene horario de verano: el offset es constante -05:00.
-# Pegar +00:00 (B21) dejaba cada instante 5 h antes del real.
-def parsear_fecha(s: str | None) -> str | None:
-    """'dd/mm/yyyy HH:MM:SS' → ISO 8601 con offset Lima (-05:00)."""
-    if not s:
-        return None
-    try:
-        dt = datetime.strptime(s.strip(), _FMT_SEACE)
-    except Exception:
-        return None
-    # Año fuera de rango = dato corrupto en el origen SEACE (p. ej.
-    # fecFinCotizacion legacy con año 2052/2206/4202). Se descarta.
-    if dt.year < 2000 or dt.year > datetime.now().year + 2:
-        return None
-    return dt.isoformat() + "-05:00"
 
 
 class RegistroSeace(BaseModel):
@@ -533,7 +360,7 @@ def upsert_contratos_pg(dsn: str, filas: list[dict]) -> None:
 
 def _api_call(page, page_num: int) -> tuple[int, list[dict], int]:
     r = page.request.get(
-        API_BASE,
+        API_BUSCADOR,
         params={
             "anio": ANIO, "palabra_clave": "",
             "orden": 2, "page": page_num, "page_size": PAGE_SIZE,
@@ -700,7 +527,7 @@ def main():
         browser = p.chromium.launch(headless=not args.headed)
         page = browser.new_context(ignore_https_errors=True).new_page()
         print("Iniciando SPA...")
-        page.goto(URL_SPA, wait_until="networkidle", timeout=90_000)
+        page.goto(SPA_URL, wait_until="networkidle", timeout=90_000)
         page.wait_for_timeout(2_000)
 
         total_api  = 0

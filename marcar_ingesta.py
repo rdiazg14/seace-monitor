@@ -8,29 +8,17 @@ detección temprana (cada 2 h). El front (Ruta del día) usa esta marca para mos
 """
 from __future__ import annotations
 
-import os
 from datetime import datetime, timezone
-from pathlib import Path
 
-from supabase import create_client
+from seace_monitor.config import cargar_env
+from seace_monitor.supabase_client import crear_cliente
 
-_env = Path(__file__).parent / ".env"
-if _env.exists():
-    for line in _env.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, _, v = line.partition("=")
-            os.environ.setdefault(k.strip(), v.strip())
-
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
+cargar_env()
 
 
 def main() -> None:
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        raise SystemExit("ERROR: SUPABASE_URL / SUPABASE_SERVICE_KEY no encontrados")
     now = datetime.now(timezone.utc).isoformat()
-    supa = create_client(SUPABASE_URL, SUPABASE_KEY)
+    supa = crear_cliente()
     # UPDATE (no upsert): la fila id=1 ya existe (bootstrap). Así no pisamos
     # ultima_corrida_utc ni chocamos con su NOT NULL al hacer un insert parcial.
     res = (

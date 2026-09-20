@@ -31,7 +31,7 @@ if _ENV.is_file():
             os.environ.setdefault(k.strip(), v.strip())
 
 from clasificacion_capa import conectar_pg  # noqa: E402
-from pipeline_log import PASO_CAPAS, registrar_run  # noqa: E402
+from seace_monitor.logging import PASO_CAPAS, registrar_run  # noqa: E402
 
 IDS_C1 = [
     273, 10353, 11435, 11988, 12399, 20626, 32171, 32378, 34382, 34492,

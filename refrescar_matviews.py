@@ -15,16 +15,12 @@ Uso:
 """
 from __future__ import annotations
 
+from seace_monitor.config import cargar_env
+
 import os
 from pathlib import Path
 
-_env = Path(__file__).parent / ".env"
-if _env.exists():
-    for line in _env.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, _, v = line.partition("=")
-            os.environ.setdefault(k.strip(), v.strip())
+cargar_env()
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
