@@ -1,4 +1,4 @@
-2026-09-19 14:01:57 UTC
+2026-09-20 14:01:59 UTC
 total_registros=78,097
 nuevos_esta_corrida=0
 rechazados_esta_corrida=0
