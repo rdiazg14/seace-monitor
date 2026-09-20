@@ -5,6 +5,7 @@ Ejecutar: uv run python auditoria_rag.py
 Guarda resultados en data/auditoria_rag.json
 """
 from __future__ import annotations
+import _bootstrap  # noqa: F401
 
 import json
 import os

@@ -6,6 +6,7 @@
   uv run python probar_pdf_rag.py --pipeline --batch 1
 """
 from __future__ import annotations
+import _bootstrap  # noqa: F401
 
 import argparse
 import time

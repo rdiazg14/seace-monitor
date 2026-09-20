@@ -15,7 +15,6 @@ from __future__ import annotations
 from seace_monitor.config import cargar_env
 
 import argparse
-import math
 import os
 import time
 from pathlib import Path
@@ -24,6 +23,7 @@ import httpx
 from supabase import create_client
 
 from chunker_contratos import cuerpo_chunk
+from seace_monitor.gemini import EMBED_USD_PER_M, l2_normalize
 from seace_monitor.logging import PASO_EMBEDDING, registrar_evento, registrar_run
 
 cargar_env()
@@ -37,8 +37,7 @@ GEMINI_EMBED_URL = (
     f"{GEMINI_EMBED_MODEL}:batchEmbedContents"
 )
 GEMINI_DIM = 1536
-# Precio gemini-embedding-001: USD por 1M tokens de entrada (input-only).
-EMBED_USD_PER_M = 0.0375
+# Precio gemini-embedding-001: EMBED_USD_PER_M viene de seace_monitor.gemini.
 
 PAGE = 1_000
 
@@ -113,14 +112,6 @@ def reset_embedding_v2(supa, ids: list[int], fuente: str) -> int:
 
 def vec_literal(vec: list[float]) -> str:
     return "[" + ",".join(f"{x:.8f}" for x in vec) + "]"
-
-
-def l2_normalize(vec: list[float]) -> list[float]:
-    """gemini-embedding-001 exige renormalizar si dim != 3072."""
-    s = math.sqrt(sum(x * x for x in vec))
-    if s <= 0:
-        return vec
-    return [x / s for x in vec]
 
 
 def paginar_ids_vigentes(supa) -> list[int]:

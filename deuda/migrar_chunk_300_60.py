@@ -26,6 +26,7 @@ Uso:
   uv run python migrar_chunk_300_60.py --ids 87164,87001    # ids específicos
 """
 from __future__ import annotations
+import _bootstrap  # noqa: F401
 
 from seace_monitor.config import cargar_env
 

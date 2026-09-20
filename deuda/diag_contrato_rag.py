@@ -7,6 +7,7 @@ Uso:
   uv run python diag_contrato_rag.py --id 12345
 """
 from __future__ import annotations
+import _bootstrap  # noqa: F401
 
 import argparse
 import os
@@ -15,6 +16,8 @@ from pathlib import Path
 
 import httpx
 from supabase import create_client
+
+from seace_monitor.gemini import l2_normalize
 
 _env = Path(__file__).parent / ".env"
 if _env.exists():
@@ -41,13 +44,6 @@ QUERIES = [
     "entregables plazo sílabo conformidad",
     "confidencialidad plataforma materiales propiedad",
 ]
-
-
-def l2_normalize(vec: list[float]) -> list[float]:
-    s = sum(x * x for x in vec) ** 0.5
-    if s <= 0:
-        return vec
-    return [x / s for x in vec]
 
 
 def embed_query(client: httpx.Client, text: str) -> list[float]:

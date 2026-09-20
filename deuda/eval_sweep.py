@@ -9,6 +9,7 @@ El reranker se mide solo para las mejores combinaciones (top_k = 5 y 10).
 Uso: python eval_sweep.py
 """
 from __future__ import annotations
+import _bootstrap  # noqa: F401
 
 import json
 import time

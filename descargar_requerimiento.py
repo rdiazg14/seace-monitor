@@ -27,6 +27,12 @@ Uso:
 from __future__ import annotations
 
 from seace_monitor.config import cargar_env
+from seace_monitor.gemini import (
+    FLASH_USD_IN_PER_M,
+    FLASH_USD_OUT_PER_M,
+    fecha_lima,
+    usd_flash as usd_de_tokens,
+)
 
 import argparse
 import base64
@@ -101,8 +107,7 @@ FLASH_OCR_MAX_DIA = 6_000
 USD_PEN = 3.75
 GASTO_STOP_PEN = 2.0
 # Gemini 3 Flash Preview (aprox. 3.7 Flash): tarifa paga de referencia.
-FLASH_USD_IN_PER_M = 0.50
-FLASH_USD_OUT_PER_M = 3.00
+# FLASH_USD_IN_PER_M / FLASH_USD_OUT_PER_M vienen de seace_monitor.gemini.
 LAST_OCR_USAGE: dict = {}
 # Acumulado de tokens OCR entre llamadas a ocr_pagina_gemini (reseteable por el
 # caller). Útil para contenedores (extraer_contenedores.py), que hace OCR de N
@@ -973,16 +978,6 @@ def _as_int_list(raw) -> list[int]:
         except (TypeError, ValueError):
             continue
     return out
-
-
-def fecha_lima() -> str:
-    return datetime.now(timezone(timedelta(hours=-5))).date().isoformat()
-
-
-def usd_de_tokens(prompt: int, out: int) -> float:
-    return (prompt / 1_000_000.0) * FLASH_USD_IN_PER_M + (
-        out / 1_000_000.0
-    ) * FLASH_USD_OUT_PER_M
 
 
 def cargar_cuota_ocr(supa=None) -> dict:

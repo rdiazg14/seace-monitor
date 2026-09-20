@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import _bootstrap  # noqa: F401
 """
 Fase 1.1 — Descubrir la API de detalle del SEACE.
 Navega 5 contratos vigentes e intercepta todas las llamadas JSON.

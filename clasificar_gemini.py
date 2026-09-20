@@ -22,6 +22,7 @@ C1 (preferido):
 from __future__ import annotations
 
 from seace_monitor.config import cargar_env
+from seace_monitor.gemini import extract_gemini_text, fecha_lima
 
 import argparse
 import json
@@ -249,10 +250,6 @@ def acumular_tokens(body: dict) -> None:
     TOKEN_STATS["candidates"] += n("candidatesTokenCount")
     TOKEN_STATS["total"] += n("totalTokenCount")
     TOKEN_STATS["llamadas"] += 1
-
-
-def fecha_lima() -> str:
-    return datetime.now(timezone(timedelta(hours=-5))).date().isoformat()
 
 
 def set_max_llamadas_dia(n: int) -> None:
@@ -671,16 +668,6 @@ def paginar_nulls(
             break
         offset += PAGE_DB
     return out[:limit] if limit else out
-
-
-def extract_gemini_text(body: dict) -> str:
-    parts = (
-        (body.get("candidates") or [{}])[0]
-        .get("content", {})
-        .get("parts") or []
-    )
-    textos = [p.get("text") or "" for p in parts if not p.get("thought")]
-    return "".join(textos).strip()
 
 
 def parse_array(text: str) -> list[dict]:

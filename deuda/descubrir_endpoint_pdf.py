@@ -11,6 +11,7 @@ Uso:
   uv run python descubrir_endpoint_pdf.py --headed --id 87164
 """
 from __future__ import annotations
+import _bootstrap  # noqa: F401
 
 import argparse
 import json

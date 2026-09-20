@@ -11,6 +11,7 @@ Uso:
   python eval_retrieval.py --backend v2 --k 10
 """
 from __future__ import annotations
+import _bootstrap  # noqa: F401
 
 import argparse
 import json
@@ -23,6 +24,8 @@ from pathlib import Path
 
 import httpx
 from supabase import create_client
+
+from seace_monitor.gemini import l2_normalize
 
 _env = Path(__file__).parent / ".env"
 if _env.exists():
@@ -184,13 +187,6 @@ def embed_lote(client: httpx.Client, texts: list[str]) -> list[list[float]]:
     if not isinstance(embs, list) or len(embs) != len(texts):
         raise RuntimeError("embed: respuesta inesperada")
     return embs
-
-
-def l2_normalize(vec: list[float]) -> list[float]:
-    s = sum(x * x for x in vec) ** 0.5
-    if s <= 0:
-        return vec
-    return [x / s for x in vec]
 
 
 def embed_query_gemini(client: httpx.Client, text: str) -> list[float]:

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """PASO D — 2-3 queries de detalle TDR sobre contratos con PDF en el RAG v2."""
 from __future__ import annotations
+import _bootstrap  # noqa: F401
 
 import httpx
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Prueba rápida de búsqueda semántica contra buscar_tdr_v2() (Gemini)."""
 from __future__ import annotations
+import _bootstrap  # noqa: F401
 
 import json
 import os

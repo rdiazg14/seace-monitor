@@ -9,6 +9,7 @@ no reintroducir items_desync ni reencolar el enriquecedor diario.
 Uso: uv run python backfill_etapas.py [--limit N] [--headed]
 """
 from __future__ import annotations
+import _bootstrap  # noqa: F401
 
 import argparse
 import os

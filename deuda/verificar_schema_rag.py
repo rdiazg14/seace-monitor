@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import _bootstrap  # noqa: F401
 """
 Fase 1.3 — Verifica que el schema RAG se creó correctamente en Supabase.
 Ejecutar con: uv run python verificar_schema_rag.py

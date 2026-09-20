@@ -4,6 +4,7 @@ Auditoría de datos en Supabase — Fase de validación completa.
 Ejecutar: uv run python auditoria_supabase.py
 """
 from __future__ import annotations
+import _bootstrap  # noqa: F401
 import os
 from pathlib import Path
 from supabase import create_client

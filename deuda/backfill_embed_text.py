@@ -9,6 +9,7 @@ NO corre solo. Uso:
 Resetea embedding_v2 SOLO en las filas que acaba de backfillear.
 """
 from __future__ import annotations
+import _bootstrap  # noqa: F401
 
 import argparse
 import os
