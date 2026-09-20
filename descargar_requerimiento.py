@@ -48,15 +48,13 @@ from pathlib import Path
 import httpx
 import pymupdf
 from playwright.sync_api import sync_playwright
-from supabase import create_client
+from seace_monitor.supabase_client import crear_cliente
 
 from ingesta_completa import registrar_rechazo
 from pipeline_log import PASO_OCR, PASO_PDF, registrar_run
 
 cargar_env()
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 SPA_URL = "https://prod6.seace.gob.pe/buscador-publico/contrataciones"
 GEMINI_FLASH = "gemini-3.7-flash"
@@ -2357,10 +2355,7 @@ def main() -> None:
         modo_sel = "sin_pdf"
     compacto = args.solo_nativo or args.solo_ocr or args.limit == 0
 
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        raise SystemExit("ERROR: SUPABASE_URL / SUPABASE_SERVICE_KEY no encontrados")
-
-    supa = create_client(SUPABASE_URL, SUPABASE_KEY)
+    supa = crear_cliente()
     if args.sync_meta:
         sync_meta_jsonl(supa)
     if args.reporte or args.sync_meta:

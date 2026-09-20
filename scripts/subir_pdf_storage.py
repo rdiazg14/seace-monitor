@@ -27,10 +27,13 @@ from pathlib import Path
 
 import psycopg
 from psycopg.rows import dict_row
-from supabase import create_client
 
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
+
+from seace_monitor.config import cargar_env  # noqa: E402
+from seace_monitor.db import connect  # noqa: E402
+from seace_monitor.supabase_client import crear_cliente  # noqa: E402
 
 from descargar_requerimiento import (  # noqa: E402
     BUCKET_TDR,
@@ -41,21 +44,10 @@ from descargar_requerimiento import (  # noqa: E402
     pdf_storage_ruta,
 )
 
-_ENV = _ROOT / ".env"
 BUCKET = BUCKET_TDR
 DELAY_S = 1.0
 MAX_ERRORES_SEGUIDOS = 10
 PROGRESO_CADA = 50
-
-
-def _cargar_env() -> None:
-    if not _ENV.exists():
-        return
-    for line in _ENV.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, _, v = line.partition("=")
-            os.environ.setdefault(k.strip(), v.strip())
 
 
 def _redactar(texto: str) -> str:
@@ -317,7 +309,7 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    _cargar_env()
+    cargar_env()
     dsn = (os.environ.get("DATABASE_URL") or "").strip()
     url = (os.environ.get("SUPABASE_URL") or "").strip()
     key = (os.environ.get("SUPABASE_SERVICE_KEY") or "").strip()
@@ -352,8 +344,8 @@ def main() -> int:
         )
         return 2
 
-    with psycopg.connect(dsn, row_factory=dict_row) as conn:
-        supa = None if args.dry_run else create_client(url, key)
+    with connect(dsn, row_factory=dict_row) as conn:
+        supa = None if args.dry_run else crear_cliente()
         if args.migrar_arbol:
             if args.dry_run:
                 filas = conn.execute(

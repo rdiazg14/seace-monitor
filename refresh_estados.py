@@ -15,7 +15,9 @@ Uso:
 from __future__ import annotations
 
 from seace_monitor.config import cargar_env
+from seace_monitor.db import connect
 from seace_monitor.seace_api import API_DETALLE, SPA_URL
+from seace_monitor.supabase_client import crear_cliente
 
 import argparse
 import os
@@ -25,13 +27,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
-from supabase import create_client
 
 # ── Cargar .env ────────────────────────────────────────────────────────────────
 cargar_env()
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 BATCH_DB     = 100
 DELAY_S      = 0.3
@@ -149,8 +148,6 @@ def upsert_lote(supa, lote: list[dict]):
 
 def upsert_lote_pg(dsn: str, lote: list[dict]) -> None:
     """Upsert de estado/verificado por conexión directa (evita PostgREST)."""
-    import psycopg
-
     sql = (
         "insert into contratos (id, estado, estado_verificado_at) "
         "values (%s, %s, %s) "
@@ -159,7 +156,7 @@ def upsert_lote_pg(dsn: str, lote: list[dict]) -> None:
         "estado_verificado_at = excluded.estado_verificado_at"
     )
     params = [(r["id"], r["estado"], r["estado_verificado_at"]) for r in lote]
-    with psycopg.connect(dsn) as conn:
+    with connect(dsn) as conn:
         with conn.cursor() as cur:
             cur.executemany(sql, params)
 
@@ -274,10 +271,7 @@ def main():
     ap.add_argument("--headed", action="store_true")
     args = ap.parse_args()
 
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        raise SystemExit("ERROR: SUPABASE_URL / SUPABASE_SERVICE_KEY no encontrados")
-
-    supa = create_client(SUPABASE_URL, SUPABASE_KEY)
+    supa = crear_cliente()
     dsn = (DATABASE_URL or "").strip()
     now_iso = datetime.now(timezone.utc).isoformat()
 

@@ -26,6 +26,7 @@ Uso:
 from __future__ import annotations
 
 from seace_monitor.config import cargar_env
+from seace_monitor.db import connect
 from seace_monitor.seace_api import API_BUSCADOR, SPA_URL, parsear_fecha
 
 import argparse
@@ -34,7 +35,6 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-import psycopg
 from playwright.sync_api import sync_playwright
 
 cargar_env()
@@ -124,7 +124,7 @@ def main():
     if not DATABASE_URL:
         raise SystemExit("ERROR: DATABASE_URL no encontrado")
 
-    conn = psycopg.connect(DATABASE_URL, autocommit=True)
+    conn = connect(DATABASE_URL, autocommit=True)
     try:
         conn.execute("set statement_timeout = '60s'")
         now_iso = datetime.now(timezone.utc).isoformat()

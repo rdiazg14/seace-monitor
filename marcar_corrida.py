@@ -9,17 +9,12 @@ corrida, en lugar de la fecha de hoy.
 from __future__ import annotations
 
 from seace_monitor.config import cargar_env
+from seace_monitor.supabase_client import crear_cliente
 
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from supabase import create_client
-
 cargar_env()
-
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 
 
 def _leer_ingesta() -> tuple[int, int]:
@@ -43,11 +38,9 @@ def _leer_ingesta() -> tuple[int, int]:
 
 
 def main() -> None:
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        raise SystemExit("ERROR: SUPABASE_URL / SUPABASE_SERVICE_KEY no encontrados")
     total, nuevos = _leer_ingesta()
     now = datetime.now(timezone.utc).isoformat()
-    supa = create_client(SUPABASE_URL, SUPABASE_KEY)
+    supa = crear_cliente()
     res = (
         supa.table("pipeline_estado")
         .upsert(

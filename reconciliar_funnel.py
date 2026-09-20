@@ -13,6 +13,7 @@ Uso:
 from __future__ import annotations
 
 from seace_monitor.config import cargar_env
+from seace_monitor.db import connect
 
 import argparse
 import os
@@ -41,8 +42,8 @@ def init_supabase():
         print("[supabase] variables de entorno no configuradas — solo CSV/parquet.")
         return None
     try:
-        from supabase import create_client
-        client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        from seace_monitor.supabase_client import crear_cliente
+        client = crear_cliente()
         print("[supabase] cliente inicializado OK")
         return client
     except ImportError:
@@ -193,8 +194,6 @@ def upsert_lote_pg(dsn: str, lote: list[dict]) -> None:
     Monotónico: analizado/cotizado nunca vuelven a false y la fecha conserva
     la primera marca no-nula (la del KV). El id siempre existe en contratos.
     """
-    import psycopg
-
     sql = """
         INSERT INTO contratos (id, analizado, cotizado, fecha_analisis, fecha_cotizacion)
         VALUES (%s, %s, %s, %s, %s)
@@ -214,7 +213,7 @@ def upsert_lote_pg(dsn: str, lote: list[dict]) -> None:
         )
         for r in lote
     ]
-    with psycopg.connect(dsn) as conn:
+    with connect(dsn) as conn:
         with conn.cursor() as cur:
             cur.executemany(sql, params)
 

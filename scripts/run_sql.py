@@ -17,17 +17,10 @@ from pathlib import Path
 import psycopg
 
 _ROOT = Path(__file__).resolve().parent.parent
-_ENV = _ROOT / ".env"
+sys.path.insert(0, str(_ROOT))
 
-
-def _cargar_env() -> None:
-    if not _ENV.exists():
-        return
-    for line in _ENV.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, _, v = line.partition("=")
-            os.environ.setdefault(k.strip(), v.strip())
+from seace_monitor.config import cargar_env  # noqa: E402
+from seace_monitor.db import connect  # noqa: E402
 
 
 def _redactar(texto: str) -> str:
@@ -65,7 +58,7 @@ def main() -> int:
         print(sql, end="" if sql.endswith("\n") else "\n")
         return 0
 
-    _cargar_env()
+    cargar_env()
     dsn = os.environ.get("DATABASE_URL", "").strip()
     if not dsn:
         print(
@@ -75,7 +68,7 @@ def main() -> int:
         return 2
 
     try:
-        with psycopg.connect(dsn, cursor_factory=psycopg.ClientCursor) as conn:
+        with connect(dsn, cursor_factory=psycopg.ClientCursor) as conn:
             conn.add_notice_handler(_notices)
             try:
                 cur = conn.execute(sql)

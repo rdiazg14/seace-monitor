@@ -38,7 +38,7 @@ from collections import Counter
 from pathlib import Path
 
 import pymupdf
-from supabase import create_client
+from seace_monitor.supabase_client import crear_cliente
 
 from descargar_requerimiento import (
     DELAY_S,
@@ -64,8 +64,6 @@ from seace_monitor.logging import PASO_CONTENEDORES, registrar_evento, registrar
 # ── Cargar .env ────────────────────────────────────────────────────────────────
 cargar_env()
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 PAGE_DB = 1_000
@@ -641,10 +639,7 @@ def main() -> None:
     ap.add_argument("--headed", action="store_true")
     args = ap.parse_args()
 
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        raise SystemExit("ERROR: SUPABASE_URL / SUPABASE_SERVICE_KEY no encontrados")
-
-    supa = create_client(SUPABASE_URL, SUPABASE_KEY)
+    supa = crear_cliente()
     ids = parse_ids(args.ids)
 
     if ids:

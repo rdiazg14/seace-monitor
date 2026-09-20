@@ -20,6 +20,7 @@ Uso:
 from __future__ import annotations
 
 from seace_monitor.config import cargar_env
+from seace_monitor.db import connect
 from seace_monitor.seace_api import API_DETALLE, SPA_URL
 
 import argparse
@@ -120,11 +121,11 @@ def main():
     print(f"  limit={args.limit}  dry-run={args.dry_run}", flush=True)
     print("=" * 60, flush=True)
 
-    conn = psycopg.connect(DATABASE_URL)
+    conn = connect(DATABASE_URL)
     holder = [conn]  # mutable para que la reconexión persista entre filas
 
     def _conectar() -> "psycopg.Connection":
-        return psycopg.connect(DATABASE_URL)
+        return connect(DATABASE_URL)
 
     def _escribir(fila: dict) -> None:
         """UPDATE de una fila; reconecta y reintenta si la BD cortó la conexión."""

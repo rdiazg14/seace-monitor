@@ -15,22 +15,17 @@ Uso:
 from __future__ import annotations
 
 from seace_monitor.config import cargar_env
+from seace_monitor.supabase_client import crear_cliente
 
 import argparse
 import json
-import os
 import re
 import time
 from pathlib import Path
 
-from supabase import create_client
-
 from seace_monitor.logging import PASO_CHUNKING, registrar_evento, registrar_run
 
 cargar_env()
-
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 
 PAGE = 1_000
 BATCH_INSERT = 200
@@ -683,14 +678,11 @@ def main():
     )
     args = ap.parse_args()
 
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        raise SystemExit("ERROR: SUPABASE_URL / SUPABASE_SERVICE_KEY no encontrados")
-
     ids_fijos = []
     if args.ids:
         ids_fijos = [int(x) for x in args.ids.replace(" ", "").split(",") if x]
 
-    supa = create_client(SUPABASE_URL, SUPABASE_KEY)
+    supa = crear_cliente()
     print("=" * 60, flush=True)
     print(
         f"Chunking TDR  (solo-pdf={args.solo_pdf} solo-nuevos={args.solo_nuevos} "

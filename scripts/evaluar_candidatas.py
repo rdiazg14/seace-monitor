@@ -17,15 +17,10 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
-_ENV = _ROOT / ".env"
-if _ENV.is_file():
-    for line in _ENV.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, _, v = line.partition("=")
-            os.environ.setdefault(k.strip(), v.strip())
+from seace_monitor.config import cargar_env  # noqa: E402
+from seace_monitor.supabase_client import crear_cliente  # noqa: E402
 
-from supabase import create_client  # noqa: E402
+cargar_env()
 
 from ingesta_completa import (  # noqa: E402
     _contiene,
@@ -53,7 +48,7 @@ def init_supa():
     if not url or not key:
         print("ERROR: falta SUPABASE_URL / SUPABASE_SERVICE_KEY", flush=True)
         return None
-    return create_client(url, key)
+    return crear_cliente()
 
 
 def cargar_candidatas(supa) -> list[dict]:

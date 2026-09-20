@@ -22,12 +22,14 @@ from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
-import psycopg
 from openpyxl import load_workbook
 from psycopg.rows import dict_row
 
 _ROOT = Path(__file__).resolve().parent.parent
-_ENV = _ROOT / ".env"
+sys.path.insert(0, str(_ROOT))
+
+from seace_monitor.config import cargar_env  # noqa: E402
+from seace_monitor.db import connect  # noqa: E402
 
 FUENTE_DEFAULT = (
     "https://www.gob.pe/institucion/oece/informes-publicaciones/"
@@ -47,18 +49,8 @@ CODIGO_RE = re.compile(r"^\d{16}$")
 BATCH = 5000
 
 
-def _cargar_env() -> None:
-    if not _ENV.exists():
-        return
-    for line in _ENV.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, _, v = line.partition("=")
-            os.environ.setdefault(k.strip(), v.strip())
-
-
 def _dsn() -> str:
-    _cargar_env()
+    cargar_env()
     dsn = (os.environ.get("DATABASE_URL") or "").strip()
     if not dsn:
         print("ERROR: falta DATABASE_URL en el entorno o en .env", flush=True)
@@ -302,7 +294,7 @@ def main() -> int:
 
     dsn = _dsn()
     try:
-        with psycopg.connect(dsn, row_factory=dict_row) as conn:
+        with connect(dsn, row_factory=dict_row) as conn:
             ins, upd = _upsert(conn, ok, version)
             conn.execute(
                 """

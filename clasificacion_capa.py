@@ -13,6 +13,8 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from seace_monitor.db import connect
+
 CAPAS_PROTEGIDAS_KW = frozenset({"gemini", "humano"})
 CAPAS_PROTEGIDAS_GEMINI = frozenset({"humano"})
 
@@ -307,10 +309,9 @@ def conectar_pg():
     dsn = (os.getenv("DATABASE_URL") or "").strip()
     if not dsn:
         return None
-    import psycopg
     from psycopg.rows import dict_row
 
-    return psycopg.connect(dsn, row_factory=dict_row)
+    return connect(dsn, row_factory=dict_row)
 
 
 def anunciar_backend_capa3(*, supa=None) -> str:

@@ -40,7 +40,12 @@ import urllib.request
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
-_ENV = _ROOT / ".env"
+sys.path.insert(0, str(_ROOT))
+
+from seace_monitor.config import cargar_env  # noqa: E402
+from seace_monitor.db import connect  # noqa: E402
+from seace_monitor.supabase_client import crear_cliente  # noqa: E402
+
 PROMPT_VERSION = "1"
 DELAY_S = 3.0
 AI_PROXY_DEFAULT = "https://seace-ai-proxy.rdiazg14.workers.dev"
@@ -74,16 +79,6 @@ _SQL_COLA = """
         WHERE (v.es_postulable OR v.es_por_abrir)
         ORDER BY c.fecha_fin_cotizacion ASC NULLS LAST, c.id
         """
-
-
-def _cargar_env() -> None:
-    if not _ENV.exists():
-        return
-    for line in _ENV.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, _, v = line.partition("=")
-            os.environ.setdefault(k.strip(), v.strip())
 
 
 def _pdf_hash(raw: object) -> str:
@@ -124,9 +119,7 @@ def _map_rows(rows: list[tuple]) -> list[dict]:
 
 
 def cargar_postulables_pg(dsn: str) -> list[dict]:
-    import psycopg
-
-    with psycopg.connect(dsn) as conn:
+    with connect(dsn) as conn:
         rows = conn.execute(_SQL_COLA, (PROMPT_VERSION,)).fetchall()
     return _map_rows(rows)
 
@@ -284,7 +277,7 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true", help="Lista sin llamar al Worker")
     ap.add_argument("--limit", type=int, default=0, help="Tope de llamadas (0 = todos)")
     args = ap.parse_args()
-    _cargar_env()
+    cargar_env()
 
     proxy = (os.environ.get("AI_PROXY") or AI_PROXY_DEFAULT).rstrip("/")
     token = (os.environ.get("ANALIZAR_SERVICE_TOKEN") or "").strip()
@@ -307,9 +300,7 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 2
-        from supabase import create_client
-
-        filas = cargar_postulables_rest(create_client(url, key))
+        filas = cargar_postulables_rest(crear_cliente())
 
     ya = [r for r in filas if r["ya_en_bd"]]
     sin_texto = [r for r in filas if not r["ya_en_bd"] and not r["con_texto"]]

@@ -26,7 +26,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-from supabase import create_client
+from seace_monitor.supabase_client import crear_cliente
 
 from clasificacion_capa import anunciar_backend_capa3, escribir_keyword
 from ingesta_completa import (
@@ -62,7 +62,7 @@ def init_supabase():
               flush=True)
         return None
     try:
-        client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        client = crear_cliente()
         print("[supabase] cliente inicializado OK", flush=True)
         return client
     except Exception as e:

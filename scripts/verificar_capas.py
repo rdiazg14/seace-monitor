@@ -22,16 +22,12 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
-_ENV = _ROOT / ".env"
-if _ENV.is_file():
-    for line in _ENV.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, _, v = line.partition("=")
-            os.environ.setdefault(k.strip(), v.strip())
-
 from clasificacion_capa import conectar_pg  # noqa: E402
+from seace_monitor.config import cargar_env  # noqa: E402
 from seace_monitor.logging import PASO_CAPAS, registrar_run  # noqa: E402
+from seace_monitor.supabase_client import crear_cliente  # noqa: E402
+
+cargar_env()
 
 IDS_C1 = [
     273, 10353, 11435, 11988, 12399, 20626, 32171, 32378, 34382, 34492,
@@ -51,8 +47,7 @@ def _init_supa():
     key = (os.getenv("SUPABASE_SERVICE_KEY") or "").strip()
     if not url or not key:
         return None
-    from supabase import create_client
-    return create_client(url, key)
+    return crear_cliente()
 
 
 def _paginar(

@@ -16,6 +16,7 @@ Uso:
 from __future__ import annotations
 
 from seace_monitor.config import cargar_env
+from seace_monitor.db import connect
 
 import os
 from pathlib import Path
@@ -33,13 +34,7 @@ def main() -> None:
         print("ERROR: DATABASE_URL no configurado", flush=True)
         raise SystemExit(1)
 
-    try:
-        import psycopg
-    except ImportError:
-        print("ERROR: psycopg no está instalado", flush=True)
-        raise SystemExit(1)
-
-    with psycopg.connect(DATABASE_URL, connect_timeout=30, sslmode="require") as conn:
+    with connect(DATABASE_URL, connect_timeout=30, sslmode="require") as conn:
         conn.autocommit = True
         with conn.cursor() as cur:
             for mv in MATVIEWS:

@@ -36,7 +36,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
-from supabase import create_client
+from seace_monitor.supabase_client import crear_cliente
 
 from clasificacion_capa import (
     escribir_gemini,
@@ -375,7 +375,7 @@ def init_supabase():
               flush=True)
         return None
     try:
-        client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        client = crear_cliente()
         print("[supabase] cliente inicializado OK", flush=True)
         return client
     except Exception as e:
@@ -933,7 +933,7 @@ def _cliente_supa_opcional():
     if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
         return None
     try:
-        return create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        return crear_cliente()
     except Exception:
         return None
 

@@ -25,9 +25,8 @@ from __future__ import annotations
 import os
 import time
 
-import psycopg
-
 from seace_monitor.config import cargar_env
+from seace_monitor.db import connect
 
 cargar_env()
 
@@ -68,7 +67,7 @@ def main() -> int:
         return 2
 
     t0 = time.perf_counter()
-    with psycopg.connect(dsn) as conn:
+    with connect(dsn) as conn:
         with conn.transaction():
             n_del = conn.execute(SQL_DELETE).rowcount
             n_ins = conn.execute(SQL_INSERT).rowcount

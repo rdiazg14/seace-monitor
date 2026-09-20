@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 
 import httpx
-from supabase import create_client
+from seace_monitor.supabase_client import crear_cliente
 
 from chunker_contratos import cuerpo_chunk
 from seace_monitor.gemini import EMBED_USD_PER_M, l2_normalize
@@ -601,7 +601,7 @@ def main():
     if not SUPABASE_URL or not SUPABASE_KEY:
         raise SystemExit("ERROR: SUPABASE_URL / SUPABASE_SERVICE_KEY no encontrados")
 
-    supa = create_client(SUPABASE_URL, SUPABASE_KEY)
+    supa = crear_cliente()
     if args.cobertura:
         print_cobertura(cobertura_vigentes(supa))
         return
