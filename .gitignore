@@ -46,6 +46,5 @@ chunk_*.txt
 
 # Documentación: solo local, no subir a GitHub (seguridad)
 docs/
-README.md
 PROYECTO_SEACE_MONITOR.md
 DOCUMENTACION.md
