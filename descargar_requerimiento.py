@@ -33,9 +33,15 @@ from seace_monitor.gemini import (
     fecha_lima,
     usd_flash as usd_de_tokens,
 )
+from seace_monitor.ocr.gemini_provider import (
+    GEMINI_FLASH,
+    LAST_OCR_USAGE,
+    OCR_USAGE_ACUM,
+    CupoFlash,
+    solicitar_ocr_gemini,
+)
 
 import argparse
-import base64
 import hashlib
 import json
 import os
@@ -57,7 +63,6 @@ cargar_env()
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 SPA_URL = "https://prod6.seace.gob.pe/buscador-publico/contrataciones"
-GEMINI_FLASH = "gemini-3.7-flash"
 
 # Plantillas reales capturadas (descubrir_endpoint_pdf.py). Override por env.
 LISTAR_URL = os.environ.get(
@@ -105,12 +110,7 @@ FLASH_OCR_MAX_DIA = 6_000
 USD_PEN = 3.75
 GASTO_STOP_PEN = 2.0
 # Gemini 3 Flash Preview (aprox. 3.7 Flash): tarifa paga de referencia.
-# FLASH_USD_IN_PER_M / FLASH_USD_OUT_PER_M vienen de seace_monitor.gemini.
-LAST_OCR_USAGE: dict = {}
-# Acumulado de tokens OCR entre llamadas a ocr_pagina_gemini (reseteable por el
-# caller). Útil para contenedores (extraer_contenedores.py), que hace OCR de N
-# imágenes sin pasar por registrar_ocr_ok.
-OCR_USAGE_ACUM: dict = {"prompt": 0, "candidates": 0, "total": 0, "llamadas": 0}
+# Modelo y contadores OCR vienen del adaptador; precios de seace_monitor.gemini.
 BUCKET_TDR = "tdr"
 MAX_PDF_STORAGE_BYTES = 52_428_800
 _RUTA_ARBOL = re.compile(r"^tdr/\d{4}/\d{2}/\d+/\d+\.pdf$")
@@ -152,17 +152,6 @@ class NecesitaOcr(Exception):
         n = len(meta.get("ocr_paginas") or [])
         super().__init__(f"necesita OCR ({n} paginas)")
         self.meta = meta
-
-
-class CupoFlash(Exception):
-    """Tope de reloj, cupo diario OCR (6K) o 429. Reanudar después.
-
-    motivo: tiempo | cupo | 429
-    """
-
-    def __init__(self, msg: str, motivo: str = "cupo"):
-        super().__init__(msg)
-        self.motivo = motivo
 
 
 class SeaceHttp:
@@ -444,76 +433,8 @@ def ocr_pagina_gemini(img_bytes: bytes, mime: str = "image/jpeg") -> str:
     if not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY ausente; no se puede hacer OCR")
     respetar_rpm()
-    b64 = base64.b64encode(img_bytes).decode("ascii")
-    url = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{GEMINI_FLASH}:generateContent"
-    )
-    payload = {
-        "contents": [{
-            "role": "user",
-            "parts": [
-                {
-                    "text": (
-                        "Extrae TODO el texto visible de esta pagina de un "
-                        "requerimiento/TDR de contratacion publica peruana (SEACE). "
-                        "Responde solo el texto, en espanol, sin preambulo ni markdown."
-                    ),
-                },
-                {"inlineData": {"mimeType": mime, "data": b64}},
-            ],
-        }],
-        "generationConfig": {
-            "thinkingConfig": {"thinkingLevel": "LOW"},
-            "maxOutputTokens": 4096,
-            "temperature": 0.1,
-        },
-    }
-    last_err: Exception | None = None
-    for wait in (0.0, 2.0, 8.0, 20.0):
-        if wait:
-            time.sleep(wait)
-        try:
-            r = httpx.post(
-                url,
-                headers={
-                    "Content-Type": "application/json",
-                    "x-goog-api-key": GEMINI_API_KEY,
-                },
-                json=payload,
-                timeout=120.0,
-            )
-            if r.status_code == 429:
-                raise CupoFlash(f"429 OCR: {r.text[:160]}", motivo="429")
-            r.raise_for_status()
-            body = r.json()
-            um = body.get("usageMetadata") or {}
-            LAST_OCR_USAGE.clear()
-            LAST_OCR_USAGE.update({
-                "prompt": int(um.get("promptTokenCount") or 0),
-                "candidates": int(um.get("candidatesTokenCount") or 0),
-                "total": int(um.get("totalTokenCount") or 0),
-            })
-            OCR_USAGE_ACUM["prompt"] += int(um.get("promptTokenCount") or 0)
-            OCR_USAGE_ACUM["candidates"] += int(um.get("candidatesTokenCount") or 0)
-            OCR_USAGE_ACUM["total"] += int(um.get("totalTokenCount") or 0)
-            OCR_USAGE_ACUM["llamadas"] += 1
-            parts = (
-                (body.get("candidates") or [{}])[0]
-                .get("content", {})
-                .get("parts") or []
-            )
-            textos = [
-                p.get("text") or ""
-                for p in parts
-                if not p.get("thought")
-            ]
-            return limpiar_texto("\n".join(textos))
-        except CupoFlash:
-            raise
-        except Exception as e:
-            last_err = e
-    raise RuntimeError(f"OCR Gemini fallo: {last_err}")
+    text = solicitar_ocr_gemini(httpx, img_bytes, mime, GEMINI_API_KEY)
+    return limpiar_texto(text)
 
 
 def clasificar_tipo(n_paginas: int, ocr_pags: list[int]) -> str:
