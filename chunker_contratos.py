@@ -34,6 +34,16 @@ from seace_monitor.rag.chunking import (
     siglas_entidad,
     split_por_parrafos,
 )
+from seace_monitor.rag.repository import (
+    borrar_chunks_fuente,
+    borrar_chunks_vigentes,
+    cobertura_fuentes,
+    ids_con_fuente_pdf,
+    ids_ya_chunkeados,
+    insert_lote,
+    max_chunk_index,
+    paginar,
+)
 from seace_monitor.supabase_client import crear_cliente
 
 import argparse
@@ -44,235 +54,21 @@ from seace_monitor.logging import PASO_CHUNKING, registrar_evento, registrar_run
 
 cargar_env()
 
-PAGE = 1_000
 BATCH_INSERT = 200
-
-
-def paginar(supa, tabla: str, cols: str, **filters) -> list[dict]:
-    out: list[dict] = []
-    offset = 0
-    qbase = supa.table(tabla).select(cols)
-    for k, v in filters.items():
-        if k == "eq":
-            for col, val in v.items():
-                qbase = qbase.eq(col, val)
-    while True:
-        q = supa.table(tabla).select(cols)
-        for k, v in filters.items():
-            if k == "eq":
-                for col, val in v.items():
-                    q = q.eq(col, val)
-        # PostgREST: .range() sin .order() no garantiza orden entre paginas;
-        # la pagina 2 puede repetir filas de la 1 y omitir otras.
-        res = q.order("id").range(offset, offset + PAGE - 1).execute()
-        batch = res.data or []
-        out.extend(batch)
-        if len(batch) < PAGE:
-            break
-        offset += PAGE
-    return out
-
-
-def cobertura_fuentes(supa) -> dict:
-    """Cuántos vigentes tienen chunks api y/o pdf conviviendo."""
-    vigentes = paginar(
-        supa, "contratos", "id,tdr_texto", eq={"estado": "Vigente"},
-    )
-    con_tdr = {int(c["id"]) for c in vigentes if (c.get("tdr_texto") or "").strip()}
-    ids = [int(c["id"]) for c in vigentes]
-    api_ids: set[int] = set()
-    pdf_ids: set[int] = set()
-    n_pdf = n_api = 0
-    n_pdf_v2 = n_api_v2 = 0
-    for i in range(0, len(ids), 80):
-        lote = ids[i:i + 80]
-        offset = 0
-        while True:
-            res = (
-                supa.table("chunks_tdr")
-                .select("contrato_id,fuente")
-                .in_("contrato_id", lote)
-                # PostgREST: .range() sin .order() no garantiza orden entre paginas;
-                # la pagina 2 puede repetir filas de la 1 y omitir otras.
-                .order("id")
-                .range(offset, offset + PAGE - 1)
-                .execute()
-            )
-            batch = res.data or []
-            for row in batch:
-                cid = int(row["contrato_id"])
-                if (row.get("fuente") or "api") == "pdf":
-                    pdf_ids.add(cid)
-                    n_pdf += 1
-                else:
-                    api_ids.add(cid)
-                    n_api += 1
-            if len(batch) < PAGE:
-                break
-            offset += PAGE
-        pdf_v2 = (
-            supa.table("chunks_tdr")
-            .select("id", count="exact", head=True)
-            .in_("contrato_id", lote)
-            .eq("fuente", "pdf")
-            .not_.is_("embedding_v2", "null")
-            .execute()
-        )
-        api_v2 = (
-            supa.table("chunks_tdr")
-            .select("id", count="exact", head=True)
-            .in_("contrato_id", lote)
-            .eq("fuente", "api")
-            .not_.is_("embedding_v2", "null")
-            .execute()
-        )
-        n_pdf_v2 += pdf_v2.count or 0
-        n_api_v2 += api_v2.count or 0
-    return {
-        "vigentes": len(vigentes),
-        "con_tdr_texto": len(con_tdr),
-        "contratos_chunk_api": len(api_ids),
-        "contratos_chunk_pdf": len(pdf_ids),
-        "contratos_api_y_pdf": len(api_ids & pdf_ids),
-        "tdr_sin_chunk_pdf": len(con_tdr - pdf_ids),
-        "chunks_api": n_api,
-        "chunks_pdf": n_pdf,
-        "chunks_api_v2": n_api_v2,
-        "chunks_pdf_v2": n_pdf_v2,
-    }
 
 
 def print_cobertura_fuentes(cov: dict) -> None:
     print("\n--- cobertura api + pdf ---", flush=True)
-    for k, v in cov.items():
-        print(f"  {k}={v}", flush=True)
-    n = cov.get("vigentes") or 0
+    for key, value in cov.items():
+        print(f"  {key}={value}", flush=True)
+    vigentes = cov.get("vigentes") or 0
     ambos = cov.get("contratos_api_y_pdf") or 0
-    if n:
+    if vigentes:
         print(
-            f"  vigentes con ambas fuentes: {ambos}/{n} "
-            f"({100.0 * ambos / n:.1f}%)",
+            f"  vigentes con ambas fuentes: {ambos}/{vigentes} "
+            f"({100.0 * ambos / vigentes:.1f}%)",
             flush=True,
         )
-
-
-def ids_ya_chunkeados(supa) -> set[int]:
-    ids: set[int] = set()
-    offset = 0
-    while True:
-        res = (
-            supa.table("chunks_tdr")
-            .select("contrato_id")
-            # PostgREST: .range() sin .order() no garantiza orden entre paginas;
-            # la pagina 2 puede repetir filas de la 1 y omitir otras.
-            .order("id")
-            .range(offset, offset + PAGE - 1)
-            .execute()
-        )
-        batch = res.data or []
-        for row in batch:
-            ids.add(int(row["contrato_id"]))
-        if len(batch) < PAGE:
-            break
-        offset += PAGE
-    return ids
-
-
-def insert_lote(supa, lote: list[dict]):
-    try:
-        supa.table("chunks_tdr").upsert(
-            lote, on_conflict="contrato_id,chunk_index"
-        ).execute()
-    except Exception as e:
-        msg = str(e).lower()
-        if (
-            "meta_entidad" in msg
-            or "meta_nro" in msg
-            or "chunk_embed_text" in msg
-            or "pgrst204" in msg
-        ):
-            print(
-                "  [aviso] columna meta/chunk_embed_text ausente; "
-                "inserto sin esos campos.",
-                flush=True,
-            )
-            stripped = [
-                {
-                    k: v
-                    for k, v in row.items()
-                    if k not in ("meta_entidad", "meta_nro", "chunk_embed_text")
-                }
-                for row in lote
-            ]
-            supa.table("chunks_tdr").upsert(
-                stripped, on_conflict="contrato_id,chunk_index"
-            ).execute()
-        else:
-            raise
-
-
-def ids_con_fuente_pdf(supa, ids: list[int]) -> set[int]:
-    """Contratos de `ids` que ya tienen al menos un chunk fuente=pdf."""
-    found: set[int] = set()
-    if not ids:
-        return found
-    for i in range(0, len(ids), 80):
-        lote = [int(x) for x in ids[i:i + 80]]
-        offset = 0
-        lote_found: set[int] = set()
-        while True:
-            res = (
-                supa.table("chunks_tdr")
-                .select("contrato_id")
-                .in_("contrato_id", lote)
-                .eq("fuente", "pdf")
-                # PostgREST: .range() sin .order() no garantiza orden entre paginas;
-                # la pagina 2 puede repetir filas de la 1 y omitir otras.
-                .order("id")
-                .range(offset, offset + PAGE - 1)
-                .execute()
-            )
-            batch = res.data or []
-            for row in batch:
-                lote_found.add(int(row["contrato_id"]))
-            if len(batch) < PAGE or len(lote_found) >= len(lote):
-                break
-            offset += PAGE
-        found |= lote_found
-    return found
-
-
-def borrar_chunks_fuente(supa, ids: list[int], fuente: str) -> None:
-    """Borra solo chunks de una fuente. No toca las demás."""
-    for i in range(0, len(ids), 80):
-        lote = ids[i:i + 80]
-        (
-            supa.table("chunks_tdr")
-            .delete()
-            .in_("contrato_id", lote)
-            .eq("fuente", fuente)
-            .execute()
-        )
-
-
-def max_chunk_index(supa, contrato_id: int) -> int:
-    res = (
-        supa.table("chunks_tdr")
-        .select("chunk_index")
-        .eq("contrato_id", contrato_id)
-        .order("chunk_index", desc=True)
-        .limit(1)
-        .execute()
-    )
-    if not res.data:
-        return -1
-    return int(res.data[0]["chunk_index"])
-
-
-def borrar_chunks_vigentes(supa, ids: list[int]):
-    for i in range(0, len(ids), 80):
-        lote = ids[i:i + 80]
-        supa.table("chunks_tdr").delete().in_("contrato_id", lote).execute()
 
 
 def run_solo_pdf(
