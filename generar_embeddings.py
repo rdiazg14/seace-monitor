@@ -22,6 +22,15 @@ from pathlib import Path
 import httpx
 from seace_monitor.supabase_client import crear_cliente
 
+from seace_monitor.embeddings.gemini_provider import (
+    GEMINI_BACKOFF,
+    GEMINI_DIM,
+    GEMINI_EMBED_MODEL,
+    GEMINI_EMBED_URL,
+    QuotaExceeded,
+    consultar_auth_gemini,
+    solicitar_embeddings_gemini,
+)
 from seace_monitor.embeddings.preparation import (
     EMBED_STATS,
     MAX_CHARS_GEMINI,
@@ -41,7 +50,7 @@ from seace_monitor.embeddings.repository import (
     paginar_ids_vigentes,
     reset_embedding_v2,
 )
-from seace_monitor.gemini import EMBED_USD_PER_M, l2_normalize
+from seace_monitor.gemini import EMBED_USD_PER_M
 from seace_monitor.logging import PASO_EMBEDDING, registrar_evento, registrar_run
 
 cargar_env()
@@ -49,21 +58,10 @@ cargar_env()
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_EMBED_MODEL = "gemini-embedding-001"
-GEMINI_EMBED_URL = (
-    f"https://generativelanguage.googleapis.com/v1beta/models/"
-    f"{GEMINI_EMBED_MODEL}:batchEmbedContents"
-)
-GEMINI_DIM = 1536
 # Precio gemini-embedding-001: EMBED_USD_PER_M viene de seace_monitor.gemini.
 
 BATCH_GEMINI = 16
 DELAY_GEMINI_S = 0.4
-GEMINI_BACKOFF = (2.0, 4.0, 8.0, 16.0, 32.0, 64.0)
-
-
-class QuotaExceeded(RuntimeError):
-    """429 de Gemini. El caller debe PARAR; no reintentar."""
 
 
 def embed_lote_gemini(
@@ -71,96 +69,13 @@ def embed_lote_gemini(
     texts: list[str],
     fail_fast: bool = False,
 ) -> list[list[float]]:
-    payload = {
-        "requests": [
-            {
-                "model": f"models/{GEMINI_EMBED_MODEL}",
-                "content": {"parts": [{"text": t}]},
-                "taskType": "RETRIEVAL_DOCUMENT",
-                "outputDimensionality": GEMINI_DIM,
-            }
-            for t in texts
-        ]
-    }
-    waits = [0.0] if fail_fast else [0.0] + list(GEMINI_BACKOFF)
-    last_err: Exception | None = None
-    for attempt, wait in enumerate(waits):
-        if wait:
-            print(f"    [gemini backoff {wait:.0f}s attempt={attempt}]", flush=True)
-            time.sleep(wait)
-        try:
-            r = client.post(
-                GEMINI_EMBED_URL,
-                headers={
-                    "Content-Type": "application/json",
-                    "x-goog-api-key": GEMINI_API_KEY,
-                },
-                json=payload,
-                timeout=120.0,
-            )
-            if r.status_code == 429:
-                msg = f"429 {r.text[:200]}"
-                if fail_fast:
-                    raise QuotaExceeded(msg)
-                last_err = RuntimeError(msg)
-                retry_after = r.headers.get("Retry-After")
-                if retry_after:
-                    try:
-                        extra = min(float(retry_after), 120.0)
-                        print(f"    [429 Retry-After {extra:.0f}s]", flush=True)
-                        time.sleep(extra)
-                    except ValueError:
-                        pass
-                continue
-            r.raise_for_status()
-            body = r.json()
-            raw = body.get("embeddings")
-            if not isinstance(raw, list) or len(raw) != len(texts):
-                raise RuntimeError(
-                    f"gemini respuesta inesperada keys={list(body)[:8]} "
-                    f"n={len(raw) if isinstance(raw, list) else None}"
-                )
-            EMBED_STATS["requests"] += 1
-            EMBED_STATS["texts"] += len(texts)
-            EMBED_STATS["chars"] += sum(len(t) for t in texts)
-            um = body.get("usageMetadata") or {}
-            tok = um.get("totalTokenCount") or um.get("promptTokenCount") or 0
-            try:
-                EMBED_STATS["tokens_api"] += int(tok or 0)
-            except (TypeError, ValueError):
-                pass
-            if EMBED_STATS["requests"] == 1:
-                print(f"  gemini keys={list(body)[:12]} usage={um or '—'}", flush=True)
-            out: list[list[float]] = []
-            for item in raw:
-                vals = item.get("values") if isinstance(item, dict) else None
-                if not isinstance(vals, list) or not vals:
-                    raise RuntimeError("gemini embedding vacío")
-                if len(vals) > GEMINI_DIM:
-                    vals = vals[:GEMINI_DIM]
-                if len(vals) != GEMINI_DIM:
-                    raise RuntimeError(f"dimensión {len(vals)} != {GEMINI_DIM}")
-                out.append(l2_normalize([float(x) for x in vals]))
-            return out
-        except QuotaExceeded:
-            raise
-        except httpx.HTTPStatusError as e:
-            last_err = e
-            code = e.response.status_code if e.response is not None else 0
-            if fail_fast and code == 429:
-                raise QuotaExceeded(str(e)) from e
-            if e.response is not None and e.response.status_code in (429, 500, 503):
-                if fail_fast:
-                    raise
-                print(f"    [retry {attempt}] HTTP {e.response.status_code}", flush=True)
-                continue
-            raise
-        except Exception as e:
-            last_err = e
-            print(f"    [retry {attempt}] {e}", flush=True)
-            if fail_fast:
-                raise
-    raise RuntimeError(f"embed_lote_gemini falló: {last_err}")
+    """Conserva la API histórica delegando el transporte al adaptador."""
+    return solicitar_embeddings_gemini(
+        client,
+        texts,
+        GEMINI_API_KEY,
+        fail_fast=fail_fast,
+    )
 
 
 def print_cobertura(cov: dict[str, int]) -> None:
@@ -340,22 +255,7 @@ def auth_check_gemini() -> int:
     if not GEMINI_API_KEY:
         print("gemini_auth HTTP=missing auth_ok=false", flush=True)
         return 2
-    r = httpx.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{GEMINI_EMBED_MODEL}:embedContent",
-        headers={
-            "Content-Type": "application/json",
-            "x-goog-api-key": GEMINI_API_KEY,
-        },
-        json={
-            "model": f"models/{GEMINI_EMBED_MODEL}",
-            "content": {"parts": [{"text": "ok"}]},
-            "taskType": "RETRIEVAL_DOCUMENT",
-            "outputDimensionality": GEMINI_DIM,
-        },
-        timeout=30.0,
-    )
-    code = r.status_code
+    code = consultar_auth_gemini(httpx, GEMINI_API_KEY)
     auth_fail = code in (401, 403)
     ok = (not auth_fail) and code < 400
     print(f"gemini_auth HTTP={code} auth_fail={auth_fail} auth_ok={ok}", flush=True)
