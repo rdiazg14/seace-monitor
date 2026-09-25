@@ -15,13 +15,30 @@ Uso:
 from __future__ import annotations
 
 from seace_monitor.config import cargar_env
+from seace_monitor.rag.chunking import (
+    MAX_TOKENS_ANTES_SPLIT,
+    TARGET_SUBCHUNK,
+    approx_tokens,
+    chunks_de_contrato,
+    chunks_de_pdf,
+    con_contexto,
+    con_contexto_pdf,
+    cuerpo_chunk,
+    cuerpo_sin_membrete,
+    embed_text_pdf,
+    encabezado,
+    encabezado_pdf,
+    meta_de_contrato,
+    nro_contrato,
+    objeto_corto,
+    siglas_entidad,
+    split_por_parrafos,
+)
 from seace_monitor.supabase_client import crear_cliente
 
 import argparse
 import json
-import re
 import time
-from pathlib import Path
 
 from seace_monitor.logging import PASO_CHUNKING, registrar_evento, registrar_run
 
@@ -29,280 +46,6 @@ cargar_env()
 
 PAGE = 1_000
 BATCH_INSERT = 200
-MAX_TOKENS_ANTES_SPLIT = 800
-TARGET_SUBCHUNK = 500
-
-
-def approx_tokens(texto: str) -> int:
-    """Estimación barata (~4 chars/token). Evita dependencia de tiktoken."""
-    if not texto:
-        return 0
-    return max(1, len(texto) // 4)
-
-
-def split_por_parrafos(texto: str, target_tokens: int) -> list[str]:
-    partes = [p.strip() for p in texto.replace("\r\n", "\n").split("\n") if p.strip()]
-    if not partes:
-        return [texto.strip()] if texto.strip() else []
-
-    chunks: list[str] = []
-    buf: list[str] = []
-    buf_tok = 0
-    for p in partes:
-        pt = approx_tokens(p)
-        if buf and buf_tok + pt > target_tokens:
-            chunks.append("\n".join(buf))
-            buf, buf_tok = [p], pt
-        else:
-            buf.append(p)
-            buf_tok += pt
-    if buf:
-        chunks.append("\n".join(buf))
-    return chunks
-
-
-_STOP_SIGLAS = frozenset({
-    "DE", "DEL", "Y", "E", "DA", "DO", "DAS", "AL", "A",
-})
-HEADER_LINE_RE = re.compile(r"^\[[^\]]+\]\s*(?:\n|$)")
-
-
-def nro_contrato(c: dict) -> str:
-    return (
-        (c.get("descripcion_contrato") or "").strip()
-        or str(c.get("nro_contratacion") or "")
-        or str(c.get("id") or "")
-    )
-
-
-def siglas_entidad(entidad: str) -> str:
-    """Iniciales del tramo más específico (después del último guion)."""
-    raw = (entidad or "").strip()
-    if not raw:
-        return "s/e"
-    partes = [p.strip() for p in re.split(r"\s*[-–—/]\s*", raw) if p.strip()]
-    foco = partes[-1] if partes else raw
-    iniciales: list[str] = []
-    for w in re.findall(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9]+", foco):
-        u = w.upper()
-        if u in _STOP_SIGLAS:
-            continue
-        iniciales.append(u[0])
-    sig = "".join(iniciales)
-    if len(sig) < 2:
-        sig = re.sub(r"[^A-Za-z0-9]", "", foco)[:12].upper() or "s/e"
-    return sig[:16]
-
-
-def encabezado(c: dict) -> str:
-    """Header largo de chunks fuente=api (no se cambia el corpus general)."""
-    entidad = (c.get("entidad") or "").strip() or "s/e"
-    asunto = (c.get("descripcion") or c.get("objeto") or "").strip()
-    asunto = " ".join(asunto.split())[:80] or "s/a"
-    return f"[{entidad} | {asunto} | {nro_contrato(c)}]"
-
-
-def encabezado_pdf(c: dict) -> str:
-    """Header corto para display: siglas + Nº. Sin asunto (ya está en metadata api)."""
-    return f"[{siglas_entidad(c.get('entidad') or '')} | {nro_contrato(c)}]"
-
-
-def cuerpo_chunk(texto: str) -> str:
-    """Cuerpo sin la primera línea [header]. Eso es lo que se embebe en modo body."""
-    t = texto or ""
-    m = HEADER_LINE_RE.match(t)
-    return t[m.end():].lstrip() if m else t
-
-
-_MEMBRETE_LINE_RE = re.compile(
-    r"(?i)^("
-    r"---\s*pagina\s+\d+\s*---"
-    r"|per[uú]"
-    r"|ministerio de defensa"
-    r"|av\.\s*del parque norte\b.*"
-    r"|https?://\S+"
-    r"|www\.gob\.pe/\S*"
-    r"|facilita\.gob\.pe\S*"
-    r"|mesadepartes@\S+"
-    r"|[“\"']decenio de la igualdad.*"
-    r"|[“\"']año de la esperanza.*"
-    r"|centro nacional de estimaci[oó]n,?"
-    r"|centro nacional de estimaci[oó]n,?\s*prevenci[oó]n y reducci[oó]n.*"
-    r"|prevenci[oó]n y reducci[oó]n del"
-    r"|riesgo de desastres\s*[-–]\s*cenepred"
-    r"|cenepred"
-    r"|subdirecci[oó]n de"
-    r"|gesti[oó]n de la"
-    r"|informaci[oó]n"
-    r")$"
-)
-
-
-def _es_siglas_membrete(s: str) -> bool:
-    """Línea corta toda en mayúsculas (siglas / rótulos de membrete)."""
-    if not s or len(s) > 40:
-        return False
-    if re.match(r"^\d+", s):
-        return False
-    words = s.split()
-    if not (1 <= len(words) <= 4):
-        return False
-    if not any(ch.isalpha() for ch in s):
-        return False
-    if any(ch.islower() for ch in s):
-        return False
-    # Rótulos de sección del TDR ("OBJETO:", "AREA USUARIA:"), no siglas de membrete.
-    if s.endswith(":"):
-        return False
-    return True
-
-
-def _colapsar_vacias(lines: list[str]) -> list[str]:
-    out: list[str] = []
-    blank = False
-    for line in lines:
-        if not line.strip():
-            if not blank:
-                out.append("")
-            blank = True
-        else:
-            out.append(line)
-            blank = False
-    return out
-
-
-def cuerpo_sin_membrete(texto: str) -> str:
-    """Quita membrete/páginas del extractor PDF. No toca el display (`texto`)."""
-    out: list[str] = []
-    for line in (texto or "").splitlines():
-        s = line.strip()
-        if s and (_MEMBRETE_LINE_RE.match(s) or _es_siglas_membrete(s)):
-            continue
-        out.append(line)
-    return "\n".join(_colapsar_vacias(out)).strip()
-
-
-def objeto_corto(c: dict) -> str:
-    asunto = (c.get("descripcion") or c.get("objeto") or "").strip()
-    return " ".join(asunto.split())[:80] or "s/a"
-
-
-def embed_text_pdf(c: dict, texto_display: str) -> str:
-    """Header semántico [entidad | objeto | nro] + cuerpo sin membrete."""
-    cuerpo = cuerpo_sin_membrete(cuerpo_chunk(texto_display))
-    entidad = (c.get("entidad") or "").strip() or "s/e"
-    return f"[{entidad} | {objeto_corto(c)} | {nro_contrato(c)}] {cuerpo}".strip()
-
-
-def con_contexto(c: dict, texto: str) -> str:
-    return f"{encabezado(c)}\n{texto}"
-
-
-def con_contexto_pdf(c: dict, texto: str) -> str:
-    return f"{encabezado_pdf(c)}\n{texto}"
-
-
-def meta_de_contrato(c: dict) -> dict:
-    nro = nro_contrato(c)
-    return {
-        "meta_entidad": (c.get("entidad") or "").strip() or None,
-        "meta_nro": nro or None,
-    }
-
-
-def chunks_de_pdf(c: dict, chunk_index_offset: int = 0) -> list[dict]:
-    """Chunks del TDR extraído (tdr_texto). chunk_index sigue a los de fuente=api."""
-    tdr = (c.get("tdr_texto") or "").strip()
-    if not tdr:
-        return []
-    cid = c["id"]
-    partes = (
-        split_por_parrafos(tdr, TARGET_SUBCHUNK)
-        if approx_tokens(tdr) > MAX_TOKENS_ANTES_SPLIT
-        else [tdr]
-    )
-    meta = meta_de_contrato(c)
-    out: list[dict] = []
-    for i, parte in enumerate(partes):
-        row = {
-            "contrato_id": cid,
-            "chunk_index": chunk_index_offset + i,
-            "tipo": "TDR PDF" if len(partes) == 1 else f"TDR PDF ({i + 1}/{len(partes)})",
-            "texto": con_contexto_pdf(c, parte),
-            "fuente": "pdf",
-        }
-        row["chunk_embed_text"] = embed_text_pdf(c, row["texto"])
-        row.update(meta)
-        out.append(row)
-    return out
-
-
-def chunks_de_contrato(c: dict) -> list[dict]:
-    cid = c["id"]
-    out: list[dict] = []
-    idx = 0
-
-    tdr = (c.get("descripcion") or "").strip()
-    if tdr:
-        partes = (
-            split_por_parrafos(tdr, TARGET_SUBCHUNK)
-            if approx_tokens(tdr) > MAX_TOKENS_ANTES_SPLIT
-            else [tdr]
-        )
-        n = len(partes)
-        for i, parte in enumerate(partes, 1):
-            tipo = "Descripción general" if n == 1 else f"Descripción general ({i}/{n})"
-            out.append({
-                "contrato_id": cid,
-                "chunk_index": idx,
-                "tipo": tipo,
-                "texto": con_contexto(c, parte),
-                "fuente": "api",
-            })
-            idx += 1
-
-    items = c.get("items_json") or []
-    if isinstance(items, str):
-        try:
-            items = json.loads(items)
-        except json.JSONDecodeError:
-            items = []
-    if not isinstance(items, list):
-        items = []
-
-    for n, it in enumerate(items, 1):
-        if not isinstance(it, dict):
-            continue
-        texto = (
-            f"CUBSO: {it.get('cod_cubso') or ''} - {it.get('nom_cubso') or ''}. "
-            f"Cantidad: {it.get('cantidad') or ''} {it.get('unidad') or ''}. "
-            f"Lugar: {it.get('distrito') or ''}. "
-            f"Especificaciones: {it.get('descripcion') or ''}"
-        ).strip()
-        out.append({
-            "contrato_id": cid,
-            "chunk_index": idx,
-            "tipo": f"Ítem técnico {n}",
-            "texto": con_contexto(c, texto),
-            "fuente": "api",
-        })
-        idx += 1
-
-    meta = (
-        f"Entidad: {c.get('entidad') or ''}. "
-        f"Área usuaria: {c.get('nom_area_usuaria') or ''}. "
-        f"Objeto: {c.get('objeto') or ''}. "
-        f"Estado: {c.get('estado') or ''}. "
-        f"Número: {c.get('nro_contratacion') or ''}."
-    )
-    out.append({
-        "contrato_id": cid,
-        "chunk_index": idx,
-        "tipo": "Metadata",
-        "texto": con_contexto(c, meta),
-        "fuente": "api",
-    })
-    return out
 
 
 def paginar(supa, tabla: str, cols: str, **filters) -> list[dict]:

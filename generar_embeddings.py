@@ -22,9 +22,9 @@ from pathlib import Path
 import httpx
 from seace_monitor.supabase_client import crear_cliente
 
-from chunker_contratos import cuerpo_chunk
 from seace_monitor.gemini import EMBED_USD_PER_M, l2_normalize
 from seace_monitor.logging import PASO_EMBEDDING, registrar_evento, registrar_run
+from seace_monitor.rag.chunking import cuerpo_chunk
 
 cargar_env()
 
