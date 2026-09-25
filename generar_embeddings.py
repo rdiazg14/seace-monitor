@@ -22,9 +22,17 @@ from pathlib import Path
 import httpx
 from seace_monitor.supabase_client import crear_cliente
 
+from seace_monitor.embeddings.preparation import (
+    EMBED_STATS,
+    MAX_CHARS_GEMINI,
+    modo_embed_fila,
+    print_embed_stats,
+    reset_embed_stats,
+    texto_para_embed,
+    vec_literal,
+)
 from seace_monitor.gemini import EMBED_USD_PER_M, l2_normalize
 from seace_monitor.logging import PASO_EMBEDDING, registrar_evento, registrar_run
-from seace_monitor.rag.chunking import cuerpo_chunk
 
 cargar_env()
 
@@ -43,53 +51,11 @@ PAGE = 1_000
 
 BATCH_GEMINI = 16
 DELAY_GEMINI_S = 0.4
-MAX_CHARS_GEMINI = 8_000  # ~2k tokens
 GEMINI_BACKOFF = (2.0, 4.0, 8.0, 16.0, 32.0, 64.0)
 
 
 class QuotaExceeded(RuntimeError):
     """429 de Gemini. El caller debe PARAR; no reintentar."""
-
-
-EMBED_STATS: dict[str, int] = {
-    "requests": 0,
-    "texts": 0,
-    "chars": 0,
-    "tokens_api": 0,
-}
-
-
-def reset_embed_stats() -> None:
-    for k in EMBED_STATS:
-        EMBED_STATS[k] = 0
-
-
-def print_embed_stats(prefix: str = "") -> None:
-    est = EMBED_STATS["chars"] / 4.0
-    api = EMBED_STATS["tokens_api"]
-    print(
-        f"{prefix}embed_stats requests={EMBED_STATS['requests']} "
-        f"texts={EMBED_STATS['texts']} chars={EMBED_STATS['chars']} "
-        f"tokens_est(chars/4)={est:.0f} tokens_api={api or '—'}",
-        flush=True,
-    )
-
-
-def modo_embed_fila(row: dict, mode: str) -> str:
-    if mode in ("header", "body"):
-        return mode
-    return "body" if (row.get("fuente") or "") == "pdf" else "header"
-
-
-def texto_para_embed(row: dict, mode: str) -> str:
-    if (row.get("fuente") or "") == "pdf":
-        extra = (row.get("chunk_embed_text") or "").strip()
-        if extra:
-            return extra[:MAX_CHARS_GEMINI]
-    t = (row.get("texto") or "")[:MAX_CHARS_GEMINI]
-    if modo_embed_fila(row, mode) == "body":
-        t = cuerpo_chunk(t)[:MAX_CHARS_GEMINI]
-    return t
 
 
 def reset_embedding_v2(supa, ids: list[int], fuente: str) -> int:
@@ -108,10 +74,6 @@ def reset_embedding_v2(supa, ids: list[int], fuente: str) -> int:
         )
         n += len(res.data or [])
     return n
-
-
-def vec_literal(vec: list[float]) -> str:
-    return "[" + ",".join(f"{x:.8f}" for x in vec) + "]"
 
 
 def paginar_ids_vigentes(supa) -> list[int]:
