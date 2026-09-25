@@ -31,6 +31,16 @@ from seace_monitor.embeddings.preparation import (
     texto_para_embed,
     vec_literal,
 )
+from seace_monitor.embeddings.repository import (
+    PAGE,
+    chunks_sin_embedding_v2,
+    chunks_sin_v2_por_fuente,
+    contar_embeddings_v2,
+    cobertura_vigentes,
+    guardar_embeddings_v2,
+    paginar_ids_vigentes,
+    reset_embedding_v2,
+)
 from seace_monitor.gemini import EMBED_USD_PER_M, l2_normalize
 from seace_monitor.logging import PASO_EMBEDDING, registrar_evento, registrar_run
 
@@ -47,8 +57,6 @@ GEMINI_EMBED_URL = (
 GEMINI_DIM = 1536
 # Precio gemini-embedding-001: EMBED_USD_PER_M viene de seace_monitor.gemini.
 
-PAGE = 1_000
-
 BATCH_GEMINI = 16
 DELAY_GEMINI_S = 0.4
 GEMINI_BACKOFF = (2.0, 4.0, 8.0, 16.0, 32.0, 64.0)
@@ -56,105 +64,6 @@ GEMINI_BACKOFF = (2.0, 4.0, 8.0, 16.0, 32.0, 64.0)
 
 class QuotaExceeded(RuntimeError):
     """429 de Gemini. El caller debe PARAR; no reintentar."""
-
-
-def reset_embedding_v2(supa, ids: list[int], fuente: str) -> int:
-    """Pone embedding_v2=NULL solo en la muestra (requiere ids+fuente)."""
-    if not ids or not fuente:
-        raise SystemExit("ERROR: --reset-v2 exige --ids y --fuente (no masivo)")
-    n = 0
-    for i in range(0, len(ids), 80):
-        lote = ids[i:i + 80]
-        res = (
-            supa.table("chunks_tdr")
-            .update({"embedding_v2": None})
-            .in_("contrato_id", lote)
-            .eq("fuente", fuente)
-            .execute()
-        )
-        n += len(res.data or [])
-    return n
-
-
-def paginar_ids_vigentes(supa) -> list[int]:
-    ids: list[int] = []
-    offset = 0
-    while True:
-        res = (
-            supa.table("contratos")
-            .select("id")
-            .eq("estado", "Vigente")
-            .order("id")
-            .range(offset, offset + PAGE - 1)
-            .execute()
-        )
-        batch = res.data or []
-        ids.extend(int(r["id"]) for r in batch)
-        if len(batch) < PAGE:
-            break
-        offset += PAGE
-    return ids
-
-
-def chunks_sin_embedding_v2(
-    supa,
-    vigente_ids: list[int],
-    limit: int,
-    fuente: str | None = None,
-) -> list[dict]:
-    """Solo chunks de vigentes con embedding_v2 NULL. No re-embebe filas ya llenas."""
-    out: list[dict] = []
-    for i in range(0, len(vigente_ids), 80):
-        lote_ids = vigente_ids[i:i + 80]
-        offset = 0
-        while True:
-            take = PAGE if not limit else min(PAGE, limit - len(out))
-            if take <= 0:
-                return out
-            q = (
-                supa.table("chunks_tdr")
-                .select("id, contrato_id, chunk_index, tipo, texto, fuente, chunk_embed_text")
-                .in_("contrato_id", lote_ids)
-                .is_("embedding_v2", "null")
-            )
-            if fuente:
-                q = q.eq("fuente", fuente)
-            res = q.order("id").range(offset, offset + take - 1).execute()
-            batch = res.data or []
-            out.extend(batch)
-            if len(batch) < take:
-                break
-            offset += take
-            if limit and len(out) >= limit:
-                return out[:limit]
-    return out[:limit] if limit else out
-
-
-def chunks_sin_v2_por_fuente(supa, fuente: str, limit: int) -> list[dict]:
-    """Pagina por fuente + embedding_v2 NULL. Evita timeout del IN (cientos de ids)."""
-    out: list[dict] = []
-    offset = 0
-    while True:
-        take = PAGE if not limit else min(PAGE, limit - len(out))
-        if take <= 0:
-            break
-        res = (
-            supa.table("chunks_tdr")
-            .select("id, contrato_id, chunk_index, tipo, texto, fuente, chunk_embed_text")
-            .eq("fuente", fuente)
-            .is_("embedding_v2", "null")
-            .order("id")
-            .range(offset, offset + take - 1)
-            .execute()
-        )
-        batch = res.data or []
-        out.extend(batch)
-        if len(batch) < take:
-            break
-        offset += take
-        if limit and len(out) >= limit:
-            break
-    return out[:limit] if limit else out
 
 
 def embed_lote_gemini(
@@ -254,37 +163,6 @@ def embed_lote_gemini(
     raise RuntimeError(f"embed_lote_gemini falló: {last_err}")
 
 
-def cobertura_vigentes(supa) -> dict[str, int]:
-    ids = paginar_ids_vigentes(supa)
-    total = 0
-    con_v2 = 0
-    for i in range(0, len(ids), 80):
-        lote = ids[i:i + 80]
-        t = (
-            supa.table("chunks_tdr")
-            .select("id", count="exact")
-            .in_("contrato_id", lote)
-            .limit(1)
-            .execute()
-        )
-        total += t.count or 0
-        v2 = (
-            supa.table("chunks_tdr")
-            .select("id", count="exact")
-            .in_("contrato_id", lote)
-            .not_.is_("embedding_v2", "null")
-            .limit(1)
-            .execute()
-        )
-        con_v2 += v2.count or 0
-    return {
-        "vigentes": len(ids),
-        "chunks_vigentes": total,
-        "chunks_v2": con_v2,
-        "chunks_v2_null": total - con_v2,
-    }
-
-
 def print_cobertura(cov: dict[str, int]) -> None:
     tot = cov["chunks_vigentes"]
     pct = (100.0 * cov["chunks_v2"] / tot) if tot else 0.0
@@ -358,21 +236,9 @@ def run_gemini(
                 print(f"  preview embed[0]={preview!r}", flush=True)
             try:
                 embs = embed_lote_gemini(http, texts, fail_fast=fail_fast)
-                # Un solo upsert por lote (no N requests): recorta ~N-1 round-trips
-                # HTTP a PostgREST. Las filas ya existen (se seleccionaron de
-                # chunks_tdr), así que on_conflict=id solo actualiza embedding_v2.
-                updates = [
-                    {
-                        "id": row["id"],
-                        "contrato_id": row["contrato_id"],
-                        "chunk_index": row["chunk_index"],
-                        "tipo": row["tipo"],
-                        "texto": row["texto"],
-                        "embedding_v2": vec_literal(vec),
-                    }
-                    for row, vec in zip(lote, embs)
-                ]
-                supa.table("chunks_tdr").upsert(updates, on_conflict="id").execute()
+                # Un solo upsert por lote (no N requests). Las filas ya existen,
+                # así que on_conflict=id solo actualiza embedding_v2.
+                guardar_embeddings_v2(supa, lote, embs)
                 ok += len(lote)
                 for row, t in zip(lote, texts):
                     cid = int(row["contrato_id"])
@@ -409,15 +275,8 @@ def run_gemini(
     print(f"\nGemini v2 completado en {elapsed:.0f}s  ok={ok:,} err={errores:,}", flush=True)
     print_embed_stats("  ")
     if fuente or ids:
-        n_pdf = (
-            supa.table("chunks_tdr")
-            .select("id", count="exact")
-            .in_("contrato_id", vigente_ids)
-        )
-        if fuente:
-            n_pdf = n_pdf.eq("fuente", fuente)
-        n_pdf = n_pdf.not_.is_("embedding_v2", "null").limit(1).execute()
-        print(f"  embedding_v2 NOT NULL en muestra: {n_pdf.count}", flush=True)
+        n_embedded = contar_embeddings_v2(supa, vigente_ids, fuente)
+        print(f"  embedding_v2 NOT NULL en muestra: {n_embedded}", flush=True)
     else:
         print_cobertura(cobertura_vigentes(supa))
     # Traza unificada de consumo: una fila por corrida de embeddings.
