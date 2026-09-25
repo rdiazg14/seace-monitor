@@ -27,6 +27,23 @@ Uso:
 from __future__ import annotations
 
 from seace_monitor.config import cargar_env
+from seace_monitor.documents.seace_files import (
+    DEFAULT_DESCARGAR_URL,
+    DEFAULT_LISTAR_URL,
+    MOTIVO_NO_PDF,
+    MOTIVO_SIN_PDF,
+    SPA_URL,
+    NoEsPdf,
+    SeaceHttp,
+    SinPdf,
+    _candidato_pdf,
+    _es_pdf,
+    _parece_html,
+    descargar_binario,
+    elegir_pdf,
+    listar_archivos as listar_archivos_seace,
+    resumen_archivos,
+)
 from seace_monitor.gemini import (
     FLASH_USD_IN_PER_M,
     FLASH_USD_OUT_PER_M,
@@ -53,7 +70,6 @@ from pathlib import Path
 
 import httpx
 import pymupdf
-from playwright.sync_api import sync_playwright
 from seace_monitor.supabase_client import crear_cliente
 
 from ingesta_completa import registrar_rechazo
@@ -62,18 +78,15 @@ from pipeline_log import PASO_OCR, PASO_PDF, registrar_run
 cargar_env()
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-SPA_URL = "https://prod6.seace.gob.pe/buscador-publico/contrataciones"
 
 # Plantillas reales capturadas (descubrir_endpoint_pdf.py). Override por env.
 LISTAR_URL = os.environ.get(
     "LISTAR_URL",
-    "https://prod6.seace.gob.pe/v1/s8uit-services/archivo"
-    "/archivos-publico/listar-archivos-contrato/{idContrato}/1",
+    DEFAULT_LISTAR_URL,
 ).strip()
 DESCARGAR_URL = os.environ.get(
     "DESCARGAR_URL",
-    "https://prod6.seace.gob.pe/v1/s8uit-services/archivo"
-    "/archivos-publico/descargar-archivo-contrato/{idContratoArchivo}",
+    DEFAULT_DESCARGAR_URL,
 ).strip()
 
 PAGE_DB = 1_000
@@ -93,11 +106,6 @@ OCR_RPM = 0.0
 _OCR_NEXT = 0.0
 TEMP_PREFIX = "seace-tdr-"
 PREVIEW_CHARS = 1_500
-MOTIVO_SIN_PDF = "sin archivo PDF"
-# Distinto de MOTIVO_SIN_PDF: aqui SI habia un anexo candidato a PDF y el
-# binario resulto no serlo. Permite separar "no hay PDF" de "hay algo que
-# no es PDF" en ingesta_rechazados.
-MOTIVO_NO_PDF = "archivo no es PDF"
 REQ_PENDIENTE_OCR = "pendiente_ocr"
 META_LOG = Path(__file__).parent / "data" / "tdr_extraccion.jsonl"
 CUOTA_OCR_PATH = Path(__file__).parent / "data" / "flash_ocr_cuota.json"
@@ -117,26 +125,6 @@ _RUTA_ARBOL = re.compile(r"^tdr/\d{4}/\d{2}/\d+/\d+\.pdf$")
 _TZ_LIMA = timezone(timedelta(hours=-5))
 
 
-class SinPdf(Exception):
-    """Listado vacio o sin ningun anexo candidato a PDF. No se reintenta."""
-
-    def __init__(self, archivos: list):
-        super().__init__(MOTIVO_SIN_PDF)
-        self.archivos = archivos or []
-
-
-class NoEsPdf(Exception):
-    """Se eligio un anexo candidato a PDF pero el binario no es PDF.
-
-    Caso tipico: un unico anexo mal etiquetado por SEACE (p. ej. un RAR con
-    mime application/octet-stream y nombre enganoso). El motivo es distinto
-    de MOTIVO_SIN_PDF para poder distinguirlo en ingesta_rechazados.
-    """
-
-    def __init__(self, msg: str):
-        super().__init__(f"{MOTIVO_NO_PDF} ({msg})")
-
-
 class PdfExtractError(Exception):
     """Fallo de parse/OCR despues de listar+descargar. El temp ya se borro."""
 
@@ -152,68 +140,6 @@ class NecesitaOcr(Exception):
         n = len(meta.get("ocr_paginas") or [])
         super().__init__(f"necesita OCR ({n} paginas)")
         self.meta = meta
-
-
-class SeaceHttp:
-    """GET con httpx. Playwright solo ante 401/403."""
-
-    def __init__(self, headed: bool = False):
-        self.headed = headed
-        self._client = httpx.Client(
-            timeout=httpx.Timeout(60.0, connect=15.0),
-            follow_redirects=True,
-            headers={"Accept": "*/*"},
-        )
-        self._pw = None
-        self._browser = None
-        self._page = None
-
-    def get_bytes(self, url: str) -> tuple[int, dict[str, str], bytes]:
-        last: Exception | None = None
-        for attempt in range(3):
-            try:
-                r = self._client.get(url)
-                if r.status_code in (401, 403):
-                    print(
-                        f"  [fallback] Playwright por HTTP {r.status_code}",
-                        flush=True,
-                    )
-                    return self._get_pw(url)
-                if r.status_code >= 500:
-                    last = RuntimeError(f"HTTP {r.status_code}")
-                    time.sleep(1.0 * (attempt + 1))
-                    continue
-                headers = {k.lower(): v for k, v in r.headers.items()}
-                return r.status_code, headers, r.content or b""
-            except httpx.HTTPError as e:
-                last = e
-                time.sleep(1.0 * (attempt + 1))
-        raise RuntimeError(f"GET fallo: {last}")
-
-    def _get_pw(self, url: str) -> tuple[int, dict[str, str], bytes]:
-        page = self._ensure_pw()
-        r = page.request.get(url, timeout=60_000)
-        headers = {k.lower(): v for k, v in r.headers.items()}
-        return r.status, headers, r.body() or b""
-
-    def _ensure_pw(self):
-        if self._page is not None:
-            return self._page
-        self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.launch(headless=not self.headed)
-        self._page = self._browser.new_context(ignore_https_errors=True).new_page()
-        self._page.goto(SPA_URL, wait_until="networkidle", timeout=90_000)
-        self._page.wait_for_timeout(2_000)
-        return self._page
-
-    def close(self) -> None:
-        self._client.close()
-        try:
-            if self._browser is not None:
-                self._browser.close()
-        finally:
-            if self._pw is not None:
-                self._pw.stop()
 
 
 def parse_ids(raw: str) -> list[int]:
@@ -325,108 +251,9 @@ def pdf_sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def _es_pdf(body: bytes, ctype: str) -> bool:
-    head = body[:16].lstrip()
-    if head.startswith(b"%PDF"):
-        return True
-    cl = (ctype or "").lower()
-    return "application/pdf" in cl or cl.endswith("/pdf")
-
-
-def _parece_html(body: bytes) -> bool:
-    sample = body[:400].lstrip().lower()
-    return (
-        sample.startswith(b"<!doctype")
-        or sample.startswith(b"<html")
-        or b"<html" in sample[:200]
-    )
-
-
-def resumen_archivos(archivos: list) -> list[dict]:
-    out = []
-    for a in archivos:
-        if not isinstance(a, dict):
-            continue
-        out.append({
-            "idContratoArchivo": a.get("idContratoArchivo"),
-            "idTipoArchivo": a.get("idTipoArchivo"),
-            "nombre": a.get("nombre"),
-            "descripcionMime": a.get("descripcionMime"),
-        })
-    return out
-
-
-def _candidato_pdf(a: dict) -> bool:
-    """True si el anexo PUDO haber sido un PDF, juzgando solo el listado.
-
-    SEACE es poco fiable con descripcionMime: publica PDFs validos como
-    application/octet-stream. Por eso no se descarta por mime; se acepta si
-    CUALQUIERA de estas senales dice pdf, y la verificacion real se hace
-    contra el binario en _es_pdf (magic bytes %PDF).
-    """
-    mime = str(a.get("descripcionMime") or "").lower()
-    if "pdf" in mime:
-        return True
-    ext = str(a.get("descripcionExtension") or "").strip().lower()
-    if ext == ".pdf":
-        return True
-    nombre = str(a.get("nombre") or "").strip().lower()
-    return nombre.endswith(".pdf")
-
-
-def elegir_pdf(archivos: list) -> dict | None:
-    """Elige el anexo a descargar.
-
-    SEACE reporta application/octet-stream para PDFs reales (medido: 81 de
-    191 rechazos "sin archivo PDF" empezaban con %PDF-1.7). Antes se exigia
-    descripcionMime == "application/pdf" exacto y esos PDFs se descartaban
-    antes de descargar. El magic byte del binario (_es_pdf) es la unica
-    fuente confiable; el listado solo sirve para priorizar.
-    """
-    candidatos = [
-        a for a in archivos
-        if isinstance(a, dict) and _candidato_pdf(a)
-    ]
-    if not candidatos:
-        return None
-    tipo1 = [a for a in candidatos if a.get("idTipoArchivo") == 1]
-    return (tipo1 or candidatos)[0]
-
-
 def listar_archivos(http: SeaceHttp, cid: int) -> tuple[str, list]:
-    url = LISTAR_URL.format(idContrato=cid, id=cid, id_contrato=cid)
-    status, _headers, body = http.get_bytes(url)
-    if status != 200:
-        raise RuntimeError(f"listar HTTP {status}")
-    try:
-        data = json.loads(body)
-    except Exception as e:
-        raise RuntimeError(f"listar JSON invalido: {e}") from e
-    if isinstance(data, dict):
-        for v in data.values():
-            if isinstance(v, list):
-                data = v
-                break
-    if not isinstance(data, list):
-        raise RuntimeError(f"listar no es lista ({type(data).__name__})")
-    return url, data
-
-
-def descargar_binario(http: SeaceHttp, url: str, dest: Path) -> None:
-    status, headers, body = http.get_bytes(url)
-    ctype = headers.get("content-type") or ""
-    if status != 200:
-        raise RuntimeError(f"descargar HTTP {status} ({ctype[:80]})")
-    if not body:
-        raise RuntimeError("respuesta vacia al descargar PDF")
-    if _parece_html(body) or "json" in ctype.lower() or "text/html" in ctype.lower():
-        raise NoEsPdf(f"no es PDF (content-type={ctype[:80]} n={len(body)})")
-    if not _es_pdf(body, ctype):
-        raise NoEsPdf(
-            f"binario no es PDF (content-type={ctype[:80]} n={len(body)} "
-            f"magic={body[:8]!r})"
-        )
-    dest.write_bytes(body)
+    """Conserva la firma histórica usando la plantilla configurada al iniciar."""
+    return listar_archivos_seace(http, cid, LISTAR_URL)
 
 
 def ocr_pagina_gemini(img_bytes: bytes, mime: str = "image/jpeg") -> str:
