@@ -75,7 +75,7 @@ def ejecutar_descarga_batch(
     if not dry_run and not columnas_extraccion_ok(supa):
         print(
             "  [warn] columnas de extracción ausentes; "
-            "se guarda tdr_texto + jsonl. Corre tdr_extraccion_meta.sql "
+            "se guarda tdr_texto + jsonl. Corre sql/migraciones/tdr_extraccion_meta.sql "
             "y --sync-meta después.",
             flush=True,
         )

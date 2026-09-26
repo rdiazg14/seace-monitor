@@ -151,7 +151,7 @@ def sync_meta_jsonl(
     path = path or META_LOG
     if not columnas_extraccion_ok(supa):
         raise SystemExit(
-            "ERROR: faltan columnas. Ejecuta tdr_extraccion_meta.sql "
+            "ERROR: faltan columnas. Ejecuta sql/migraciones/tdr_extraccion_meta.sql "
             "(y NOTIFY pgrst, 'reload schema') y reintenta --sync-meta"
         )
     if not path.exists():

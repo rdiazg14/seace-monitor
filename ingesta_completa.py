@@ -256,13 +256,13 @@ def main():
         except Exception as e:
             raise SystemExit(
                 f"ERROR: no pude leer ingesta_rechazados ({e}). "
-                "Pega ingesta_rechazados.sql en Supabase → SQL Editor y reintenta."
+                "Pega sql/esquema/ingesta_rechazados.sql en Supabase → SQL Editor y reintenta."
             )
         row = (res.data or [None])[0]
         if not row:
             raise SystemExit(
                 "ERROR: no hay fila en ingesta_rechazados. "
-                "Pega ingesta_rechazados.sql en Supabase → SQL Editor y reintenta."
+                "Pega sql/esquema/ingesta_rechazados.sql en Supabase → SQL Editor y reintenta."
             )
         print("\nFila persistida:", flush=True)
         print(json.dumps(row, ensure_ascii=False, indent=2, default=str), flush=True)

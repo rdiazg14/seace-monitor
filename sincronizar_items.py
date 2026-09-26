@@ -2,7 +2,7 @@
 """
 Sincroniza contrato_items desde contratos.items_json (idempotente).
 
-La tabla se pobló una sola vez en la fase 3 (capas_fase3_items.sql) y nadie
+La tabla se pobló una sola vez en la fase 3 (docs/sql/migraciones/capas_fase3_items.sql) y nadie
 la alimenta desde entonces: los contratos nuevos escriben items_json pero no
 la tabla, así que el JOIN con cubso_catalogo queda parcial.
 
@@ -30,7 +30,7 @@ from seace_monitor.db import connect
 
 cargar_env()
 
-# Mismo mapeo que docs/capas_fase3_items.sql. Espejo exacto de items_json.
+# Mismo mapeo que docs/docs/sql/migraciones/capas_fase3_items.sql. Espejo exacto de items_json.
 SQL_DELETE = "DELETE FROM contrato_items"
 
 SQL_INSERT = """

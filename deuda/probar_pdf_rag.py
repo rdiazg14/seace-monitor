@@ -72,7 +72,7 @@ def esperar_meta(supa, segundos: int = 45) -> bool:
     while time.time() - t0 < segundos:
         if meta_cols_ok(supa):
             return True
-        print("  esperando chunks_pdf_meta.sql …", flush=True)
+        print("  esperando sql/migraciones/chunks_pdf_meta.sql …", flush=True)
         time.sleep(5)
     return meta_cols_ok(supa)
 

@@ -178,7 +178,7 @@ def update_contrato(supa, cid: int, payload: dict) -> None:
             if not _warned_extraction:
                 print(
                     "  [warn] faltan columnas de extracción; ejecuta "
-                    "tdr_extraccion_meta.sql y luego --sync-meta "
+                    "sql/migraciones/tdr_extraccion_meta.sql y luego --sync-meta "
                     "(meta local en data/tdr_extraccion.jsonl)",
                     flush=True,
                 )
@@ -189,7 +189,7 @@ def update_contrato(supa, cid: int, payload: dict) -> None:
         if "pdf_archivo_id" in message or "pdf_nombre" in message:
             print(
                 "  [warn] faltan columnas pdf_archivo_id/pdf_nombre; "
-                "ejecuta pdf_archivo_meta.sql",
+                "ejecuta sql/migraciones/pdf_archivo_meta.sql",
                 flush=True,
             )
             slim = {key: value for key, value in source.items() if key not in COLS_EXTRACCION}

@@ -3,7 +3,7 @@
 Refresca las vistas materializadas de la capa de reportes.
 
 `dashboard_resumen` se materializó para evitar el timeout de Postgres
-(ver docs/materializar_dashboard_resumen.sql). Este script la refresca
+(ver docs/sql/funciones/materializar_dashboard_resumen.sql). Este script la refresca
 de forma CONCURRENTLY (sin bloquear lecturas) al final del pipeline diario.
 
 pg_cron ya la refresca cada 5 minutos como red de seguridad; este paso

@@ -51,7 +51,7 @@ def registrar_rechazo(client, payload: dict, motivo: str, origen: str = "ingesta
     except Exception as error:
         print(
             f"  [rechazo] no persistido ({error}). El registro NO entra a contratos. "
-            "Si falta la tabla, ejecuta ingesta_rechazados.sql",
+            "Si falta la tabla, ejecuta sql/esquema/ingesta_rechazados.sql",
             flush=True,
         )
 

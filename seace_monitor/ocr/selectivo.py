@@ -133,7 +133,7 @@ def run_ocr_selectivo(
         print(
             "  [warn] columnas tdr_tipo_extraccion/paginas_ocr_* ausentes; "
             "la cola usa data/tdr_extraccion.jsonl "
-            "(aplica tdr_extraccion_meta.sql + --sync-meta)",
+            "(aplica sql/migraciones/tdr_extraccion_meta.sql + --sync-meta)",
             flush=True,
         )
     print("=" * 60, flush=True)
