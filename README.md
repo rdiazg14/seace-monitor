@@ -11,7 +11,7 @@ uv sync --frozen
 uv run pytest -q
 ```
 
-Las pruebas no arrancan el pipeline. Los entrypoints de ingesta, OCR, clasificación, embeddings, backfill y `scripts/run_sql.py` pueden escribir datos o consumir APIs; no usarlos como comprobaciones de importación.
+Las pruebas no arrancan el pipeline. Los entrypoints de ingesta, OCR, clasificación, embeddings, backfill y `scripts/run_sql.py` pueden escribir datos o consumir APIs; no usarlos como comprobaciones de importación. La raíz conserva los comandos del producto, `scripts/` las operaciones productivas y manuales vigentes, y `deuda/` el archivo técnico clasificado (diagnóstico, evaluación, migraciones ejecutadas y evidencia).
 
 ## Automatización
 

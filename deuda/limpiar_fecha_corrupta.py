@@ -7,8 +7,8 @@ contratos con año fuera de rango (>= now+3 o < 2000). La guardia de
 repara las residuales que quedaron grabadas antes de la guardia.
 
 Uso:
-  uv run python scripts/limpiar_fecha_corrupta.py --dry-run
-  uv run python scripts/limpiar_fecha_corrupta.py
+  uv run python deuda/limpiar_fecha_corrupta.py --dry-run
+  uv run python deuda/limpiar_fecha_corrupta.py
 """
 from __future__ import annotations
 

@@ -6,7 +6,7 @@ Reporta cuántos contratos IT/IA (Vigente + En Evaluación) tienen cronograma
 de etapas y muestra una muestra de vigentes con ventana de consultas para
 confirmar que la detección funciona.
 
-Uso: uv run python scripts/verificar_etapas.py
+Uso: uv run python deuda/verificar_etapas.py
 """
 from __future__ import annotations
 

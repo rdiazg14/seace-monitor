@@ -18,7 +18,7 @@ from psycopg.rows import dict_row
 
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
-sys.path.insert(0, str(_ROOT / "scripts"))
+sys.path.insert(0, str(_ROOT / "deuda"))
 
 from backfill_categoria import (  # noqa: E402
     IDS_C1_HARDCODE,

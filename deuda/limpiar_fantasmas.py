@@ -16,8 +16,8 @@ Es idempotente y seguro: los fantasmas no tienen filas dependientes
 (analisis_contrato, chunks_tdr, contrato_items, clasificacion_contrato).
 
 Uso:
-  uv run python scripts/limpiar_fantasmas.py --dry-run
-  uv run python scripts/limpiar_fantasmas.py
+  uv run python deuda/limpiar_fantasmas.py --dry-run
+  uv run python deuda/limpiar_fantasmas.py
 """
 from __future__ import annotations
 

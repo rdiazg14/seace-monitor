@@ -5,8 +5,8 @@ No pisa los 54 ids escritos por C1 (consenso + verificacion de senal)
 ni IDS_PROTEGIDOS (90331, Gemini camino directo). No toca relevancia_ia. No reutiliza reclasificar_categoria.py: ese solo
 mira ambas columnas NULL y no puede desetiquetar.
 
-    uv run python scripts/backfill_categoria.py --proponer
-    uv run python scripts/backfill_categoria.py --aplicar data/backfill_c2_YYYYMMDD-HHMMSS.json
+    uv run python deuda/backfill_categoria.py --proponer
+    uv run python deuda/backfill_categoria.py --aplicar data/backfill_c2_YYYYMMDD-HHMMSS.json
 
 --aplicar escribe con psycopg UPDATE (categoria_it = %s, NULL explicito).
 No usa upsert de supabase-py: PostgREST/supabase-py no garantizan persistir

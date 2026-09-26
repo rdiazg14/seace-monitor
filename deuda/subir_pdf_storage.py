@@ -8,12 +8,12 @@ Idempotente: si pdf_storage_path ya es el arbol nuevo, skip (salvo --forzar).
 El pipeline (descargar_requerimiento.py) sube el binario que ya tiene en
 memoria; este script es el backfill / migracion.
 
-  uv run python scripts/subir_pdf_storage.py --desde 2026-06-08 --dry-run
-  uv run python scripts/subir_pdf_storage.py --desde 2026-06-08
-  uv run python scripts/subir_pdf_storage.py --sin-storage
-  uv run python scripts/subir_pdf_storage.py --migrar-arbol
-  uv run python scripts/subir_pdf_storage.py --solo-postulables
-  uv run python scripts/subir_pdf_storage.py --ids 91696 --limit 1
+  uv run python deuda/subir_pdf_storage.py --desde 2026-06-08 --dry-run
+  uv run python deuda/subir_pdf_storage.py --desde 2026-06-08
+  uv run python deuda/subir_pdf_storage.py --sin-storage
+  uv run python deuda/subir_pdf_storage.py --migrar-arbol
+  uv run python deuda/subir_pdf_storage.py --solo-postulables
+  uv run python deuda/subir_pdf_storage.py --ids 91696 --limit 1
 """
 from __future__ import annotations
 
