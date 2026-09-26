@@ -44,6 +44,31 @@ from seace_monitor.documents.seace_files import (
     listar_archivos as listar_archivos_seace,
     resumen_archivos,
 )
+from seace_monitor.documents.pdf_extraction import (
+    NecesitaOcr,
+    PdfExtractError,
+    chars_utiles,
+    clasificar_tipo,
+    extraer_paginas as extraer_paginas_documento,
+    limpiar_texto,
+    pdf_sha256,
+)
+from seace_monitor.documents.repository import (
+    contratos_por_ids,
+    pendientes_pdf,
+    update_contrato as actualizar_contrato_documental,
+)
+from seace_monitor.documents.service import (
+    borrar_temp,
+    procesar_contrato as procesar_documento,
+)
+from seace_monitor.documents.storage import (
+    BUCKET_TDR,
+    MAX_PDF_STORAGE_BYTES,
+    cachear_pdf_storage,
+    es_ruta_arbol_tdr,
+    pdf_storage_ruta,
+)
 from seace_monitor.gemini import (
     FLASH_USD_IN_PER_M,
     FLASH_USD_OUT_PER_M,
@@ -57,19 +82,28 @@ from seace_monitor.ocr.gemini_provider import (
     CupoFlash,
     solicitar_ocr_gemini,
 )
+from seace_monitor.ocr.queue import (
+    aplanar_clasificacion as _aplanar_cl,
+    es_ti,
+    filtrar_ordenar_cola_ocr,
+    ocr_sin_margen_contrato,
+    ocr_tiempo_agotado,
+    parse_datetime as _parse_dt,
+    prio_ti,
+    ventana_cotizacion_abierta,
+)
+from seace_monitor.ocr.service import procesar_paginas_pendientes
 
 import argparse
-import hashlib
 import json
 import os
 import re
 import tempfile
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
-import pymupdf
 from seace_monitor.supabase_client import crear_cliente
 
 from ingesta_completa import registrar_rechazo
@@ -111,35 +145,12 @@ META_LOG = Path(__file__).parent / "data" / "tdr_extraccion.jsonl"
 CUOTA_OCR_PATH = Path(__file__).parent / "data" / "flash_ocr_cuota.json"
 CUOTA_OCR_TABLA = "pipeline_cuota_ocr"
 OCR_LOG = Path(__file__).parent / "data" / "ultima_ocr.txt"
-MIN_SEGUNDOS_CONTRATO = 45
 OCR_MAX_SEGUNDOS_DEFAULT = 7_200
-_WARNED_EXTRACCION = False
 FLASH_OCR_MAX_DIA = 6_000
 USD_PEN = 3.75
 GASTO_STOP_PEN = 2.0
 # Gemini 3 Flash Preview (aprox. 3.7 Flash): tarifa paga de referencia.
 # Modelo y contadores OCR vienen del adaptador; precios de seace_monitor.gemini.
-BUCKET_TDR = "tdr"
-MAX_PDF_STORAGE_BYTES = 52_428_800
-_RUTA_ARBOL = re.compile(r"^tdr/\d{4}/\d{2}/\d+/\d+\.pdf$")
-_TZ_LIMA = timezone(timedelta(hours=-5))
-
-
-class PdfExtractError(Exception):
-    """Fallo de parse/OCR despues de listar+descargar. El temp ya se borro."""
-
-    def __init__(self, msg: str, meta: dict):
-        super().__init__(msg)
-        self.meta = meta
-
-
-class NecesitaOcr(Exception):
-    """PDF con paginas escaneadas; --solo-nativo las salta (sin Flash)."""
-
-    def __init__(self, meta: dict):
-        n = len(meta.get("ocr_paginas") or [])
-        super().__init__(f"necesita OCR ({n} paginas)")
-        self.meta = meta
 
 
 def parse_ids(raw: str) -> list[int]:
@@ -162,95 +173,6 @@ def respetar_rpm() -> None:
     _OCR_NEXT = time.time() + (60.0 / OCR_RPM)
 
 
-def contratos_por_ids(supa, ids: list[int]) -> list[dict]:
-    """Fija exactamente esos ids (aunque ya tengan pdf_descargado)."""
-    if not ids:
-        return []
-    res = (
-        supa.table("contratos")
-        .select(
-            "id,nro_contratacion,descripcion_contrato,entidad,"
-            "fecha_publica,pdf_descargado,req_url"
-        )
-        .in_("id", ids)
-        .execute()
-    )
-    by_id = {int(r["id"]): r for r in (res.data or [])}
-    missing = [i for i in ids if i not in by_id]
-    if missing:
-        print(f"  [warn] ids no encontrados: {missing}", flush=True)
-    return [by_id[i] for i in ids if i in by_id]
-
-
-def chars_utiles(texto: str) -> int:
-    return sum(1 for c in (texto or "") if c.isalnum())
-
-
-def limpiar_texto(texto: str) -> str:
-    t = (texto or "").replace("\x00", " ")
-    t = re.sub(r"[ \t]+\n", "\n", t)
-    t = re.sub(r"\n{3,}", "\n\n", t)
-    t = re.sub(r"[ \t]{2,}", " ", t)
-    return t.strip()
-
-
-def pendientes_pdf(supa, limit: int, modo: str = "todos") -> list[dict]:
-    """Vigentes sin PDF, mas recientes primero.
-
-    modo:
-      todos       — pdf_descargado false/null
-      nativo      — igual, INCLUYE pendiente_ocr (re-extrae nativo por página)
-      ocr         — solo req_url=pendiente_ocr (PASO 3 / Flash)
-      sin_pdf     — ADEMAS incluye los marcados req_url='sin_pdf' con
-                    pdf_descargado=true. Son los que el filtro por mime
-                    descarto antes; se reevaluan con el criterio nuevo.
-    """
-    if limit <= 0:
-        limit = 10**9
-    reintentar = modo == "sin_pdf"
-    out: list[dict] = []
-    offset = 0
-    while len(out) < limit:
-        take = min(PAGE_DB, limit - len(out))
-        q = (
-            supa.table("contratos")
-            .select(
-                "id,nro_contratacion,descripcion_contrato,entidad,"
-                "fecha_publica,pdf_descargado,req_url,pdf_es_imagen"
-            )
-            .eq("estado", "Vigente")
-        )
-        if reintentar:
-            q = q.or_(
-                "pdf_descargado.eq.false,pdf_descargado.is.null,"
-                "req_url.eq.sin_pdf"
-            )
-        else:
-            q = q.or_("pdf_descargado.eq.false,pdf_descargado.is.null")
-        res = (
-            q.order("fecha_publica", desc=True, nullsfirst=False)
-            .order("id", desc=True)
-            .range(offset, offset + take - 1)
-            .execute()
-        )
-        batch = res.data or []
-        if modo == "ocr":
-            batch = [r for r in batch if r.get("req_url") == REQ_PENDIENTE_OCR]
-        out.extend(batch)
-        if len(res.data or []) < take:
-            break
-        offset += take
-    return out[:limit]
-
-
-def pdf_sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
 def listar_archivos(http: SeaceHttp, cid: int) -> tuple[str, list]:
     """Conserva la firma histórica usando la plantilla configurada al iniciar."""
     return listar_archivos_seace(http, cid, LISTAR_URL)
@@ -264,105 +186,16 @@ def ocr_pagina_gemini(img_bytes: bytes, mime: str = "image/jpeg") -> str:
     return limpiar_texto(text)
 
 
-def clasificar_tipo(n_paginas: int, ocr_pags: list[int]) -> str:
-    if not ocr_pags:
-        return "nativo_puro"
-    if n_paginas > 0 and len(ocr_pags) >= n_paginas:
-        return "imagen_total"
-    return "mixto"
-
-
 def extraer_paginas(path: Path, *, permitir_ocr: bool = True) -> dict:
-    paginas_txt: list[str] = []
-    por_pagina: list[dict] = []
-    ocr_hechas: list[int] = []
-    chars_pymupdf_total = 0
-    n = 0
-
-    with pymupdf.open(path) as doc:
-        n = doc.page_count
-        if n == 0:
-            raise RuntimeError("PDF sin paginas")
-        nativos: list[str] = []
-        for i, page in enumerate(doc, 1):
-            nativo = (page.get_text("text") or "").strip()
-            n_nat = chars_utiles(nativo)
-            chars_pymupdf_total += n_nat
-            nativos.append(nativo)
-            por_pagina.append({
-                "pagina": i,
-                "chars_pymupdf": n_nat,
-                "ocr": n_nat < MIN_CHARS_PAGINA,
-                "chars_final": n_nat,
-            })
-
-        ocr_needed = [p["pagina"] for p in por_pagina if p.get("ocr")]
-
-        for i, page in enumerate(doc, 1):
-            nativo = nativos[i - 1]
-            n_nat = por_pagina[i - 1]["chars_pymupdf"]
-            uso_ocr = n_nat < MIN_CHARS_PAGINA
-            texto_final = limpiar_texto(nativo)
-            if uso_ocr and not permitir_ocr:
-                paginas_txt.append("")
-                continue
-            if uso_ocr and permitir_ocr:
-                if len(ocr_hechas) >= OCR_MAX_PAGINAS:
-                    por_pagina[i - 1]["omitido"] = "ocr_max"
-                    por_pagina[i - 1]["ocr"] = False
-                    paginas_txt.append(texto_final)
-                    continue
-                pix = page.get_pixmap(dpi=OCR_DPI, alpha=False)
-                try:
-                    ocr = ocr_pagina_gemini(pix.tobytes("jpeg"), "image/jpeg")
-                except Exception as e:
-                    pendientes = [p["pagina"] for p in por_pagina if p.get("ocr")]
-                    raise PdfExtractError(str(e), {
-                        "n_paginas": n,
-                        "chars_pymupdf": chars_pymupdf_total,
-                        "por_pagina": por_pagina,
-                        "ocr_paginas": pendientes,
-                        "pdf_es_imagen": True,
-                        "tdr_texto": "",
-                        "chars_final": chars_pymupdf_total,
-                    }) from e
-                ocr_hechas.append(i)
-                texto_final = ocr or texto_final
-                por_pagina[i - 1]["chars_final"] = chars_utiles(texto_final)
-            paginas_txt.append(texto_final)
-
-    bloques = []
-    for i, t in enumerate(paginas_txt, 1):
-        if t:
-            bloques.append(f"--- pagina {i} ---\n{t}")
-    texto = limpiar_texto("\n\n".join(bloques))
-    ocr_pend = list(ocr_needed) if not permitir_ocr else [
-        p for p in ocr_needed if p not in ocr_hechas
-    ]
-    tipo = clasificar_tipo(n, ocr_needed)
-    if chars_utiles(texto) == 0 and tipo != "imagen_total":
-        raise RuntimeError("texto extraido vacio (PyMuPDF+OCR)")
-    nativas = n - len(ocr_needed)
-    return {
-        "texto": texto,
-        "ocr_paginas": ocr_pend,
-        "ocr_hechas": ocr_hechas,
-        "pdf_es_imagen": tipo != "nativo_puro",
-        "tdr_tipo_extraccion": tipo,
-        "n_paginas": n,
-        "n_paginas_nativas": nativas,
-        "n_paginas_ocr": len(ocr_needed),
-        "chars_pymupdf": chars_pymupdf_total,
-        "chars_final": chars_utiles(texto),
-        "por_pagina": por_pagina,
-    }
-
-
-def borrar_temp(tmp: Path) -> None:
-    try:
-        tmp.unlink(missing_ok=True)
-    except OSError as e:
-        print(f"  [warn] no se pudo borrar {tmp}: {e}", flush=True)
+    """Wrapper compatible sobre el extractor independiente del CLI."""
+    return extraer_paginas_documento(
+        path,
+        permitir_ocr=permitir_ocr,
+        ocr_page=ocr_pagina_gemini,
+        min_chars_pagina=MIN_CHARS_PAGINA,
+        ocr_max_paginas=OCR_MAX_PAGINAS,
+        ocr_dpi=OCR_DPI,
+    )
 
 
 def procesar_contrato(
@@ -372,117 +205,23 @@ def procesar_contrato(
     permitir_ocr: bool = True,
     supa=None,
 ) -> dict:
-    cid = int(contrato["id"])
-    _listar_url, archivos = listar_archivos(http, cid)
-    elegido = elegir_pdf(archivos)
-    if elegido is None:
-        raise SinPdf(archivos)
-
-    aid = elegido.get("idContratoArchivo")
-    if not aid:
-        raise RuntimeError("PDF sin idContratoArchivo")
-    dl_url = DESCARGAR_URL.format(
-        idContratoArchivo=aid,
-        id=aid,
-        id_archivo=aid,
+    """Wrapper compatible sobre el servicio documental."""
+    return procesar_documento(
+        http,
+        contrato,
+        listar_url=LISTAR_URL,
+        descargar_url=DESCARGAR_URL,
+        permitir_ocr=permitir_ocr,
+        ocr_page=ocr_pagina_gemini,
+        supa=supa,
+        min_chars_pagina=MIN_CHARS_PAGINA,
+        ocr_max_paginas=OCR_MAX_PAGINAS,
+        ocr_dpi=OCR_DPI,
     )
-
-    fd, tmp_name = tempfile.mkstemp(prefix=TEMP_PREFIX, suffix=".pdf")
-    os.close(fd)
-    tmp = Path(tmp_name)
-    meta = {
-        "id": cid,
-        "url": dl_url,
-        "pdf_archivo_id": int(aid),
-        "pdf_nombre": elegido.get("nombre"),
-        "pdf_mime": elegido.get("descripcionMime"),
-        "id_tipo_archivo": elegido.get("idTipoArchivo"),
-        "n_archivos": len(archivos),
-        "archivos": resumen_archivos(archivos),
-        "temp_path": str(tmp),
-        "bytes": 0,
-        "pdf_hash": "",
-        "tdr_texto": "",
-        "por_pagina": [],
-        "ocr_paginas": [],
-        "n_paginas": 0,
-        "chars_pymupdf": 0,
-        "chars_final": 0,
-        "pdf_es_imagen": False,
-    }
-    try:
-        descargar_binario(http, dl_url, tmp)
-        meta["pdf_hash"] = pdf_sha256(tmp)
-        meta["bytes"] = tmp.stat().st_size if tmp.exists() else 0
-        meta["fecha_publica"] = contrato.get("fecha_publica")
-        cachear_pdf_storage(supa, contrato, meta, tmp)
-        try:
-            extra = extraer_paginas(tmp, permitir_ocr=permitir_ocr)
-        except NecesitaOcr as e:
-            e.meta = {**meta, **e.meta}
-            raise
-        except PdfExtractError as e:
-            e.meta = {**meta, **e.meta}
-            raise
-        meta.update({
-            "tdr_texto": extra["texto"],
-            "pdf_es_imagen": extra["pdf_es_imagen"],
-            "tdr_tipo_extraccion": extra["tdr_tipo_extraccion"],
-            "n_paginas": extra["n_paginas"],
-            "n_paginas_nativas": extra["n_paginas_nativas"],
-            "n_paginas_ocr": extra["n_paginas_ocr"],
-            "chars_pymupdf": extra["chars_pymupdf"],
-            "chars_final": extra["chars_final"],
-            "ocr_paginas": extra["ocr_paginas"],
-            "ocr_hechas": extra.get("ocr_hechas") or [],
-            "por_pagina": extra["por_pagina"],
-        })
-        return meta
-    except (PdfExtractError, NecesitaOcr, NoEsPdf):
-        raise
-    except Exception as e:
-        raise PdfExtractError(str(e), meta) from e
-    finally:
-        borrar_temp(tmp)
 
 
 def _update_contrato(supa, cid: int, payload: dict) -> None:
-    extra = {
-        "pdf_archivo_id": payload.pop("_pdf_archivo_id", None),
-        "pdf_nombre": payload.pop("_pdf_nombre", None),
-    }
-    full = dict(payload)
-    if extra["pdf_archivo_id"] is not None:
-        full["pdf_archivo_id"] = extra["pdf_archivo_id"]
-    if extra["pdf_nombre"] is not None:
-        full["pdf_nombre"] = extra["pdf_nombre"]
-    try:
-        supa.table("contratos").update(full).eq("id", cid).execute()
-    except Exception as e:
-        msg = str(e).lower()
-        if any(c in msg for c in COLS_EXTRACCION):
-            global _WARNED_EXTRACCION
-            if not _WARNED_EXTRACCION:
-                print(
-                    "  [warn] faltan columnas de extracción; "
-                    "ejecuta tdr_extraccion_meta.sql y luego "
-                    "--sync-meta (meta local en data/tdr_extraccion.jsonl)",
-                    flush=True,
-                )
-                _WARNED_EXTRACCION = True
-            slim = {k: v for k, v in full.items() if k not in COLS_EXTRACCION}
-            supa.table("contratos").update(slim).eq("id", cid).execute()
-            return
-        if "pdf_archivo_id" in msg or "pdf_nombre" in msg:
-            print(
-                "  [warn] faltan columnas pdf_archivo_id/pdf_nombre; "
-                "ejecuta pdf_archivo_meta.sql",
-                flush=True,
-            )
-            slim = {k: v for k, v in payload.items() if k not in COLS_EXTRACCION}
-            supa.table("contratos").update(slim).eq("id", cid).execute()
-        else:
-            raise
+    actualizar_contrato_documental(supa, cid, payload)
 
 
 def registrar_meta_local(row: dict) -> None:
@@ -848,149 +587,6 @@ def meta_local_por_id() -> dict[int, dict]:
     return by_id
 
 
-def _parse_dt(val) -> datetime | None:
-    if val is None:
-        return None
-    if isinstance(val, datetime):
-        dt = val
-    else:
-        s = str(val).strip()
-        if not s:
-            return None
-        if s.endswith("Z"):
-            s = s[:-1] + "+00:00"
-        try:
-            dt = datetime.fromisoformat(s)
-        except ValueError:
-            return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
-
-
-def pdf_storage_ruta(cid: int, aid: int, fecha_publica=None) -> str:
-    """tdr/{YYYY}/{MM}/{contrato_id}/{pdf_archivo_id}.pdf (mes Lima)."""
-    dt = _parse_dt(fecha_publica) if fecha_publica is not None else None
-    if dt is None:
-        dt = datetime.now(timezone.utc)
-    lima = dt.astimezone(_TZ_LIMA)
-    return f"tdr/{lima.year:04d}/{lima.month:02d}/{int(cid)}/{int(aid)}.pdf"
-
-
-def es_ruta_arbol_tdr(path: str | None) -> bool:
-    return bool(path and _RUTA_ARBOL.match(str(path).strip()))
-
-
-def cachear_pdf_storage(supa, contrato: dict, meta: dict, tmp: Path) -> None:
-    """Sube el binario ya descargado al bucket tdr. Fallo: log y sigue."""
-    if supa is None or not tmp.exists():
-        return
-    cid = meta.get("id") or contrato.get("id")
-    try:
-        aid = meta.get("pdf_archivo_id") or contrato.get("pdf_archivo_id")
-        if not aid:
-            return
-        raw = tmp.read_bytes()
-        if not raw.lstrip().startswith(b"%PDF"):
-            print(f"  [warn] storage tdr id={cid}: no es PDF, no se cachea", flush=True)
-            return
-        if len(raw) > MAX_PDF_STORAGE_BYTES:
-            print(
-                f"  [warn] storage tdr id={cid}: {len(raw)} bytes > tope "
-                f"{MAX_PDF_STORAGE_BYTES}",
-                flush=True,
-            )
-            return
-        path = pdf_storage_ruta(
-            int(cid),
-            int(aid),
-            contrato.get("fecha_publica") or meta.get("fecha_publica"),
-        )
-        supa.storage.from_(BUCKET_TDR).upload(
-            path,
-            raw,
-            {"content-type": "application/pdf", "upsert": "true"},
-        )
-        meta["pdf_storage_path"] = path
-        meta["pdf_storage_bytes"] = len(raw)
-        print(
-            f"  storage tdr id={cid} OK {path} {len(raw)} bytes",
-            flush=True,
-        )
-    except Exception as e:
-        print(f"  [warn] storage tdr id={cid}: {e}", flush=True)
-
-
-def ventana_cotizacion_abierta(
-    row: dict,
-    now: datetime | None = None,
-    *,
-    incluir_por_abrir: bool = False,
-) -> bool:
-    """Misma apertura que es_postulable; fin NOT NULL (NULL no gasta Flash).
-
-    Default: (fecha_ini IS NULL OR fecha_ini <= now) AND fecha_fin > now.
-    --incluir-por-abrir: solo exige fecha_fin > now (adelantar OCR).
-    """
-    now = now or datetime.now(timezone.utc)
-    fin = _parse_dt(row.get("fecha_fin_cotizacion"))
-    if fin is None or fin <= now:
-        return False
-    if incluir_por_abrir:
-        return True
-    ini = _parse_dt(row.get("fecha_ini_cotizacion"))
-    return ini is None or ini <= now
-
-
-def _aplanar_cl(row: dict | None) -> dict | None:
-    """Mueve categoria_it/relevancia_ia desde clasificacion_contrato a la raiz."""
-    if not row:
-        return row
-    cl = row.get("clasificacion_contrato")
-    if isinstance(cl, dict):
-        row.setdefault("categoria_it", cl.get("categoria_it"))
-        row.setdefault("relevancia_ia", cl.get("relevancia_ia"))
-    elif isinstance(cl, list) and cl:
-        row.setdefault("categoria_it", cl[0].get("categoria_it"))
-        row.setdefault("relevancia_ia", cl[0].get("relevancia_ia"))
-    return row
-
-
-def es_ti(row: dict) -> bool:
-    _aplanar_cl(row)
-    return bool(row.get("categoria_it")) or bool(row.get("relevancia_ia"))
-
-
-def prio_ti(row: dict) -> tuple:
-    """ALTA → categoria_it → MEDIA → BAJA."""
-    _aplanar_cl(row)
-    ia = str(row.get("relevancia_ia") or "").strip().upper()
-    cat = row.get("categoria_it")
-    cid = -int(row.get("id") or 0)
-    if ia == "ALTA":
-        return (0, cid)
-    if cat:
-        return (1, cid)
-    if ia == "MEDIA":
-        return (2, cid)
-    if ia == "BAJA":
-        return (3, cid)
-    return (9, cid)
-
-
-def ocr_tiempo_agotado(t0: float, max_segundos: int) -> bool:
-    if not max_segundos or max_segundos <= 0:
-        return False
-    return (time.monotonic() - t0) >= max_segundos
-
-
-def ocr_sin_margen_contrato(t0: float, max_segundos: int) -> bool:
-    if not max_segundos or max_segundos <= 0:
-        return False
-    resto = max_segundos - (time.monotonic() - t0)
-    return resto < MIN_SEGUNDOS_CONTRATO
-
-
 def contrato_ocr_sigue_elegible(
     supa, cid: int, *, solo_ti: bool, incluir_por_abrir: bool = False
 ) -> tuple[bool, str]:
@@ -1023,62 +619,6 @@ def contrato_ocr_sigue_elegible(
     if solo_ti and not es_ti(r):
         return False, "no_ti"
     return True, "ok"
-
-
-def filtrar_ordenar_cola_ocr(
-    filas: list[dict],
-    *,
-    solo_ti: bool,
-    exigir_ventana: bool = True,
-    incluir_por_abrir: bool = False,
-) -> tuple[list[dict], dict]:
-    now = datetime.now(timezone.utc)
-    stats = {
-        "crudos": len(filas),
-        "no_vigente": 0,
-        "ventana_null": 0,
-        "vencidos": 0,
-        "por_abrir": 0,
-        "no_ti": 0,
-        "ok": 0,
-        "alta": 0,
-        "categoria_it": 0,
-        "media": 0,
-        "baja": 0,
-    }
-    out: list[dict] = []
-    for r in filas:
-        if (r.get("estado") or "Vigente") != "Vigente":
-            stats["no_vigente"] += 1
-            continue
-        if exigir_ventana:
-            if not ventana_cotizacion_abierta(
-                r, now, incluir_por_abrir=incluir_por_abrir
-            ):
-                fin = _parse_dt(r.get("fecha_fin_cotizacion"))
-                if fin is None:
-                    stats["ventana_null"] += 1
-                elif fin <= now:
-                    stats["vencidos"] += 1
-                else:
-                    stats["por_abrir"] += 1
-                continue
-        if solo_ti and not es_ti(r):
-            stats["no_ti"] += 1
-            continue
-        out.append(r)
-        stats["ok"] += 1
-        ia = str(r.get("relevancia_ia") or "").strip().upper()
-        if ia == "ALTA":
-            stats["alta"] += 1
-        elif r.get("categoria_it"):
-            stats["categoria_it"] += 1
-        elif ia == "MEDIA":
-            stats["media"] += 1
-        elif ia == "BAJA":
-            stats["baja"] += 1
-    out.sort(key=prio_ti)
-    return out, stats
 
 
 def _enriquecer_cola_ocr(supa, filas: list[dict]) -> list[dict]:
@@ -1309,79 +849,25 @@ def ocr_contrato_selectivo(
     t0: float,
     max_segundos: int,
 ) -> dict:
-    """OCR solo páginas pendientes. AÑADE al tdr_texto. No reemplaza nativo."""
-    cid = int(contrato["id"])
-    pend = list(contrato.get("paginas_ocr_pendientes") or [])
-    hechas = list(contrato.get("paginas_ocr_hechas") or [])
-    tdr = contrato.get("tdr_texto") or ""
-    nuevas: list[int] = []
-
-    _listar_url, archivos = listar_archivos(http, cid)
-    elegido = elegir_pdf(archivos)
-    if elegido is None:
-        raise SinPdf(archivos)
-    aid = elegido.get("idContratoArchivo")
-    if not aid:
-        raise RuntimeError("PDF sin idContratoArchivo")
-    dl_url = DESCARGAR_URL.format(
-        idContratoArchivo=aid,
-        id=aid,
-        id_archivo=aid,
+    """Wrapper compatible sobre el servicio OCR selectivo."""
+    return procesar_paginas_pendientes(
+        http,
+        supa,
+        contrato,
+        cuota,
+        max_dia,
+        t0=t0,
+        max_segundos=max_segundos,
+        listar_url=LISTAR_URL,
+        descargar_url=DESCARGAR_URL,
+        ocr_page=ocr_pagina_gemini,
+        append_ocr=anexar_ocr_a_tdr,
+        save_progress=guardar_ocr_progreso,
+        register_success=registrar_ocr_ok,
+        persist_storage=persistir_storage_si_hay,
+        ocr_dpi=OCR_DPI,
+        temp_prefix=TEMP_PREFIX,
     )
-    contrato["pdf_archivo_id"] = int(aid)
-    contrato["pdf_nombre"] = elegido.get("nombre")
-
-    fd, tmp_name = tempfile.mkstemp(prefix=TEMP_PREFIX, suffix=".pdf")
-    os.close(fd)
-    tmp = Path(tmp_name)
-    try:
-        descargar_binario(http, dl_url, tmp)
-        if not contrato.get("pdf_storage_path"):
-            meta_st = {
-                "id": cid,
-                "pdf_archivo_id": contrato.get("pdf_archivo_id"),
-                "pdf_nombre": contrato.get("pdf_nombre"),
-                "fecha_publica": contrato.get("fecha_publica"),
-            }
-            cachear_pdf_storage(supa, contrato, meta_st, tmp)
-            persistir_storage_si_hay(supa, cid, meta_st)
-        with pymupdf.open(tmp) as doc:
-            n = doc.page_count
-            if not contrato.get("tdr_n_paginas"):
-                contrato["tdr_n_paginas"] = n
-            for i in list(pend):
-                if i < 1 or i > n:
-                    pend.remove(i)
-                    continue
-                if ocr_tiempo_agotado(t0, max_segundos):
-                    raise CupoFlash(
-                        f"tope {max_segundos}s de reloj",
-                        motivo="tiempo",
-                    )
-                if int(cuota.get("requests") or 0) >= max_dia:
-                    raise CupoFlash(
-                        f"tope diario {max_dia} Flash (usadas={cuota['requests']})",
-                        motivo="cupo",
-                    )
-                pix = doc[i - 1].get_pixmap(dpi=OCR_DPI, alpha=False)
-                texto = ocr_pagina_gemini(pix.tobytes("jpeg"), "image/jpeg")
-                tdr = anexar_ocr_a_tdr(tdr, i, texto)
-                pend.remove(i)
-                if i not in hechas:
-                    hechas.append(i)
-                nuevas.append(i)
-                guardar_ocr_progreso(supa, contrato, tdr, pend, hechas)
-                registrar_ocr_ok(supa, cuota, max_dia)
-    finally:
-        borrar_temp(tmp)
-
-    return {
-        "id": cid,
-        "nuevas": nuevas,
-        "pend": pend,
-        "hechas": hechas,
-        "tdr_chars": len(tdr or ""),
-    }
 
 
 def escribir_ocr_log(supa, stats: dict) -> None:
