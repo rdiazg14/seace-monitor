@@ -35,14 +35,19 @@ from seace_monitor.config import cargar_env  # noqa: E402
 from seace_monitor.db import connect  # noqa: E402
 from seace_monitor.supabase_client import crear_cliente  # noqa: E402
 
-from descargar_requerimiento import (  # noqa: E402
-    BUCKET_TDR,
-    DESCARGAR_URL,
-    MAX_PDF_STORAGE_BYTES,
+from seace_monitor.documents.seace_files import (  # noqa: E402
+    DEFAULT_DESCARGAR_URL,
     SeaceHttp,
+)
+from seace_monitor.documents.storage import (  # noqa: E402
+    BUCKET_TDR,
+    MAX_PDF_STORAGE_BYTES,
     es_ruta_arbol_tdr,
     pdf_storage_ruta,
 )
+
+cargar_env()
+DESCARGAR_URL = os.environ.get("DESCARGAR_URL", DEFAULT_DESCARGAR_URL).strip()
 
 BUCKET = BUCKET_TDR
 DELAY_S = 1.0

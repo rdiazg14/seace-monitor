@@ -38,8 +38,19 @@ from pathlib import Path
 import httpx
 from supabase import create_client
 
-import chunker_contratos as cc
-import generar_embeddings as ge
+from seace_monitor.rag import chunking as cc
+from seace_monitor.embeddings.gemini_provider import (
+    GEMINI_EMBED_MODEL,
+    QuotaExceeded,
+    solicitar_embeddings_gemini,
+)
+from seace_monitor.embeddings.preparation import (
+    EMBED_STATS,
+    texto_para_embed,
+    vec_literal,
+)
+from seace_monitor.embeddings.service import BATCH_GEMINI, DELAY_GEMINI_S
+from seace_monitor.gemini import EMBED_USD_PER_M
 from seace_monitor.logging import PASO_EMBEDDING, registrar_evento, registrar_run
 
 cargar_env()
@@ -48,6 +59,9 @@ TARGET = 300
 OVERLAP = 60
 CHUNK_VERSION_DEST = "300_60"
 PAGE = 1_000
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 
 def split_parrafos_overlap(
@@ -193,7 +207,7 @@ def marcar_version(supa, cid: int) -> None:
 def estimar_costo(chunks: list[dict]) -> dict:
     chars = sum(len((c.get("chunk_embed_text") or "")) for c in chunks)
     tokens = chars / 4.0
-    usd = tokens / 1_000_000.0 * ge.EMBED_USD_PER_M
+    usd = tokens / 1_000_000.0 * EMBED_USD_PER_M
     return {"chunks": len(chunks), "chars": chars, "tokens": int(tokens), "usd": usd}
 
 
@@ -203,16 +217,16 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=0, help="Tope de contratos (0 = todos)")
     ap.add_argument("--ids", default="", help="Ids fijos separados por coma")
     ap.add_argument("--incluir-por-abrir", action="store_true", help="Incluye es_por_abrir además de postulables")
-    ap.add_argument("--delay", type=float, default=ge.DELAY_GEMINI_S, help="Pausa entre lotes de embedding")
-    ap.add_argument("--batch", type=int, default=ge.BATCH_GEMINI, help="Tamaño de lote de embedding")
+    ap.add_argument("--delay", type=float, default=DELAY_GEMINI_S, help="Pausa entre lotes de embedding")
+    ap.add_argument("--batch", type=int, default=BATCH_GEMINI, help="Tamaño de lote de embedding")
     args = ap.parse_args()
 
-    if not ge.SUPABASE_URL or not ge.SUPABASE_KEY:
+    if not SUPABASE_URL or not SUPABASE_KEY:
         raise SystemExit("ERROR: SUPABASE_URL / SUPABASE_SERVICE_KEY no encontrados")
-    if not ge.GEMINI_API_KEY:
+    if not GEMINI_API_KEY:
         raise SystemExit("ERROR: GEMINI_API_KEY no encontrado")
 
-    supa = create_client(ge.SUPABASE_URL, ge.SUPABASE_KEY)
+    supa = create_client(SUPABASE_URL, SUPABASE_KEY)
 
     ids_fijos = [int(x) for x in args.ids.replace(" ", "").split(",") if x] if args.ids else []
     if ids_fijos:
@@ -254,7 +268,7 @@ def main() -> int:
         total_chunks += len(chs)
         total_chars += sum(len((x.get("chunk_embed_text") or "")) for x in chs)
     est_tokens = total_chars / 4.0
-    est_usd = est_tokens / 1_000_000.0 * ge.EMBED_USD_PER_M
+    est_usd = est_tokens / 1_000_000.0 * EMBED_USD_PER_M
     print(f"  estimación: chunks={total_chunks:,}  chars={total_chars:,}  "
           f"tokens~{est_tokens:,.0f}  costo~USD {est_usd:.4f}", flush=True)
     for c in cola:
@@ -272,7 +286,7 @@ def main() -> int:
     migrados = 0
     cupo = False
     t0 = time.time()
-    tokens_ini = int(ge.EMBED_STATS.get("tokens_api") or 0)
+    tokens_ini = int(EMBED_STATS.get("tokens_api") or 0)
     with httpx.Client() as http:
         for i, c in enumerate(cola, 1):
             cid = int(c["id"])
@@ -286,14 +300,16 @@ def main() -> int:
             try:
                 for j in range(0, len(new_chunks), args.batch):
                     lote = new_chunks[j:j + args.batch]
-                    texts = [ge.texto_para_embed(r, "auto") for r in lote]
-                    vecs = ge.embed_lote_gemini(http, texts, fail_fast=True)
+                    texts = [texto_para_embed(r, "auto") for r in lote]
+                    vecs = solicitar_embeddings_gemini(
+                        http, texts, GEMINI_API_KEY, fail_fast=True
+                    )
                     for r, v in zip(lote, vecs):
-                        r["embedding_v2"] = ge.vec_literal(v)
+                        r["embedding_v2"] = vec_literal(v)
                     n_ok += len(lote)
                     if j + args.batch < len(new_chunks):
                         time.sleep(args.delay)
-            except ge.QuotaExceeded as e:
+            except QuotaExceeded as e:
                 print(f"  STOP 429 en id={cid} (embebidos {n_ok}/{len(new_chunks)}). {e}", flush=True)
                 print(f"  pendientes={[int(x['id']) for x in cola[i - 1:]]}", flush=True)
                 cupo = True
@@ -329,15 +345,15 @@ def main() -> int:
             )
 
     elapsed = time.time() - t0
-    tok_run = int(ge.EMBED_STATS.get("tokens_api") or 0) - tokens_ini
+    tok_run = int(EMBED_STATS.get("tokens_api") or 0) - tokens_ini
     if tok_run > 0:
         try:
             supa.table("uso_ia").insert({
                 "componente": "embedding",
-                "modelo": ge.GEMINI_EMBED_MODEL,
+                "modelo": GEMINI_EMBED_MODEL,
                 "tokens_prompt": tok_run,
                 "tokens_total": tok_run,
-                "costo_usd": round(tok_run / 1_000_000.0 * ge.EMBED_USD_PER_M, 8),
+                "costo_usd": round(tok_run / 1_000_000.0 * EMBED_USD_PER_M, 8),
                 "cache_hit": False,
                 "detalle": {
                     "n_contratos": migrados,
@@ -355,7 +371,7 @@ def main() -> int:
             "migrados": migrados,
             "cola": len(cola),
             "tokens_api": tok_run,
-            "costo_usd": round(tok_run / 1_000_000.0 * ge.EMBED_USD_PER_M, 8),
+            "costo_usd": round(tok_run / 1_000_000.0 * EMBED_USD_PER_M, 8),
             "chunk_version": CHUNK_VERSION_DEST,
             "cupo": cupo,
             "elapsed_s": round(elapsed, 1),

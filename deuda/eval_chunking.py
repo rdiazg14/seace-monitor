@@ -35,8 +35,14 @@ import psycopg
 from supabase import create_client
 
 import eval_retrieval as ev
-import generar_embeddings as ge
-from chunker_contratos import (
+from seace_monitor.embeddings.gemini_provider import (
+    GEMINI_DIM,
+    QuotaExceeded,
+    solicitar_embeddings_gemini,
+)
+from seace_monitor.embeddings.preparation import MAX_CHARS_GEMINI
+from seace_monitor.embeddings.service import BATCH_GEMINI
+from seace_monitor.rag.chunking import (
     approx_tokens,
     con_contexto_pdf,
     embed_text_pdf,
@@ -54,7 +60,6 @@ VEC_K = 20
 FTS_K = 20
 RRF_K = ev.RRF_K
 TOP_CANDIDATES = 20
-MAX_CHARS_GEMINI = ge.MAX_CHARS_GEMINI  # 8000
 
 VARIANTES: dict[str, tuple[int, int]] = {
     "300_0": (300, 0),
@@ -382,7 +387,7 @@ def embed_pdf_resumable(texts: list[str], tag: str, delay: float) -> tuple[np.nd
     - Completo = True solo si se embebieron TODOS los chunks.
     """
     total = len(texts)
-    dim = ge.GEMINI_DIM
+    dim = GEMINI_DIM
     emb_path = DATA / f"chunk_emb_{tag}.npy"
     prog_path = DATA / f"chunk_emb_{tag}.progress.json"
 
@@ -406,10 +411,12 @@ def embed_pdf_resumable(texts: list[str], tag: str, delay: float) -> tuple[np.nd
     with httpx.Client() as http:
         i = done
         while i < total:
-            lote = texts[i:i + ge.BATCH_GEMINI]
+            lote = texts[i:i + BATCH_GEMINI]
             try:
-                vecs_lote = ge.embed_lote_gemini(http, lote, fail_fast=True)
-            except ge.QuotaExceeded as e:
+                vecs_lote = solicitar_embeddings_gemini(
+                    http, lote, ev.GEMINI_API_KEY, fail_fast=True
+                )
+            except QuotaExceeded as e:
                 print(f"  [429] lote {i}: {e}", flush=True)
                 print(f"  progreso guardado: {i}/{total}. Reanuda re-ejecutando el mismo comando.", flush=True)
                 mm.flush()
@@ -424,7 +431,7 @@ def embed_pdf_resumable(texts: list[str], tag: str, delay: float) -> tuple[np.nd
             mm.flush()
             i += n
             prog_path.write_text(json.dumps({"done": i}), encoding="utf-8")
-            if i % (ge.BATCH_GEMINI * 25) == 0 or i >= total:
+            if i % (BATCH_GEMINI * 25) == 0 or i >= total:
                 el = time.time() - t0
                 print(f"    [{i}/{total}] {el:.0f}s  {i/max(el,1):.1f}/s", flush=True)
             time.sleep(delay)

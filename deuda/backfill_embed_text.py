@@ -18,7 +18,7 @@ from pathlib import Path
 
 from supabase import create_client
 
-from chunker_contratos import embed_text_pdf
+from seace_monitor.rag.chunking import embed_text_pdf
 
 _env = Path(__file__).parent / ".env"
 if _env.exists():

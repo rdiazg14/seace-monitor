@@ -58,6 +58,7 @@ from seace_monitor.documents.repository import (
     pendientes_pdf,
     update_contrato as actualizar_contrato_documental,
 )
+from seace_monitor.documents.postprocess import rechunk_embed_pdf as _rechunk_embed_pdf
 from seace_monitor.documents.service import (
     borrar_temp,
     procesar_contrato as procesar_documento,
@@ -832,11 +833,8 @@ def guardar_ocr_progreso(
 
 
 def rechunk_embed_pdf(supa, cid: int) -> None:
-    from chunker_contratos import run_solo_pdf
-    from generar_embeddings import run_gemini
-
-    run_solo_pdf(supa, [cid], 0)
-    run_gemini(supa, 0, fuente="pdf", ids=[cid], embed_mode="auto")
+    """Fachada histórica para consumidores externos del entrypoint."""
+    _rechunk_embed_pdf(supa, cid, api_key=GEMINI_API_KEY)
 
 
 def ocr_contrato_selectivo(

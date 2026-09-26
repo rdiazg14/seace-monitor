@@ -1,10 +1,9 @@
 """Helpers puros para hablar con Gemini (precios, parseo, fechas, vectores).
 
 Centraliza funciones sin I/O que estaban duplicadas en los scripts del
-pipeline (descargar_requerimiento, clasificar_gemini, generar_embeddings,
-eval_retrieval). Los módulos originales las re-exportan vía `from ... import`
-para no romper los cross-imports (p. ej. `from descargar_requerimiento import
-usd_de_tokens`, `import generar_embeddings as ge`).
+pipeline. Los consumidores internos importan desde ``seace_monitor``; los
+entrypoints raíz conservan solo las fachadas públicas necesarias para los CLI
+y la compatibilidad externa.
 """
 from __future__ import annotations
 

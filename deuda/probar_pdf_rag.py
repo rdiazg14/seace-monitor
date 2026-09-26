@@ -15,15 +15,20 @@ import httpx
 
 from eval_retrieval import buscar_v2_vector, embed_query_gemini, create_client
 from eval_retrieval import GEMINI_API_KEY, SUPABASE_KEY, SUPABASE_URL
-from chunker_contratos import cuerpo_chunk, run_solo_pdf
-from generar_embeddings import (
-    QuotaExceeded,
-    reset_embedding_v2,
-    run_gemini,
-    reset_embed_stats,
-    print_embed_stats,
+from seace_monitor.rag.chunking import cuerpo_chunk
+from seace_monitor.rag.service import run_solo_pdf
+from seace_monitor.embeddings.gemini_provider import QuotaExceeded
+from seace_monitor.embeddings.preparation import (
     EMBED_STATS,
+    print_embed_stats,
+    reset_embed_stats,
 )
+from seace_monitor.embeddings.repository import reset_embedding_v2
+from seace_monitor.embeddings.service import run_gemini as _run_gemini
+
+
+def run_gemini(*args, **kwargs):
+    return _run_gemini(*args, api_key=GEMINI_API_KEY, **kwargs)
 
 MUESTRA = [87164, 87001, 87153, 87159, 87157]
 AB_ID = 87164

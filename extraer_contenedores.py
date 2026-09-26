@@ -38,26 +38,26 @@ from collections import Counter
 from pathlib import Path
 
 import pymupdf
+import httpx
 from seace_monitor.supabase_client import crear_cliente
 
-from descargar_requerimiento import (
-    DELAY_S,
-    DESCARGAR_URL,
-    GEMINI_FLASH,
-    LISTAR_URL,
-    OCR_USAGE_ACUM,
+from seace_monitor.documents.pdf_extraction import chars_utiles, limpiar_texto
+from seace_monitor.documents.postprocess import rechunk_embed_pdf as _rechunk_embed_pdf
+from seace_monitor.documents.seace_files import (
+    DEFAULT_DESCARGAR_URL,
+    DEFAULT_LISTAR_URL,
     SeaceHttp,
-    _aplanar_cl,
-    chars_utiles,
     elegir_pdf,
-    limpiar_texto,
-    listar_archivos,
-    ocr_pagina_gemini,
-    parse_ids,
-    rechunk_embed_pdf,
+    listar_archivos as listar_archivos_seace,
     resumen_archivos,
-    usd_de_tokens,
 )
+from seace_monitor.gemini import usd_flash as usd_de_tokens
+from seace_monitor.ocr.gemini_provider import (
+    GEMINI_FLASH,
+    OCR_USAGE_ACUM,
+    solicitar_ocr_gemini,
+)
+from seace_monitor.ocr.queue import aplanar_clasificacion as _aplanar_cl
 from seace_monitor.ingestion.repository import registrar_rechazo
 from seace_monitor.logging import PASO_CONTENEDORES, registrar_evento, registrar_run
 
@@ -65,6 +65,9 @@ from seace_monitor.logging import PASO_CONTENEDORES, registrar_evento, registrar
 cargar_env()
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+LISTAR_URL = os.environ.get("LISTAR_URL", DEFAULT_LISTAR_URL).strip()
+DESCARGAR_URL = os.environ.get("DESCARGAR_URL", DEFAULT_DESCARGAR_URL).strip()
+DELAY_S = 0.35
 
 PAGE_DB = 1_000
 # Guardas de seguridad: no inflar memoria/tiempo con contenedores hostiles.
@@ -80,6 +83,26 @@ _EXTS_IMG = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff"}
 MOTIVO_RAR = "contenedor rar sin binario (unrar/7z)"
 MOTIVO_DOC = "contenedor doc binario (OLE2) sin soporte"
 MOTIVO_DESC = "contenedor no procesable"
+
+
+def parse_ids(raw: str) -> list[int]:
+    return [int(part) for part in re.split(r"[,\s]+", raw.strip()) if part]
+
+
+def listar_archivos(http: SeaceHttp, cid: int) -> tuple[str, list]:
+    return listar_archivos_seace(http, cid, LISTAR_URL)
+
+
+def ocr_pagina_gemini(img_bytes: bytes, mime: str = "image/jpeg") -> str:
+    if not GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY ausente; no se puede hacer OCR")
+    return limpiar_texto(
+        solicitar_ocr_gemini(httpx, img_bytes, mime, GEMINI_API_KEY)
+    )
+
+
+def rechunk_embed_pdf(supa, cid: int) -> None:
+    _rechunk_embed_pdf(supa, cid, api_key=GEMINI_API_KEY)
 
 
 # ── Detección por magic bytes ─────────────────────────────────────────────────
