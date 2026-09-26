@@ -46,8 +46,8 @@ def test_l2_normalize_vector_cero_no_divide():
 
 
 def test_usd_flash():
-    # 1M in + 1M out = 0.50 + 3.00
-    assert abs(usd_flash(1_000_000, 1_000_000) - 3.50) < 1e-9
+    # 1M in + 1M out = 0.75 + 3.75 (gemini-3.7-flash, tabla canónica del proxy)
+    assert abs(usd_flash(1_000_000, 1_000_000) - 4.50) < 1e-9
 
 
 def test_usd_embed():
@@ -55,6 +55,6 @@ def test_usd_embed():
 
 
 def test_constantes_precios():
-    assert FLASH_USD_IN_PER_M == 0.50
-    assert FLASH_USD_OUT_PER_M == 3.00
+    assert FLASH_USD_IN_PER_M == 0.75
+    assert FLASH_USD_OUT_PER_M == 3.75
     assert EMBED_USD_PER_M == 0.0375
