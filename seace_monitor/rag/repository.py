@@ -199,18 +199,52 @@ def borrar_chunks_fuente(supa, ids: list[int], fuente: str) -> None:
         )
 
 
-def max_chunk_index(supa, contrato_id: int) -> int:
-    response = (
+def max_chunk_index(supa, contrato_id: int, *, excluir_fuente: str | None = None) -> int:
+    query = (
         supa.table("chunks_tdr")
         .select("chunk_index")
         .eq("contrato_id", contrato_id)
-        .order("chunk_index", desc=True)
+    )
+    if excluir_fuente:
+        query = query.neq("fuente", excluir_fuente)
+    response = (
+        query.order("chunk_index", desc=True)
         .limit(1)
         .execute()
     )
     if not response.data:
         return -1
     return int(response.data[0]["chunk_index"])
+
+
+def reemplazar_chunks_contrato(
+    supa,
+    contrato_id: int,
+    chunks: list[dict],
+    *,
+    fuente: str | None = None,
+) -> int:
+    """Reemplazo sin ventana de pérdida (FIX-003).
+
+    Upsert primero: las filas en conflicto se sobrescriben en el lugar. Después
+    se borran solo las filas ajenas al nuevo conjunto. Un fallo entre ambas
+    operaciones deja restos obsoletos, nunca corpus perdido; un fallo de
+    generación (``chunks`` vacío) no toca el corpus previo.
+    ``fuente=None`` limpia todas las fuentes fuera del nuevo conjunto.
+    """
+    if not chunks:
+        return 0
+    insert_lote(supa, chunks)
+    nuevos = sorted({int(ch["chunk_index"]) for ch in chunks})
+    query = (
+        supa.table("chunks_tdr")
+        .delete()
+        .eq("contrato_id", contrato_id)
+    )
+    if fuente:
+        query = query.eq("fuente", fuente)
+    query.not_.in_("chunk_index", nuevos).execute()
+    return len(chunks)
 
 
 def borrar_chunks_vigentes(supa, ids: list[int]) -> None:

@@ -36,13 +36,13 @@ from seace_monitor.rag.chunking import (
 )
 from seace_monitor.rag.repository import (
     borrar_chunks_fuente,
-    borrar_chunks_vigentes,
     cobertura_fuentes,
     ids_con_fuente_pdf,
     ids_ya_chunkeados,
     insert_lote,
     max_chunk_index,
     paginar,
+    reemplazar_chunks_contrato,
 )
 from seace_monitor.rag.service import (
     BATCH_INSERT,
@@ -135,10 +135,6 @@ def main():
         print("Nada que hacer.", flush=True)
         return
 
-    if args.rechunk:
-        borrar_chunks_vigentes(supa, [int(c["id"]) for c in pendientes])
-        print("  chunks previos de esos vigentes borrados", flush=True)
-
     t0 = time.time()
     buffer: list[dict] = []
     n_chunks = 0
@@ -152,6 +148,28 @@ def main():
         except Exception as e:
             print(f"  [error] contrato {c.get('id')}: {e}", flush=True)
             continue
+        if args.rechunk:
+            # Reemplazo por contrato: upsert + limpieza de restos. Un fallo
+            # no deja el contrato sin corpus (FIX-003).
+            try:
+                if reemplazar_chunks_contrato(supa, int(c["id"]), chs):
+                    n_chunks += len(chs)
+                    n_contratos += 1
+            except Exception as e:
+                print(f"  [error] reemplazo id={c.get('id')}: {e}", flush=True)
+                continue
+        else:
+            buffer.extend(chs)
+            n_chunks += len(chs)
+            n_contratos += 1
+            if len(buffer) >= BATCH_INSERT:
+                try:
+                    insert_lote(supa, buffer)
+                    print(f"  [{i}/{len(pendientes)}] insert {len(buffer)} chunks "
+                          f"(acum {n_chunks:,})", flush=True)
+                except Exception as e:
+                    print(f"  [error] upsert lote: {e}", flush=True)
+                buffer = []
         for ch in chs:
             tok = approx_tokens(ch["texto"])
             token_sum += tok
@@ -159,20 +177,8 @@ def main():
             if tipo_base.startswith("Ítem técnico"):
                 tipo_base = "Ítem técnico"
             dist[tipo_base] = dist.get(tipo_base, 0) + 1
-        buffer.extend(chs)
-        n_chunks += len(chs)
-        n_contratos += 1
 
-        if len(buffer) >= BATCH_INSERT:
-            try:
-                insert_lote(supa, buffer)
-                print(f"  [{i}/{len(pendientes)}] insert {len(buffer)} chunks "
-                      f"(acum {n_chunks:,})", flush=True)
-            except Exception as e:
-                print(f"  [error] upsert lote: {e}", flush=True)
-            buffer = []
-
-    if buffer:
+    if not args.rechunk and buffer:
         try:
             insert_lote(supa, buffer)
             print(f"  insert lote final {len(buffer)} chunks", flush=True)

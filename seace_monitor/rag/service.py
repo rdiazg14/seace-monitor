@@ -13,12 +13,11 @@ from seace_monitor.rag.chunking import (
     encabezado_pdf,
 )
 from seace_monitor.rag.repository import (
-    borrar_chunks_fuente,
     cobertura_fuentes,
     ids_con_fuente_pdf,
-    insert_lote,
     max_chunk_index,
     paginar,
+    reemplazar_chunks_contrato,
 )
 
 BATCH_INSERT = 200
@@ -78,17 +77,13 @@ def run_solo_pdf(
         print("Nada que hacer (sin tdr_texto / ya chunkeados pdf).", flush=True)
         return
 
-    ids = [int(c["id"]) for c in pendientes]
-    borrar_chunks_fuente(supa, ids, "pdf")
-    print("  chunks fuente=pdf previos de la muestra borrados", flush=True)
-
     t0 = time.time()
-    buffer: list[dict] = []
     n_chunks = 0
     n_contratos = 0
     for i, c in enumerate(pendientes, 1):
+        cid = int(c["id"])
         try:
-            offset = max_chunk_index(supa, int(c["id"])) + 1
+            offset = max_chunk_index(supa, cid, excluir_fuente="pdf") + 1
             chs = chunks_de_pdf(c, chunk_index_offset=offset)
         except Exception as e:
             print(f"  [error] contrato {c.get('id')}: {e}", flush=True)
@@ -96,13 +91,18 @@ def run_solo_pdf(
         if not chs:
             print(f"  [{i}] id={c.get('id')} sin chunks pdf", flush=True)
             continue
-        buffer.extend(chs)
+        try:
+            reemplazar_chunks_contrato(supa, cid, chs, fuente="pdf")
+        except Exception as e:
+            print(f"  [error] reemplazo chunks id={cid}: {e}", flush=True)
+            continue
         n_chunks += len(chs)
         n_contratos += 1
         chars = sum(len((ch.get("chunk_embed_text") or "")) for ch in chs)
+        # El evento se marca solo tras escritura real: no hay versión falsa.
         registrar_evento(
             supa,
-            int(c["id"]),
+            cid,
             "chunked",
             n_chunks_pdf=len(chs),
             chars_tdr=chars,
@@ -116,11 +116,6 @@ def run_solo_pdf(
                 f"header={encabezado_pdf(c)}",
                 flush=True,
             )
-        if len(buffer) >= BATCH_INSERT:
-            insert_lote(supa, buffer)
-            buffer = []
-    if buffer:
-        insert_lote(supa, buffer)
 
     elapsed = time.time() - t0
     print(f"\n{'='*60}", flush=True)
