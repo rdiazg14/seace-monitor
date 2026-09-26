@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from seace_monitor.documents.pdf_extraction import chars_utiles
+from seace_monitor.ocr.queue import aplanar_clasificacion
+
 PAGE_DB = 1_000
 COLS_EXTRACCION = (
     "tdr_tipo_extraccion",
@@ -70,6 +73,86 @@ def pendientes_pdf(supa, limit: int, modo: str = "todos") -> list[dict]:
             break
         offset += take
     return output[:limit]
+
+
+def contenedores_por_ids(supa, ids: list[int]) -> list[dict]:
+    """Obtiene contratos explícitos para el comando de contenedores."""
+    output: list[dict] = []
+    for index in range(0, len(ids), 80):
+        batch_ids = ids[index:index + 80]
+        response = (
+            supa.table("contratos")
+            .select(
+                "id,nro_contratacion,descripcion_contrato,entidad,"
+                "fecha_publica,pdf_descargado,req_url,tdr_texto,"
+                "clasificacion_contrato(categoria_it,relevancia_ia)"
+            )
+            .in_("id", batch_ids)
+            .execute()
+        )
+        output.extend(
+            aplanar_clasificacion(row) for row in (response.data or [])
+        )
+    return output
+
+
+def vigentes_ti_sin_tdr(supa, limit: int) -> list[dict]:
+    """Pagina contratos vigentes TI/IA que todavía no tienen TDR."""
+    output: list[dict] = []
+    offset = 0
+    while len(output) < limit:
+        take = min(PAGE_DB, limit - len(output))
+        response = (
+            supa.table("contratos")
+            .select(
+                "id,nro_contratacion,descripcion_contrato,entidad,"
+                "fecha_publica,pdf_descargado,req_url,tdr_texto,"
+                "clasificacion_contrato(categoria_it,relevancia_ia)"
+            )
+            .eq("estado", "Vigente")
+            .is_("tdr_texto", "null")
+            .order("id", desc=True)
+            .range(offset, offset + take - 1)
+            .execute()
+        )
+        batch = response.data or []
+        for row in batch:
+            aplanar_clasificacion(row)
+            if row.get("categoria_it") or row.get("relevancia_ia"):
+                output.append(row)
+        if len(batch) < take:
+            break
+        offset += take
+    return output[:limit]
+
+
+def guardar_texto_contenedor(
+    supa,
+    contrato_id: int,
+    texto: str,
+    meta: dict,
+    *,
+    min_chars_util: int,
+) -> None:
+    """Persiste el resultado documental de un contenedor procesable."""
+    supa.table("contratos").update({
+        "tdr_texto": texto or None,
+        "pdf_hash": meta.get("hash"),
+        "pdf_es_imagen": False,
+        "pdf_descargado": True,
+        "pdf_procesado": bool(
+            texto and chars_utiles(texto) >= min_chars_util
+        ),
+        "req_url": (meta.get("url") or "")[:2000],
+        "tdr_tipo_extraccion": meta.get("tipo_extraccion"),
+        "paginas_ocr_pendientes": [],
+        "paginas_ocr_hechas": [],
+        "tdr_n_paginas": None,
+        "tdr_n_paginas_nativas": None,
+        "tdr_n_paginas_ocr": None,
+        "pdf_archivo_id": meta.get("aid"),
+        "pdf_nombre": (meta.get("nombre") or "")[:500] or None,
+    }).eq("id", contrato_id).execute()
 
 
 def update_contrato(supa, cid: int, payload: dict) -> None:
