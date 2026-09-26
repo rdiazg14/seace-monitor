@@ -93,6 +93,7 @@ from seace_monitor.documents.reportes import (
     reporte_extraccion,
 )
 from seace_monitor.documents.postprocess import rechunk_embed_pdf as _rechunk_embed_pdf
+from seace_monitor.documents.batch import ejecutar_descarga_batch
 from seace_monitor.documents.service import (
     borrar_temp,
     procesar_contrato as procesar_documento,
@@ -515,253 +516,27 @@ def main() -> None:
         )
         return
 
-    if not args.dry_run and not columnas_extraccion_ok(supa):
-        print(
-            "  [warn] columnas de extracción ausentes; "
-            "se guarda tdr_texto + jsonl. Corre tdr_extraccion_meta.sql "
-            "y --sync-meta después.",
-            flush=True,
-        )
-    counts = conteo_pdf(supa)
     ids = parse_ids(args.ids)
-    if ids:
-        filas = contratos_por_ids(supa, ids)
-    else:
-        filas = pendientes_pdf(supa, args.limit, modo=modo_sel)
-
-    print("=" * 60, flush=True)
-    print("Fase 3 — PDF/TDR (listar + descargar, httpx)", flush=True)
-    print(
-        f"  modo={modo_sel}  dry-run={args.dry_run}  limit={args.limit}  "
-        f"ids={ids or '-'}  cola={len(filas)}  rpm={OCR_RPM or '-'}",
-        flush=True,
+    ejecutar_descarga_batch(
+        supa,
+        ids=ids,
+        limit=args.limit,
+        modo=modo_sel,
+        permitir_ocr=permitir_ocr,
+        dry_run=args.dry_run,
+        headed=args.headed,
+        compacto=compacto,
+        rpm=OCR_RPM,
+        delay_s=DELAY_S,
+        temp_prefix=TEMP_PREFIX,
+        listar_url=LISTAR_URL,
+        descargar_url=DESCARGAR_URL,
+        gemini_habilitado=bool(GEMINI_API_KEY),
+        procesar=procesar_contrato,
+        imprimir_linea=imprimir_linea,
+        imprimir_resultado=imprimir_resultado,
+        imprimir_sin_pdf=imprimir_sin_pdf,
     )
-    print(
-        f"  vigentes={counts['vigentes']}  "
-        f"pendientes={counts['pendientes']}  "
-        f"ya_ok={counts['ya_descargados']}  "
-        f"marcados_ocr={counts['pendiente_ocr']}",
-        flush=True,
-    )
-    print(f"  LISTAR_URL={LISTAR_URL}", flush=True)
-    print(f"  DESCARGAR_URL={DESCARGAR_URL}", flush=True)
-    print(f"  GEMINI_API_KEY set={bool(GEMINI_API_KEY)}  (OCR fallback)", flush=True)
-    print("=" * 60, flush=True)
-
-    if not filas:
-        print("Nada que hacer (cola vacia para este modo).", flush=True)
-        jl = reporte_jsonl()
-        print("\n--- PASO 1-bis jsonl ---", flush=True)
-        for k, v in jl.items():
-            print(f"  {k}={v}", flush=True)
-        extra = dict(jl)
-        if columnas_extraccion_ok(supa):
-            tipos = reporte_extraccion(supa)
-            print("\n--- PASO 1-bis vigentes BD ---", flush=True)
-            for k, v in tipos.items():
-                print(f"  {k}={v}", flush=True)
-            extra.update(tipos)
-        escribir_resumen(supa, {**counts, **extra, "ok": 0, "modo": modo_sel,
-                          "limit": args.limit, "dry_run": args.dry_run,
-                          "elapsed_s": 0})
-        return
-
-    ok = 0
-    n_puro = 0
-    n_mixto = 0
-    n_imagen = 0
-    ocr_paginas_total = 0
-    skip_ocr = 0
-    ocr_paginas_estimadas = 0
-    sin_pdf = 0
-    no_pdf = 0
-    reintentados = 0
-    err = 0
-    t0 = time.time()
-    leftovers_antes = {
-        p.name for p in Path(tempfile.gettempdir()).glob(f"{TEMP_PREFIX}*")
-    }
-
-    http = SeaceHttp(headed=args.headed)
-    try:
-        for i, c in enumerate(filas, 1):
-            cid = int(c["id"])
-            desc = (c.get("descripcion_contrato") or "")[:50]
-            if (c.get("req_url") or "") == "sin_pdf":
-                reintentados += 1
-            try:
-                row = procesar_contrato(
-                    http, c, permitir_ocr=permitir_ocr, supa=None if args.dry_run else supa
-                )
-                tipo = row.get("tdr_tipo_extraccion") or clasificar_tipo(
-                    int(row.get("n_paginas") or 0),
-                    list(row.get("ocr_paginas") or []),
-                )
-                n_ocr = int(row.get("n_paginas_ocr") or len(row.get("ocr_paginas") or []))
-                ocr_paginas_total += n_ocr
-                if tipo == "nativo_puro":
-                    n_puro += 1
-                    etiqueta = "NATIVO_PURO"
-                elif tipo == "mixto":
-                    n_mixto += 1
-                    etiqueta = "MIXTO"
-                else:
-                    n_imagen += 1
-                    etiqueta = "IMAGEN_TOTAL"
-                if compacto:
-                    imprimir_linea(
-                        i, len(filas), cid, etiqueta,
-                        f"pags={row.get('n_paginas')} "
-                        f"nat={row.get('n_paginas_nativas')} "
-                        f"ocr={n_ocr} chars={row.get('chars_final')} "
-                        f"acum_ocr={ocr_paginas_total}",
-                    )
-                else:
-                    imprimir_resultado(i, len(filas), c, row)
-                if not args.dry_run:
-                    guardar_ok(supa, row)
-                ok += 1
-            except NecesitaOcr as e:
-                skip_ocr += 1
-                n_est = len(e.meta.get("ocr_paginas") or [])
-                ocr_paginas_estimadas += n_est
-                imprimir_linea(
-                    i, len(filas), cid, "SKIP_OCR",
-                    f"pags={e.meta.get('n_paginas')} ocr_pags={n_est} "
-                    f"estim_acum={ocr_paginas_estimadas}",
-                )
-                if not args.dry_run:
-                    guardar_pendiente_ocr(supa, cid, e.meta)
-            except SinPdf as e:
-                sin_pdf += 1
-                if compacto:
-                    imprimir_linea(i, len(filas), cid, "SIN_PDF",
-                                   f"archivos={len(e.archivos)}")
-                else:
-                    imprimir_sin_pdf(i, len(filas), c, e.archivos)
-                if not args.dry_run:
-                    guardar_sin_pdf(supa, cid)
-                    registrar_rechazo(
-                        supa,
-                        payload_rechazo(
-                            c,
-                            MOTIVO_SIN_PDF,
-                            {"archivos": resumen_archivos(e.archivos)},
-                        ),
-                        MOTIVO_SIN_PDF,
-                        origen="pdf",
-                    )
-            except NoEsPdf as e:
-                # Habia anexo candidato a PDF y el binario no lo era. No
-                # reintentar (guardar_sin_pdf marca req_url='sin_pdf'), pero
-                # queda registrado con motivo distinto para poder contarlo.
-                no_pdf += 1
-                imprimir_linea(i, len(filas), cid, "NO_PDF", desc)
-                if not args.dry_run:
-                    guardar_sin_pdf(supa, cid)
-                    registrar_rechazo(
-                        supa,
-                        payload_rechazo(c, str(e)[:500]),
-                        MOTIVO_NO_PDF,
-                        origen="pdf",
-                    )
-            except PdfExtractError as e:
-                err += 1
-                imprimir_linea(i, len(filas), cid, f"FAIL ({e})", desc)
-                if not args.dry_run:
-                    persistir_storage_si_hay(supa, cid, e.meta or {})
-                    registrar_rechazo(
-                        supa,
-                        payload_rechazo(c, str(e)[:500], {
-                            "archivos": e.meta.get("archivos"),
-                            "pdf_nombre": e.meta.get("pdf_nombre"),
-                        }),
-                        str(e),
-                        origen="pdf",
-                    )
-            except Exception as e:
-                err += 1
-                imprimir_linea(i, len(filas), cid, f"FAIL {e}", desc)
-                if not args.dry_run:
-                    registrar_rechazo(
-                        supa,
-                        payload_rechazo(c, str(e)[:500]),
-                        str(e),
-                        origen="pdf",
-                    )
-            if i % 20 == 0:
-                elapsed = time.time() - t0
-                print(
-                    f"  -- progreso {i}/{len(filas)}  "
-                    f"puro={n_puro} mixto={n_mixto} imagen={n_imagen} "
-                    f"pags_ocr={ocr_paginas_total} sin_pdf={sin_pdf} "
-                    f"no_pdf={no_pdf} err={err} t={elapsed:.0f}s",
-                    flush=True,
-                )
-            time.sleep(DELAY_S)
-    finally:
-        http.close()
-
-    leftovers = [
-        p.name
-        for p in Path(tempfile.gettempdir()).glob(f"{TEMP_PREFIX}*")
-        if p.name not in leftovers_antes
-    ]
-    elapsed = time.time() - t0
-    counts_fin = conteo_pdf(supa)
-    tipos = reporte_extraccion(supa) if columnas_extraccion_ok(supa) else {}
-    print(f"\n{'='*60}", flush=True)
-    print(
-        f"Listo en {elapsed:.0f}s  ok={ok} "
-        f"nativo_puro={n_puro} mixto={n_mixto} imagen_total={n_imagen} "
-        f"pags_ocr_cola={ocr_paginas_total} "
-        f"sin_pdf={sin_pdf} no_pdf={no_pdf} reintentados={reintentados} "
-        f"err={err} dry-run={args.dry_run}",
-        flush=True,
-    )
-    print(
-        f"Vigentes={counts_fin['vigentes']}  "
-        f"pendientes={counts_fin['pendientes']}  "
-        f"marcados_ocr={counts_fin['pendiente_ocr']}  "
-        f"ya_ok={counts_fin['ya_descargados']}",
-        flush=True,
-    )
-    if tipos:
-        print("\n--- PASO 1-bis vigentes (BD) ---", flush=True)
-        print(f"  nativo_puro={tipos['nativo_puro']}", flush=True)
-        print(f"  mixto={tipos['mixto']}", flush=True)
-        print(f"  imagen_total={tipos['imagen_total']}", flush=True)
-        print(f"  paginas_ocr_reales={tipos['paginas_ocr_reales']}", flush=True)
-        print(f"  paginas_nativas={tipos['paginas_nativas']}", flush=True)
-        print(f"  paginas_totales={tipos['paginas_totales']}", flush=True)
-        print(f"  sin_pdf={tipos['sin_pdf']}", flush=True)
-        print(f"  pendiente_ocr_viejo={tipos['pendiente_ocr_viejo']}", flush=True)
-        print(f"  sin_tipo={tipos['sin_tipo']}", flush=True)
-    print(f"OCR_PAGINAS_REALES_COLA={ocr_paginas_total}", flush=True)
-    print(
-        f"Temps {TEMP_PREFIX}* residuales de esta corrida: "
-        f"{leftovers if leftovers else 'ninguno (borrados)'}",
-        flush=True,
-    )
-    print("=" * 60, flush=True)
-    escribir_resumen(supa, {
-        "modo": modo_sel,
-        "ok": ok,
-        "nativo_puro_cola": n_puro,
-        "mixto_cola": n_mixto,
-        "imagen_total_cola": n_imagen,
-        "ocr_paginas_cola": ocr_paginas_total,
-        "skip_ocr": skip_ocr,
-        "ocr_paginas_estimadas": ocr_paginas_estimadas,
-        "sin_pdf_cola": sin_pdf,
-        "err": err,
-        "limit": args.limit,
-        "dry_run": args.dry_run,
-        "elapsed_s": int(elapsed),
-        "temps_residuales": ",".join(leftovers),
-        **{f"fin_{k}": v for k, v in counts_fin.items()},
-        **{f"bd_{k}": v for k, v in tipos.items()},
-    })
 
 
 if __name__ == "__main__":
