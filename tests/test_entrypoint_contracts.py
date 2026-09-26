@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
         ("generar_embeddings.py", "--auth-check"),
         ("descargar_requerimiento.py", "--solo-ocr"),
         ("extraer_contenedores.py", "--dry-run"),
+        ("clasificar_gemini.py", "--proponer"),
     ],
 )
 def test_cli_historico_conserva_help(script: str, expected_option: str) -> None:
