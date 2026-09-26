@@ -10,7 +10,7 @@ import re
 import unicodedata
 from datetime import datetime, timezone
 
-from ingesta_completa import _norm
+from seace_monitor.clasificacion import _norm
 
 CATEGORIA_NINGUNA = "ninguna"
 

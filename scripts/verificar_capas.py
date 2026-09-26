@@ -22,7 +22,7 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
-from clasificacion_capa import conectar_pg  # noqa: E402
+from seace_monitor.classification.repository import conectar_pg  # noqa: E402
 from seace_monitor.config import cargar_env  # noqa: E402
 from seace_monitor.logging import PASO_CAPAS, registrar_run  # noqa: E402
 from seace_monitor.supabase_client import crear_cliente  # noqa: E402

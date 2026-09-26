@@ -21,8 +21,53 @@ C1 (preferido):
 """
 from __future__ import annotations
 
+from seace_monitor.classification.contracts import (
+    BLOQUE_CONFIANZA_P1,
+    CATEGORIA_NINGUNA,
+    CATEGORIAS_IT,
+    CONF_ENUM,
+    DEF_CATEGORIAS,
+    ENUM_CATEGORIA,
+    LINEA_P2_CIEGO,
+    RESPONSE_SCHEMA,
+    RESPONSE_SCHEMA_P1,
+    RESPONSE_SCHEMA_P2,
+    SYSTEM_PROMPT,
+    SYSTEM_PROMPT_JSON,
+    SYSTEM_PROMPT_P1,
+    SYSTEM_PROMPT_P2,
+    SYSTEM_PROMPT_REGLAS,
+)
+from seace_monitor.classification.gemini_provider import clasificar_lote_gemini
+from seace_monitor.classification.rules import (
+    _bruto_mas_largo_que,
+    _cortar_en_palabra,
+    _match_item_o_cubso,
+    _match_senal,
+    _parse_dt,
+    _texto_colapsado,
+    anexar_verificacion_p2,
+    aplicar_respuestas,
+    cubsos,
+    degradar_p1,
+    emparejar_lote,
+    items_cubso,
+    items_desc,
+    normalizar,
+    parse_array,
+    parse_p1_item,
+    parse_p2_item,
+    pasa_filtro,
+    recortar,
+    verificar_senal,
+    verificar_senal_p2,
+)
+from seace_monitor.classification.service import (
+    user_prompt as construir_user_prompt,
+    user_prompt_p2 as construir_user_prompt_p2,
+)
 from seace_monitor.config import cargar_env
-from seace_monitor.gemini import extract_gemini_text, fecha_lima
+from seace_monitor.gemini import fecha_lima
 
 import argparse
 import json
@@ -30,7 +75,6 @@ import os
 import random
 import sys
 import time
-import unicodedata
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -38,7 +82,7 @@ from pathlib import Path
 import httpx
 from seace_monitor.supabase_client import crear_cliente
 
-from clasificacion_capa import (
+from seace_monitor.classification.repository import (
     escribir_gemini,
     map_confianza,
 )
@@ -79,145 +123,6 @@ LEDGER_PATH = DATA_DIR / "clasificacion_rechazadas.json"
 COLA_PATH = DATA_DIR / "revisar_categoria.json"
 ARTEFACTO_MAX_DIAS = 7
 
-CATEGORIAS_IT = [
-    "Firma digital",
-    "IA/analytics",
-    "Ciberseguridad",
-    "Cloud/hosting",
-    "Microsoft",
-    "Oracle",
-    "Base de datos/ERP",
-    "Desarrollo software",
-    "Licencias",
-    "Soporte tecnico",
-    "Redes/cableado",
-    "Correo electronico",
-    "Hardware",
-]
-CATEGORIA_NINGUNA = "ninguna"
-ENUM_CATEGORIA = CATEGORIAS_IT + [CATEGORIA_NINGUNA]
-CONF_ENUM = ("alta", "media", "baja")
-
-RESPONSE_SCHEMA = {
-    "type": "array",
-    "items": {
-        "type": "object",
-        "properties": {
-            "id": {"type": "integer"},
-            "categoria": {"type": "string", "enum": ENUM_CATEGORIA},
-        },
-        "required": ["id", "categoria"],
-    },
-}
-
-RESPONSE_SCHEMA_P1 = {
-    "type": "array",
-    "items": {
-        "type": "object",
-        "properties": {
-            "id": {"type": "integer"},
-            "senal": {"type": "string"},
-            "categoria": {"type": "string", "enum": ENUM_CATEGORIA},
-            "confianza": {"type": "string", "enum": ["alta", "media", "baja"]},
-        },
-        "required": ["id", "senal", "categoria", "confianza"],
-        "propertyOrdering": ["id", "senal", "categoria", "confianza"],
-    },
-}
-
-RESPONSE_SCHEMA_P2 = {
-    "type": "array",
-    "items": {
-        "type": "object",
-        "properties": {
-            "id": {"type": "integer"},
-            "senal": {"type": "string"},
-            "categoria": {"type": "string", "enum": ENUM_CATEGORIA},
-        },
-        "required": ["id", "senal", "categoria"],
-        "propertyOrdering": ["id", "senal", "categoria"],
-    },
-}
-
-# Una linea por categoria, derivada de IT_CATS (ingesta_completa.py).
-DEF_CATEGORIAS = """\
-- Firma digital: firma digital, certificado digital/electronico, token criptografico.
-- IA/analytics: inteligencia artificial, LLM/GPT/Copilot, analytics, BI, big data, ML.
-- Ciberseguridad: ciberseguridad, seguridad informatica/de la informacion, firewall, pentest.
-- Cloud/hosting: infraestructura o plataforma en la nube contratada como servicio (IaaS/PaaS): servidor virtual, hosting, almacenamiento, capacidad de computo, servicios gestionados sobre AWS/Azure/GCP.
-- Microsoft: Microsoft 365, Office 365, SharePoint, Exchange, Windows Server.
-- Oracle: Oracle Database, Oracle EBS, PeopleSoft.
-- Base de datos/ERP: motores SQL, data warehouse, SAP, ERP.
-- Desarrollo software: creacion/implementacion de sistemas, aplicativos web o moviles, software a medida.
-- Licencias: derecho de uso de software de terceros, sea perpetuo, por suscripcion o entregado como servicio en la nube (SaaS). Si lo que se compra es el derecho de uso de un producto de un tercero (Autodesk, Adobe, SOTI, ArcGIS, Microsoft 365 y similares), es Licencias aunque se entregue en la nube y aunque el titulo diga "cloud" o "suscripcion".
-- Soporte tecnico: soporte tecnico, mantenimiento de software/sistemas, mesa de ayuda. Es sobre software, sistemas o infraestructura TI. El mantenimiento o reparacion FISICA de equipos de oficina (impresoras, fotocopiadoras, escaneres como aparato) NO es Soporte tecnico -> 'ninguna'.
-- Redes/cableado: red de datos, cableado estructurado, switch, router, wifi, fibra optica.
-- Correo electronico: correo o mensajeria electronica.
-- Hardware: compra de EQUIPOS de computo (PC, laptop, impresora, monitor, disco, RAM, scanner, UPS de datacenter). NO son Hardware: los consumibles y suministros de esos equipos (toner, cartuchos, tinta, cintas, papel, etiquetas, rollos, repuestos genericos) aunque el texto nombre el equipo que los usa; ni los equipos de reprografia de oficina (fotocopiadora, duplicadora, mimeografo, guillotina); ni electrodomesticos, estabilizadores de oficina o aire acondicionado. Todo eso -> 'ninguna'.
-- ninguna: el objeto NO es tecnologia de la informacion.
-"""
-
-SYSTEM_PROMPT_REGLAS = (
-    "Eres un clasificador de contratos publicos peruanos para una "
-    "empresa de TI (ENERTRONIC: IA, cloud, desarrollo de software, servicios TI). "
-    "Clasificas cada contrato en UNA de 13 categorias IT, o 'ninguna' si NO es "
-    "un contrato de tecnologia de la informacion.\n"
-    "REGLA CRITICA: clasifica por el OBJETO real del contrato (que se compra o "
-    "contrata), NO por el area que lo solicita. Un area de TI/Informatica que "
-    "compra aire acondicionado, mobiliario, estabilizadores o pide personal "
-    "administrativo NO es un contrato IT -> 'ninguna'. Un area no-TI que compra "
-    "desarrollo de software SI es IT.\n"
-    "Personal: locar o contratar a una persona (bachiller, ingeniero, locador, "
-    "practicante, 'servicio de un profesional') NO es Desarrollo software aunque "
-    "el titulo sea de sistemas/informatica. Desarrollo software es crear o "
-    "implementar un sistema/aplicativo/software, no alquilar un profesional.\n"
-    "Soporte tecnico es sobre software, sistemas o infraestructura TI. El "
-    "mantenimiento o reparacion FISICA de equipos de oficina (impresoras, "
-    "fotocopiadoras, escaneres como aparato) NO es Soporte tecnico -> 'ninguna'.\n"
-    "Hardware es SOLO compra de EQUIPOS de computo (PC, laptop, impresora, "
-    "monitor, disco, RAM, scanner, UPS de datacenter). NO son Hardware: los "
-    "consumibles y suministros de esos equipos (toner, cartuchos, tinta, "
-    "cintas, papel, etiquetas, rollos, repuestos genericos) aunque el texto "
-    "nombre el equipo que los usa; ni los equipos de reprografia de oficina "
-    "(fotocopiadora, duplicadora, mimeografo, guillotina); ni electrodomesticos, "
-    "estabilizadores de oficina o aire acondicionado. Todo eso -> 'ninguna'.\n"
-    "Frontera Licencias vs Cloud/hosting: si el objeto es el derecho de uso de un "
-    "producto de software de un tercero, es Licencias, aunque se entregue en la "
-    "nube. Cloud/hosting es solo cuando se contrata infraestructura o plataforma "
-    "(computo, almacenamiento, servidores, servicios gestionados).\n"
-    'La "senal" debe copiarse del texto de "descripcion", "objeto" o "item". El '
-    'campo "cubso" es la familia del catalogo estatal, no describe lo que se '
-    'compra: si la unica evidencia esta ahi, la confianza es "media" como maximo.\n'
-    "Definicion breve de cada categoria:\n"
-    f"{DEF_CATEGORIAS}"
-    "Ante la duda entre una categoria IT y 'ninguna', prefiere 'ninguna' si el "
-    "objeto no es claramente tecnologia (mejor no clasificar que clasificar mal).\n"
-)
-
-SYSTEM_PROMPT_JSON = (
-    "Responde solo el JSON array del schema, un objeto por contrato de entrada."
-)
-
-BLOQUE_CONFIANZA_P1 = (
-    "Por cada contrato devuelve tambien:\n"
-    '- "senal": las palabras LITERALES del texto del contrato (descripcion, objeto o '
-    "item) que justifican la categoria, copiadas tal cual, maximo 60 caracteres. "
-    "No inventes ni parafrasees. Si no podes copiar palabras del texto que "
-    'justifiquen la categoria, la confianza es "baja".\n'
-    '- "confianza": "alta" si el texto nombra explicitamente el producto o servicio '
-    'de la categoria; "media" si se infiere del contexto pero no esta nombrado; '
-    '"baja" si podria ser otra categoria o \'ninguna\'.\n'
-    'Para \'ninguna\' usa siempre confianza "alta" y senal "".\n'
-)
-
-LINEA_P2_CIEGO = (
-    "Clasificas solo por el objeto del contrato. No tenes informacion de la entidad "
-    "ni del area solicitante y no debes suponerla.\n"
-)
-
-SYSTEM_PROMPT = SYSTEM_PROMPT_REGLAS + SYSTEM_PROMPT_JSON
-SYSTEM_PROMPT_P1 = SYSTEM_PROMPT_REGLAS + BLOQUE_CONFIANZA_P1 + SYSTEM_PROMPT_JSON
-SYSTEM_PROMPT_P2 = SYSTEM_PROMPT_REGLAS + LINEA_P2_CIEGO + SYSTEM_PROMPT_JSON
 
 COLS = (
     "id,descripcion,descripcion_contrato,objeto,entidad,"
@@ -383,248 +288,11 @@ def init_supabase():
         return None
 
 
-def _parse_dt(raw) -> datetime | None:
-    if not raw:
-        return None
-    try:
-        dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt
-
-
-def pasa_filtro(
-    row: dict,
-    filtro: str,
-    now: datetime,
-    *,
-    incluir_ventana_cerrada: bool = False,
-) -> bool:
-    est = row.get("estado") or ""
-    # Clasificar cuesta ~200 tokens por contrato; el filtro de ventana existe
-    # para el OCR (Flash sobre PDF), no para esto. Con 27% de ventanas bajo
-    # 24 h (B12), la etiqueta tiene que existir ANTES de que la ventana abra.
-    # Ademas fecha_fin_cotizacion esta bajo sospecha de corrimiento horario (B21).
-    if incluir_ventana_cerrada:
-        vigente_ok = est == "Vigente"
-    else:
-        fin = _parse_dt(row.get("fecha_fin_cotizacion"))
-        vigente_ok = est == "Vigente" and (fin is None or fin >= now)
-    if filtro == "todos":
-        return True
-    if filtro == "vigentes":
-        return vigente_ok
-    if filtro == "evaluacion":
-        return vigente_ok or est == "En Evaluacion" or est == "En Evaluación"
-    return False
-
-
-def cubsos(row: dict) -> str:
-    items = row.get("items_json") or []
-    if not isinstance(items, list):
-        return ""
-    names: list[str] = []
-    for it in items[:8]:
-        if not isinstance(it, dict):
-            continue
-        n = (it.get("nom_cubso") or it.get("descripcion") or "").strip()
-        if n:
-            names.append(_cortar_en_palabra(_texto_colapsado(n), 80))
-    return "; ".join(names)
-
-
 # nom_cubso es la familia del catalogo estatal bajo la que se compra; nombra
 # el equipo aunque se compre el consumible. La descripcion del item es lo que
 # realmente se adquiere. cubsos() prefiere nom_cubso y por eso TAPA la
 # descripcion del item (caso 90386: nom_cubso "PROCESADOR DE PUERTA DE ENLACE
 # DE VIGILANCIA..." ocultando "CPU P/AUTOMATA 63E/S").
-def items_desc(row: dict) -> str:
-    items = row.get("items_json") or []
-    if not isinstance(items, list):
-        return ""
-    names: list[str] = []
-    for it in items[:8]:
-        if not isinstance(it, dict):
-            continue
-        n = (it.get("descripcion") or "").strip()
-        if n:
-            # Mismo criterio que recortar(): el n[:80] a mitad de palabra
-            # era la senal que copiaba el modelo (31971 "servidor de
-            # redunda", 18971 "Cableado Estructurad").
-            names.append(_cortar_en_palabra(_texto_colapsado(n), 80))
-    return "; ".join(names)
-
-
-def items_cubso(row: dict) -> str:
-    items = row.get("items_json") or []
-    if not isinstance(items, list):
-        return ""
-    names: list[str] = []
-    for it in items[:8]:
-        if not isinstance(it, dict):
-            continue
-        n = (it.get("nom_cubso") or "").strip()
-        if n:
-            names.append(_cortar_en_palabra(_texto_colapsado(n), 80))
-    return "; ".join(names)
-
-
-def _texto_colapsado(s) -> str:
-    return " ".join(str(s or "").split())
-
-
-def _cortar_en_palabra(t: str, n: int) -> str:
-    """Corta t (ya colapsado) a n chars. Si el corte cae a mitad de
-    palabra, retrocede al ultimo espacio; si no hay espacio, corta
-    como hoy (t[:n-1]). Lo usa recortar() y el recorte de 80 por item."""
-    if len(t) <= n:
-        return t
-    limite = n - 1
-    frag = t[:limite]
-    if limite < len(t) and not t[limite].isspace():
-        sp = frag.rfind(" ")
-        if sp != -1:
-            frag = frag[:sp]
-    return frag
-
-
-def recortar(s, n: int = 220) -> str:
-    t = _texto_colapsado(s)
-    if len(t) <= n:
-        return t
-    # El modelo copia la senal del texto recortado; un corte a mitad de
-    # palabra genera senales que la verificacion rechaza (31971 "servidor
-    # de redunda", 18971 "Cableado Estructurad").
-    return _cortar_en_palabra(t, n) + "..."
-
-
-def _bruto_mas_largo_que(bruto, n: int) -> bool:
-    return len(" ".join(str(bruto or "").split())) > n
-
-
-def _match_senal(ns: str, texto_recortado: str, *, truncado: bool) -> bool:
-    """True si ns esta en el texto y no pega contra un recorte (ultimos 5)."""
-    nt = normalizar(texto_recortado)
-    idx = nt.find(ns)
-    if idx < 0:
-        return False
-    if truncado and (idx + len(ns)) > len(nt) - 5:
-        return False
-    return True
-
-
-def _match_item_o_cubso(ns: str, row: dict, key: str, joined: str) -> bool:
-    rec = recortar(joined, 240)
-    if ns not in normalizar(rec):
-        return False
-    items = row.get("items_json") or []
-    if isinstance(items, list):
-        any_hit = False
-        valid = False
-        for it in items[:8]:
-            if not isinstance(it, dict):
-                continue
-            raw = (it.get(key) or "").strip()
-            piece = _cortar_en_palabra(_texto_colapsado(raw), 80)
-            nt = normalizar(piece)
-            idx = nt.find(ns)
-            if idx < 0:
-                continue
-            any_hit = True
-            if _bruto_mas_largo_que(raw, 80) and (idx + len(ns)) > len(nt) - 5:
-                continue
-            valid = True
-            break
-        if any_hit and not valid:
-            return False
-    return _match_senal(
-        ns, rec, truncado=_bruto_mas_largo_que(joined, 240),
-    )
-
-
-def normalizar(s: str) -> str:
-    t = unicodedata.normalize("NFKD", str(s or ""))
-    t = "".join(ch for ch in t if not unicodedata.combining(ch))
-    t = t.lower()
-    t = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in t)
-    return " ".join(t.split()).strip()
-
-
-def verificar_senal(senal: str, row: dict) -> tuple[bool, str]:
-    """Devuelve (verificada, fuente). fuente in
-    'descripcion'|'objeto'|'item'|'cubso'|'ninguna'."""
-    ns = normalizar(senal)
-    if len(ns) < 4:
-        return False, "ninguna"
-    desc = row.get("descripcion")
-    obj = row.get("objeto")
-    item_j = items_desc(row)
-    cubso_j = items_cubso(row)
-    if _match_senal(
-        ns, recortar(desc, 400), truncado=_bruto_mas_largo_que(desc, 400),
-    ):
-        return True, "descripcion"
-    if _match_senal(
-        ns, recortar(obj, 80), truncado=_bruto_mas_largo_que(obj, 80),
-    ):
-        return True, "objeto"
-    if _match_item_o_cubso(ns, row, "descripcion", item_j):
-        return True, "item"
-    if _match_item_o_cubso(ns, row, "nom_cubso", cubso_j):
-        return True, "cubso"
-    return False, "ninguna"
-
-
-def verificar_senal_p2(senal: str, row: dict) -> tuple[bool, str]:
-    """Igual que verificar_senal pero sin cubso: P2 no vio ese campo."""
-    ns = normalizar(senal)
-    if len(ns) < 4:
-        return False, "ninguna"
-    desc = row.get("descripcion")
-    obj = row.get("objeto")
-    item_j = items_desc(row)
-    if _match_senal(
-        ns, recortar(desc, 400), truncado=_bruto_mas_largo_que(desc, 400),
-    ):
-        return True, "descripcion"
-    if _match_senal(
-        ns, recortar(obj, 80), truncado=_bruto_mas_largo_que(obj, 80),
-    ):
-        return True, "objeto"
-    if _match_item_o_cubso(ns, row, "descripcion", item_j):
-        return True, "item"
-    return False, "ninguna"
-
-
-def degradar_p1(p: dict, row: dict) -> None:
-    """Post-proceso P1: verifica senal y degrada confianza. Mutates p."""
-    p["confianza_original"] = p["confianza"]
-    if p["categoria"] == CATEGORIA_NINGUNA:
-        p["senal_verificada"] = True
-        p["senal_fuente"] = "ninguna"
-        return
-    ok, fuente = verificar_senal(p.get("senal") or "", row)
-    p["senal_verificada"] = ok
-    p["senal_fuente"] = fuente
-    # CUBSO es la familia de catalogo bajo la que se compra, no el objeto
-    # del contrato. Nombra el equipo aunque se compre el consumible. No es
-    # evidencia suficiente para escribir directo.
-    if not ok:
-        p["confianza"] = "baja"
-    if fuente == "cubso" and p["confianza"] == "alta":
-        p["confianza"] = "media"
-
-
-def anexar_verificacion_p2(p: dict, row: dict) -> None:
-    if p["categoria"] == CATEGORIA_NINGUNA:
-        p["senal_verificada"] = True
-        p["senal_fuente"] = "ninguna"
-        return
-    ok, fuente = verificar_senal_p2(p.get("senal") or "", row)
-    p["senal_verificada"] = ok
-    p["senal_fuente"] = fuente
 
 
 def paginar_nulls(
@@ -670,56 +338,15 @@ def paginar_nulls(
     return out[:limit] if limit else out
 
 
-def parse_array(text: str) -> list[dict]:
-    s = text.strip().replace("```json", "").replace("```", "").strip()
-    raw = json.loads(s)
-    if isinstance(raw, dict):
-        for v in raw.values():
-            if isinstance(v, list):
-                raw = v
-                break
-    if not isinstance(raw, list):
-        raise RuntimeError(f"gemini no devolvio array (type={type(raw).__name__})")
-    return raw
-
-
 def user_prompt(lote: list[dict]) -> str:
-    lineas = [
-        "Clasifica estos contratos. Devuelve un JSON array con un objeto "
-        "{id, categoria} por cada id de entrada.",
-        "",
-    ]
-    for i, row in enumerate(lote, 1):
-        lineas.append(f"{i}. id={row['id']}")
-        lineas.append(f"   descripcion: {recortar(row.get('descripcion'), 400)}")
-        lineas.append(f"   objeto: {recortar(row.get('objeto'), 80)}")
-        lineas.append(f"   item: {recortar(items_desc(row), 240)}")
-        lineas.append(f"   cubso: {recortar(items_cubso(row), 240)}")
-        lineas.append(f"   entidad: {recortar(row.get('entidad'), 120)}")
-        lineas.append(f"   area_usuaria: {recortar(row.get('nom_area_usuaria'), 160)}")
-        lineas.append("")
-    return "\n".join(lineas)
+    return construir_user_prompt(lote)
 
 
 _PISTAS_P2 = ""
 
 
 def user_prompt_p2(lote: list[dict]) -> str:
-    lineas = [
-        "Clasifica estos contratos. Devuelve un JSON array con un objeto "
-        "{id, senal, categoria} por cada id de entrada.",
-        "",
-    ]
-    for i, row in enumerate(lote, 1):
-        lineas.append(f"{i}. id={row['id']}")
-        lineas.append(f"   descripcion: {recortar(row.get('descripcion'), 400)}")
-        lineas.append(f"   objeto: {recortar(row.get('objeto'), 80)}")
-        lineas.append(f"   item: {recortar(items_desc(row), 240)}")
-        lineas.append("")
-    if _PISTAS_P2:
-        lineas.append(_PISTAS_P2)
-        lineas.append("")
-    return "\n".join(lineas)
+    return construir_user_prompt_p2(lote, pistas=_PISTAS_P2)
 
 
 def clasificar_lote(
@@ -732,156 +359,28 @@ def clasificar_lote(
     supa=None,
 ) -> list[dict]:
     sys_p = SYSTEM_PROMPT if system_prompt is None else system_prompt
-    sch = RESPONSE_SCHEMA if schema is None else schema
-    fn = user_prompt if armar_prompt is None else armar_prompt
-    payload = {
-        "system_instruction": {"parts": [{"text": sys_p}]},
-        "contents": [{"role": "user", "parts": [{"text": fn(lote)}]}],
-        "generationConfig": {
-            "responseMimeType": "application/json",
-            "responseSchema": sch,
-            "thinkingConfig": {"thinkingLevel": "LOW"},
-            "temperature": 0,
-            "maxOutputTokens": 8192,
-        },
-    }
-    waits = [0.0] + list(GEMINI_BACKOFF)
-    last_err: Exception | None = None
-    for attempt, wait in enumerate(waits):
-        if wait:
-            print(f"    [gemini backoff {wait:.0f}s attempt={attempt}]", flush=True)
-            time.sleep(wait)
-        try:
-            assert_cuota_c4(supa)
-            r = client.post(
-                GEMINI_URL,
-                headers={
-                    "Content-Type": "application/json",
-                    "x-goog-api-key": GEMINI_API_KEY,
-                },
-                json=payload,
-                timeout=TIMEOUT_S,
-            )
-            if r.status_code == 429:
-                last_err = RuntimeError(f"429 {r.text[:200]}")
-                retry_after = r.headers.get("Retry-After")
-                if retry_after:
-                    try:
-                        extra = min(float(retry_after), 120.0)
-                        print(f"    [429 Retry-After {extra:.0f}s]", flush=True)
-                        time.sleep(extra)
-                    except ValueError:
-                        pass
-                continue
-            r.raise_for_status()
-            body = r.json()
-            acumular_tokens(body)
-            registrar_llamada_c4(supa, body)
-            text = extract_gemini_text(body)
-            if not text:
-                raise RuntimeError("gemini vacio")
-            return parse_array(text)
-        except CupoClasificacion:
-            raise
-        except httpx.HTTPStatusError as e:
-            last_err = e
-            code = e.response.status_code if e.response is not None else 0
-            if e.response is not None and e.response.status_code in (429, 500, 503):
-                print(f"    [retry {attempt}] HTTP {code}", flush=True)
-                continue
-            raise
-        except Exception as e:
-            last_err = e
-            print(f"    [retry {attempt}] {e}", flush=True)
-    raise RuntimeError(f"clasificar_lote fallo: {last_err}")
+    response_schema = RESPONSE_SCHEMA if schema is None else schema
+    prompt_builder = user_prompt if armar_prompt is None else armar_prompt
 
+    def on_success(body: dict) -> None:
+        acumular_tokens(body)
+        registrar_llamada_c4(supa, body)
 
-def aplicar_respuestas(
-    lote: list[dict],
-    raw: list[dict],
-) -> list[tuple[dict, str]]:
-    """(row, categoria_enum) incluyendo 'ninguna'. Ignora ids ajenos."""
-    by_id = {int(r["id"]): r for r in lote}
-    vistos: set[int] = set()
-    out: list[tuple[dict, str]] = []
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        try:
-            cid = int(item.get("id"))
-        except (TypeError, ValueError):
-            continue
-        if cid not in by_id or cid in vistos:
-            continue
-        cat = str(item.get("categoria") or "").strip()
-        if cat not in ENUM_CATEGORIA:
-            print(f"    [aviso] id={cid} categoria fuera de enum: {cat!r} -> ninguna",
-                  flush=True)
-            cat = CATEGORIA_NINGUNA
-        vistos.add(cid)
-        out.append((by_id[cid], cat))
-    for cid, row in by_id.items():
-        if cid not in vistos:
-            print(f"    [aviso] id={cid} ausente en respuesta Gemini -> ninguna",
-                  flush=True)
-            out.append((row, CATEGORIA_NINGUNA))
-    return out
-
-
-def emparejar_lote(
-    lote: list[dict],
-    raw: list[dict],
-) -> tuple[dict[int, dict], list[int]]:
-    """Ids del lote vs respuesta. No rellena ausentes con ninguna."""
-    enviados = {int(r["id"]) for r in lote}
-    vistos: set[int] = set()
-    matched: dict[int, dict] = {}
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        try:
-            cid = int(item.get("id"))
-        except (TypeError, ValueError):
-            continue
-        if cid not in enviados:
-            print(f"    [aviso] id={cid} fuera del lote", flush=True)
-            continue
-        if cid in vistos:
-            print(
-                f"    [aviso] id={cid} duplicado en respuesta, se descarta el segundo",
-                flush=True,
-            )
-            continue
-        vistos.add(cid)
-        matched[cid] = item
-    missing = [int(r["id"]) for r in lote if int(r["id"]) not in vistos]
-    for cid in missing:
-        print(f"    [aviso] id={cid} ausente en respuesta Gemini -> sin_respuesta",
-              flush=True)
-    return matched, missing
-
-
-def parse_p1_item(item: dict) -> dict | None:
-    cat = str(item.get("categoria") or "").strip()
-    if cat not in ENUM_CATEGORIA:
-        return None
-    senal = str(item.get("senal") or "")[:60]
-    if cat == CATEGORIA_NINGUNA:
-        return {"categoria": cat, "confianza": "alta", "senal": ""}
-    conf = str(item.get("confianza") or "").strip().lower()
-    if conf not in CONF_ENUM:
-        conf = "baja"
-    return {"categoria": cat, "confianza": conf, "senal": senal}
-
-
-def parse_p2_item(item: dict) -> dict | None:
-    cat = str(item.get("categoria") or "").strip()
-    if cat not in ENUM_CATEGORIA:
-        return None
-    senal = str(item.get("senal") or "")[:60]
-    if cat == CATEGORIA_NINGUNA:
-        senal = ""
-    return {"categoria": cat, "senal": senal}
+    return clasificar_lote_gemini(
+        client,
+        lote,
+        system_prompt=sys_p,
+        schema=response_schema,
+        armar_prompt=prompt_builder,
+        api_key=GEMINI_API_KEY,
+        url=GEMINI_URL,
+        parse_response=parse_array,
+        before_call=lambda: assert_cuota_c4(supa),
+        on_success=on_success,
+        quota_error_types=(CupoClasificacion,),
+        backoff=GEMINI_BACKOFF,
+        timeout=TIMEOUT_S,
+    )
 
 
 def flush_upsert(supa, lote: list[dict]) -> None:

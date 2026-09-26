@@ -106,7 +106,7 @@ from pathlib import Path
 import httpx
 from seace_monitor.supabase_client import crear_cliente
 
-from ingesta_completa import registrar_rechazo
+from seace_monitor.ingestion.repository import registrar_rechazo
 from pipeline_log import PASO_OCR, PASO_PDF, registrar_run
 
 cargar_env()

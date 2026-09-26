@@ -58,7 +58,7 @@ from descargar_requerimiento import (
     resumen_archivos,
     usd_de_tokens,
 )
-from ingesta_completa import registrar_rechazo
+from seace_monitor.ingestion.repository import registrar_rechazo
 from seace_monitor.logging import PASO_CONTENEDORES, registrar_evento, registrar_run
 
 # ── Cargar .env ────────────────────────────────────────────────────────────────

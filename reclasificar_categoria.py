@@ -28,9 +28,9 @@ from pathlib import Path
 
 from seace_monitor.supabase_client import crear_cliente
 
-from clasificacion_capa import anunciar_backend_capa3, escribir_keyword
-from ingesta_completa import (
-    cargar_keywords,
+from seace_monitor.classification.keywords import cargar_keywords
+from seace_monitor.classification.repository import anunciar_backend_capa3, escribir_keyword
+from seace_monitor.clasificacion import (
     clasificar_categoria_it,
     clasificar_relevancia_ia,
 )

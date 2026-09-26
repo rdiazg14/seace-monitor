@@ -11,7 +11,7 @@ from psycopg.rows import dict_row
 
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
-from clasificacion_capa import diff_clasificacion_contratos  # noqa: E402
+from seace_monitor.classification.repository import diff_clasificacion_contratos  # noqa: E402
 
 env = _ROOT / ".env"
 for line in env.read_text(encoding="utf-8").splitlines():

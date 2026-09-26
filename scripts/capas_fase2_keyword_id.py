@@ -26,7 +26,7 @@ from backfill_categoria import (  # noqa: E402
     _fila_api,
     _match_kw,
 )
-from ingesta_completa import _texto_contrato  # noqa: E402
+from seace_monitor.clasificacion import _texto_contrato  # noqa: E402
 
 _ENV = _ROOT / ".env"
 

@@ -29,8 +29,8 @@ from psycopg.rows import dict_row
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
-from ingesta_completa import _contiene, _norm, _texto_contrato  # noqa: E402
-from clasificacion_capa import (  # noqa: E402
+from seace_monitor.clasificacion import _contiene, _norm, _texto_contrato  # noqa: E402
+from seace_monitor.classification.repository import (  # noqa: E402
     diff_clasificacion_contratos,
     upsert_keyword,
 )

@@ -17,21 +17,34 @@ Salidas:
 from __future__ import annotations
 
 from seace_monitor.config import cargar_env
-from seace_monitor.db import connect
+from seace_monitor.classification.keywords import cargar_keywords
+from seace_monitor.ingestion.models import (
+    RegistroSeace,
+    filtrar_validos as validar_registros_seace,
+    id_contrato_de as _id_contrato_de,
+    payload_solo_datos,
+)
+from seace_monitor.ingestion.repository import (
+    COLS_CONTRATOS as _COLS_CONTRATOS,
+    get_max_id as obtener_max_id,
+    registrar_rechazo,
+    upsert_contratos_pg,
+    upsert_lote as persistir_lote,
+    upsert_supabase as persistir_supabase,
+)
+from seace_monitor.ingestion.service import preparar_fila_db as transformar_fila_db
 
 import argparse
 import json
 import os
-import re
 import sys
 import time
-import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
 from playwright.sync_api import sync_playwright
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+from pydantic import ValidationError
 
 from seace_monitor.logging import PASO_INGESTA, registrar_run
 from seace_monitor.clasificacion import (
@@ -65,90 +78,6 @@ SUPABASE_URL         = os.getenv("SUPABASE_URL", "")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
 
 
-def cargar_keywords(supa) -> list[tuple[str, list[dict]]] | None:
-    """Carga it_keywords activas. None si no hay cliente, SELECT falla o tabla vacía.
-
-    Retorno: [(categoria, [{keyword, tipo, limite_palabra, tolera_plural}, ...]), ...]
-    en orden de prioridad. No explota: el caller hace fallback a IT_CATS.
-    """
-    if not supa:
-        return None
-    try:
-        res = (
-            supa.table("it_keywords")
-            .select("id,categoria,keyword,tipo,limite_palabra,prioridad,tolera_plural")
-            .eq("activa", True)
-            .order("prioridad")
-            .order("id")
-            .limit(5000)
-            .execute()
-        )
-    except Exception as e:
-        print(f"[keywords] SELECT it_keywords fallo: {e}", flush=True)
-        return None
-    filas = res.data or []
-    if not filas:
-        return None
-    grupos: dict[str, list[dict]] = {}
-    for f in filas:
-        cat = f["categoria"]
-        grupos.setdefault(cat, []).append({
-            "keyword": f["keyword"],
-            "tipo": f.get("tipo") or "incluye",
-            "limite_palabra": bool(f.get("limite_palabra")),
-            "tolera_plural": bool(f.get("tolera_plural")),
-        })
-    return list(grupos.items())
-
-
-class RegistroSeace(BaseModel):
-    """Campos que la ingesta necesita. Extra se permite (la API manda más)."""
-    model_config = ConfigDict(extra="allow")
-
-    idContrato: int
-    nroContratacion: int | str | None = None
-    desContratacion: str | None = None
-    nomObjetoContrato: str | None = None
-    desObjetoContrato: str | None = None
-    nomEntidad: str | None = None
-    nomEstadoContrato: str | None = None
-    fecPublica: str | None = None
-    fecIniCotizacion: str | None = None
-    fecFinCotizacion: str | None = None
-    idTipoCotizacion: int | str | None = None
-    cotizar: bool | None = None
-
-    @field_validator("idContrato")
-    @classmethod
-    def id_positivo(cls, v: int) -> int:
-        if v <= 0:
-            raise ValueError("idContrato debe ser > 0")
-        return v
-
-    @field_validator(
-        "desContratacion", "nomObjetoContrato", "desObjetoContrato",
-        "nomEntidad", "nomEstadoContrato",
-        "fecPublica", "fecIniCotizacion", "fecFinCotizacion",
-        mode="before",
-    )
-    @classmethod
-    def vacio_a_none(cls, v):
-        if v is None:
-            return None
-        if isinstance(v, (dict, list)):
-            raise ValueError("se esperaba texto, llegó estructura")
-        s = str(v).strip()
-        return s or None
-
-
-def _id_contrato_de(payload: dict) -> int | None:
-    try:
-        n = int(payload.get("idContrato"))
-        return n if n > 0 else None
-    except (TypeError, ValueError):
-        return None
-
-
 # Nunca persistir contexto de sesión Playwright / HTTP.
 _KEYS_SESION = {
     "cookie", "cookies", "authorization", "token", "access_token",
@@ -158,89 +87,19 @@ _KEYS_SESION = {
 }
 
 
-def payload_solo_datos(registro: dict) -> dict:
-    """Copia el registro de la API. Sin cookies, headers ni tokens."""
-    out: dict = {}
-    for k, v in registro.items():
-        lk = str(k).lower()
-        if lk in _KEYS_SESION or "cookie" in lk or "token" in lk:
-            continue
-        if lk.startswith("authorization") or lk.startswith("x-"):
-            continue
-        out[k] = v
-    return out
-
-
-def registrar_rechazo(
-    client,
-    payload: dict,
-    motivo: str,
-    origen: str = "ingesta",
-) -> None:
-    if client is None:
-        print(f"  [rechazo] (sin supabase) {motivo[:180]}", flush=True)
-        return
-    datos = payload_solo_datos(payload) if isinstance(payload, dict) else {"_raw": str(payload)[:2000]}
-    fila = {
-        "id_contrato": _id_contrato_de(datos),
-        "origen": origen,
-        "motivo": (motivo or "invalido")[:2000],
-        "payload": datos,
-        "resuelto": False,
-    }
-    try:
-        client.table("ingesta_rechazados").insert(fila).execute()
-    except Exception as e:
-        print(
-            f"  [rechazo] no persistido ({e}). "
-            f"El registro NO entra a contratos. "
-            f"Si falta la tabla, ejecuta ingesta_rechazados.sql",
-            flush=True,
-        )
-
-
 def filtrar_validos(raw: list[dict], client) -> tuple[list[dict], int]:
-    """Devuelve (aceptados, n_rechazados). Los inválidos van a ingesta_rechazados."""
-    ok: list[dict] = []
-    n_rech = 0
-    for r in raw:
-        if not isinstance(r, dict):
-            n_rech += 1
-            registrar_rechazo(client, {"_raw": r}, "registro no es un objeto JSON")
-            continue
-        try:
-            RegistroSeace.model_validate(r)
-            ok.append(r)
-        except ValidationError as e:
-            n_rech += 1
-            registrar_rechazo(client, r, str(e))
-    return ok, n_rech
+    return validar_registros_seace(
+        raw,
+        lambda payload, motivo: registrar_rechazo(client, payload, motivo),
+    )
 
 
 def preparar_fila_db(
     r: dict,
     cats: list[tuple[str, list[dict]]] | None = None,
 ) -> dict:
-    """Convierte un registro API SEACE → hechos de contratos (sin inferencia).
-
-    categoria_it / relevancia_ia viven en clasificacion_contrato (capa 3).
-    El argumento cats se ignora aqui; la clasificacion se calcula aparte.
-    """
-    del cats  # la inferencia no entra en el upsert de contratos
-    return {
-        "id":                   r["idContrato"],
-        "nro_contratacion":     str(r.get("nroContratacion", "")),
-        "descripcion_contrato": r.get("desContratacion"),
-        "objeto":               r.get("nomObjetoContrato"),
-        "descripcion":          r.get("desObjetoContrato"),
-        "entidad":              r.get("nomEntidad"),
-        "estado":               r.get("nomEstadoContrato"),
-        "fecha_publica":        parsear_fecha(r.get("fecPublica")),
-        "fecha_ini_cotizacion": parsear_fecha(r.get("fecIniCotizacion")),
-        "fecha_fin_cotizacion": parsear_fecha(r.get("fecFinCotizacion")),
-        "tipo_cotizacion":      str(r.get("idTipoCotizacion", "")),
-        "cotizar":              bool(r.get("cotizar", False)),
-    }
+    del cats
+    return transformar_fila_db(r)
 
 
 def escribir_clasificacion_keyword(
@@ -251,7 +110,7 @@ def escribir_clasificacion_keyword(
     """Tras el upsert de contratos: capa=keyword. Eco copia a contratos."""
     if not filas_cls:
         return 0, 0
-    from clasificacion_capa import escribir_keyword
+    from seace_monitor.classification.repository import escribir_keyword
 
     return escribir_keyword(filas_cls, artefacto="ingesta", supa=supa)
 
@@ -276,83 +135,15 @@ def init_supabase():
 
 
 def get_max_id_supabase(client) -> int:
-    try:
-        res = (
-            client.table("contratos")
-            .select("id")
-            .order("id", desc=True)
-            .limit(1)
-            .execute()
-        )
-        if res.data:
-            return int(res.data[0]["id"])
-    except Exception as e:
-        print(f"  [supabase] no se pudo obtener MAX(id): {e}")
-    return 0
+    return obtener_max_id(client)
 
 
 def _upsert_lote(client, lote: list[dict], reintentos: int = 3):
-    for i in range(reintentos):
-        try:
-            client.table("contratos").upsert(lote, on_conflict="id").execute()
-            return
-        except Exception as e:
-            if i < reintentos - 1:
-                espera = 2 ** (i + 1)
-                print(f"  [retry {i+1}/{reintentos-1}] {e} — espero {espera}s")
-                time.sleep(espera)
-            else:
-                raise
+    return persistir_lote(client, lote, reintentos)
 
 
 def upsert_supabase(client, filas: list[dict]) -> int:
-    total   = len(filas)
-    n_lotes = -(-total // BATCH_SIZE)
-    errores = 0
-    print(f"[supabase] UPSERT {total:,} registros en {n_lotes} lotes de {BATCH_SIZE}...")
-    t0 = time.time()
-    for i in range(0, total, BATCH_SIZE):
-        lote = filas[i: i + BATCH_SIZE]
-        num  = i // BATCH_SIZE + 1
-        try:
-            _upsert_lote(client, lote)
-            elapsed = time.time() - t0
-            eta = (n_lotes - num) * (elapsed / num)
-            print(f"  lote {num}/{n_lotes} ({len(lote)} filas) OK "
-                  f"[{elapsed:.0f}s ~{eta:.0f}s restantes]")
-        except Exception as e:
-            print(f"  lote {num}/{n_lotes} ERROR: {e}")
-            errores += 1
-    print(f"[supabase] completado en {time.time()-t0:.0f}s — "
-          f"errores: {errores}/{n_lotes} lotes")
-    return errores
-
-
-_COLS_CONTRATOS = [
-    "id", "nro_contratacion", "descripcion_contrato", "objeto", "descripcion",
-    "entidad", "estado", "fecha_publica", "fecha_ini_cotizacion",
-    "fecha_fin_cotizacion", "tipo_cotizacion", "cotizar",
-]
-
-
-def upsert_contratos_pg(dsn: str, filas: list[dict]) -> None:
-    """Upsert de contratos por conexión directa (evita el statement_timeout
-    de PostgREST). Los lotes de ingesta incremental son ~72 altas, pero
-    --forzar-completa puede reintentar decenas de miles bajo contención con
-    el REFRESH de dashboard_resumen."""
-    cols = ", ".join(_COLS_CONTRATOS)
-    ph = ", ".join(["%s"] * len(_COLS_CONTRATOS))
-    sets = ", ".join(
-        f"{c} = EXCLUDED.{c}" for c in _COLS_CONTRATOS if c != "id"
-    )
-    sql = (
-        f"INSERT INTO contratos ({cols}) VALUES ({ph}) "
-        f"ON CONFLICT (id) DO UPDATE SET {sets}"
-    )
-    params = [[fila.get(c) for c in _COLS_CONTRATOS] for fila in filas]
-    with connect(dsn) as conn:
-        with conn.cursor() as cur:
-            cur.executemany(sql, params)
+    return persistir_supabase(client, filas, batch_size=BATCH_SIZE)
 
 
 # ── Descarga desde API SEACE ─────────────────────────────────────────────────
@@ -657,7 +448,7 @@ def main():
             upsert_supabase(supa, filas_db)
 
         if filas_cls:
-            from clasificacion_capa import anunciar_backend_capa3
+            from seace_monitor.classification.repository import anunciar_backend_capa3
             anunciar_backend_capa3(supa=supa)
             n_w, n_s = escribir_clasificacion_keyword(filas_cls, supa=supa)
             print(

@@ -22,7 +22,7 @@ if _ENV.is_file():
 os.environ.pop("DATABASE_URL", None)
 
 from supabase import create_client  # noqa: E402
-from clasificacion_capa import (  # noqa: E402
+from seace_monitor.classification.repository import (  # noqa: E402
     conectar_pg,
     diff_ids_supa,
     escribir_keyword,

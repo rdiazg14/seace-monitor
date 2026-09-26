@@ -15,7 +15,7 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
-from ingesta_completa import _norm, _texto_contrato, clasificar_categoria_it  # noqa: E402
+from seace_monitor.clasificacion import _norm, _texto_contrato, clasificar_categoria_it  # noqa: E402
 
 _ENV = _ROOT / ".env"
 

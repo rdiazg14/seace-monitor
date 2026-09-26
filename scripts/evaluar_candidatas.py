@@ -22,13 +22,13 @@ from seace_monitor.supabase_client import crear_cliente  # noqa: E402
 
 cargar_env()
 
-from ingesta_completa import (  # noqa: E402
+from seace_monitor.clasificacion import (  # noqa: E402
     _contiene,
     _texto_contrato,
-    cargar_keywords,
     clasificar_categoria_it,
 )
-from clasificacion_capa import conectar_pg  # noqa: E402
+from seace_monitor.classification.keywords import cargar_keywords  # noqa: E402
+from seace_monitor.classification.repository import conectar_pg  # noqa: E402
 from vocabulario import (  # noqa: E402
     MIN_VECES,
     RATIO_PREDICTIVO_MIN,
