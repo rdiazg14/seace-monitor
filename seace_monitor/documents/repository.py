@@ -6,6 +6,7 @@ from seace_monitor.documents.pdf_extraction import chars_utiles
 from seace_monitor.ocr.queue import aplanar_clasificacion
 
 PAGE_DB = 1_000
+REQ_PENDIENTE_OCR = "pendiente_ocr"
 COLS_EXTRACCION = (
     "tdr_tipo_extraccion",
     "paginas_ocr_pendientes",
@@ -67,7 +68,10 @@ def pendientes_pdf(supa, limit: int, modo: str = "todos") -> list[dict]:
         )
         batch = response.data or []
         if modo == "ocr":
-            batch = [row for row in batch if row.get("req_url") == "pendiente_ocr"]
+            batch = [
+                row for row in batch
+                if row.get("req_url") == REQ_PENDIENTE_OCR
+            ]
         output.extend(batch)
         if len(response.data or []) < take:
             break

@@ -55,6 +55,18 @@ def clasificar_tipo(n_paginas: int, ocr_paginas: list[int]) -> str:
     return "mixto"
 
 
+def anexar_ocr_a_tdr(tdr: str, pagina: int, texto: str) -> str:
+    """Append de una página OCR al tdr_texto, idempotente por marca."""
+    marca = f"--- pagina {pagina} (ocr) ---"
+    bloque = f"{marca}\n{(texto or '').strip()}".strip()
+    base = (tdr or "").strip()
+    if marca in base:
+        return base
+    if not base:
+        return bloque
+    return base + "\n\n" + bloque
+
+
 def extraer_paginas(
     path: Path,
     *,

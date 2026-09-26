@@ -19,7 +19,10 @@ from seace_monitor.documents.pdf_extraction import chars_utiles
 from seace_monitor.documents.repository import guardar_texto_contenedor
 from seace_monitor.documents.seace_files import elegir_pdf, resumen_archivos
 from seace_monitor.gemini import usd_flash as usd_de_tokens
-from seace_monitor.ingestion.repository import registrar_rechazo
+from seace_monitor.ingestion.repository import (
+    payload_rechazo,
+    registrar_rechazo,
+)
 from seace_monitor.logging import registrar_evento
 from seace_monitor.ocr.gemini_provider import (
     GEMINI_FLASH,
@@ -29,18 +32,6 @@ from seace_monitor.ocr.gemini_provider import (
 
 def _sha256(body: bytes) -> str:
     return hashlib.sha256(body).hexdigest()
-
-
-def _payload_rechazo(c: dict, motivo: str, extra: dict | None = None) -> dict:
-    out = {
-        "idContrato": int(c["id"]),
-        "nroContratacion": c.get("nro_contratacion"),
-        "desContratacion": c.get("descripcion_contrato"),
-        "motivo": motivo,
-    }
-    if extra:
-        out.update(extra)
-    return out
 
 
 # ── Procesamiento por contrato ────────────────────────────────────────────────
@@ -85,7 +76,7 @@ def procesar_contenedor(
         if not dry_run:
             registrar_rechazo(
                 supa,
-                _payload_rechazo(c, str(e)[:500], {"archivos": resumen_archivos(archivos)}),
+                payload_rechazo(c, str(e)[:500], {"archivos": resumen_archivos(archivos)}),
                 str(e),
                 origen="contenedor",
             )
@@ -106,7 +97,7 @@ def procesar_contenedor(
             if not dry_run:
                 registrar_rechazo(
                     supa,
-                    _payload_rechazo(c, MOTIVO_DOC, {"nombre": nombre}),
+                    payload_rechazo(c, MOTIVO_DOC, {"nombre": nombre}),
                     MOTIVO_DOC,
                     origen="contenedor",
                 )
@@ -115,7 +106,7 @@ def procesar_contenedor(
             if not dry_run:
                 registrar_rechazo(
                     supa,
-                    _payload_rechazo(c, MOTIVO_DESC, {"nombre": nombre, "tipo": tipo}),
+                    payload_rechazo(c, MOTIVO_DESC, {"nombre": nombre, "tipo": tipo}),
                     MOTIVO_DESC,
                     origen="contenedor",
                 )
@@ -127,7 +118,7 @@ def procesar_contenedor(
         if not dry_run:
             registrar_rechazo(
                 supa,
-                _payload_rechazo(c, motivo[:500], {"nombre": nombre, "tipo": tipo}),
+                payload_rechazo(c, motivo[:500], {"nombre": nombre, "tipo": tipo}),
                 motivo[:500],
                 origen="contenedor",
             )
@@ -137,7 +128,7 @@ def procesar_contenedor(
         if not dry_run:
             registrar_rechazo(
                 supa,
-                _payload_rechazo(
+                payload_rechazo(
                     c, "contenedor extraído sin texto útil",
                     {"nombre": nombre, "tipo": tipo, "chars": chars_utiles(texto)},
                 ),

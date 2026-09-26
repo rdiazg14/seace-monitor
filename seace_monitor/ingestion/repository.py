@@ -17,6 +17,19 @@ COLS_CONTRATOS = [
 ]
 
 
+def payload_rechazo(contrato: dict, motivo: str, extra: dict | None = None) -> dict:
+    """Proyección de un contrato a payload de rechazo."""
+    out = {
+        "idContrato": int(contrato["id"]),
+        "nroContratacion": contrato.get("nro_contratacion"),
+        "desContratacion": contrato.get("descripcion_contrato"),
+        "motivo": motivo,
+    }
+    if extra:
+        out.update(extra)
+    return out
+
+
 def registrar_rechazo(client, payload: dict, motivo: str, origen: str = "ingesta") -> None:
     if client is None:
         print(f"  [rechazo] (sin supabase) {motivo[:180]}", flush=True)
