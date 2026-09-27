@@ -30,7 +30,7 @@ from seace_monitor.db import connect
 
 cargar_env()
 
-# Mismo mapeo que docs/docs/sql/migraciones/capas_fase3_items.sql. Espejo exacto de items_json.
+# Mismo mapeo que docs/sql/migraciones/capas_fase3_items.sql. Espejo exacto de items_json.
 SQL_DELETE = "DELETE FROM contrato_items"
 
 SQL_INSERT = """
