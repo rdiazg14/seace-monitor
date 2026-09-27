@@ -1,4 +1,5 @@
 playwright>=1.60
+cryptography>=43
 pandas>=2.0
 pyarrow>=14.0
 supabase>=2.0
