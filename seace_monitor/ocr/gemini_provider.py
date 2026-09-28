@@ -9,6 +9,8 @@ import base64
 import time
 from collections.abc import Callable
 
+from seace_monitor.gemini import FLASH_USD_IN_PER_M, FLASH_USD_OUT_PER_M
+
 GEMINI_FLASH = "gemini-3.7-flash"
 GEMINI_OCR_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
@@ -23,6 +25,17 @@ OCR_PROMPT = (
 
 LAST_OCR_USAGE: dict = {}
 OCR_USAGE_ACUM: dict = {"prompt": 0, "candidates": 0, "total": 0, "llamadas": 0}
+
+# Proveedor OCR efectivo de la corrida: el entrypoint lo fija cuando la
+# configuración dinámica (ia_*) resuelve otro modelo. Los lectores (cuota,
+# uso_ia) lo usan para registrar modelo y tarifa reales; los valores por
+# defecto preservan el comportamiento histórico por env.
+OCR_ACTIVO: dict = {
+    "modelo": GEMINI_FLASH,
+    "usd_in": FLASH_USD_IN_PER_M,
+    "usd_out": FLASH_USD_OUT_PER_M,
+    "version_config": 0,
+}
 
 
 class CupoFlash(Exception):
@@ -39,9 +52,11 @@ def solicitar_ocr_gemini(
     mime: str,
     api_key: str,
     *,
+    url: str | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> str:
     """Envía una imagen y devuelve el texto visible informado por Gemini."""
+    url = url or GEMINI_OCR_URL
     encoded = base64.b64encode(image_bytes).decode("ascii")
     payload = {
         "contents": [{
@@ -63,7 +78,7 @@ def solicitar_ocr_gemini(
             sleep(wait)
         try:
             response = client.post(
-                GEMINI_OCR_URL,
+                url,
                 headers={
                     "Content-Type": "application/json",
                     "x-goog-api-key": api_key,

@@ -37,16 +37,22 @@ def solicitar_embeddings_gemini(
     api_key: str,
     fail_fast: bool = False,
     *,
+    url: str | None = None,
+    modelo: str | None = None,
+    dim: int | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> list[list[float]]:
     """Solicita y normaliza un lote, conservando la política de reintentos."""
+    url = url or GEMINI_EMBED_URL
+    modelo = modelo or GEMINI_EMBED_MODEL
+    dim = dim or GEMINI_DIM
     payload = {
         "requests": [
             {
-                "model": f"models/{GEMINI_EMBED_MODEL}",
+                "model": f"models/{modelo}",
                 "content": {"parts": [{"text": text}]},
                 "taskType": "RETRIEVAL_DOCUMENT",
-                "outputDimensionality": GEMINI_DIM,
+                "outputDimensionality": dim,
             }
             for text in texts
         ]
@@ -59,7 +65,7 @@ def solicitar_embeddings_gemini(
             sleep(wait)
         try:
             response = client.post(
-                GEMINI_EMBED_URL,
+                url,
                 headers={
                     "Content-Type": "application/json",
                     "x-goog-api-key": api_key,
@@ -103,10 +109,10 @@ def solicitar_embeddings_gemini(
                 values = item.get("values") if isinstance(item, dict) else None
                 if not isinstance(values, list) or not values:
                     raise RuntimeError("gemini embedding vacío")
-                if len(values) > GEMINI_DIM:
-                    values = values[:GEMINI_DIM]
-                if len(values) != GEMINI_DIM:
-                    raise RuntimeError(f"dimensión {len(values)} != {GEMINI_DIM}")
+                if len(values) > dim:
+                    values = values[:dim]
+                if len(values) != dim:
+                    raise RuntimeError(f"dimensión {len(values)} != {dim}")
                 out.append(l2_normalize([float(value) for value in values]))
             return out
         except QuotaExceeded:
@@ -130,19 +136,29 @@ def solicitar_embeddings_gemini(
     raise RuntimeError(f"embed_lote_gemini falló: {last_error}")
 
 
-def consultar_auth_gemini(client, api_key: str) -> int:
+def consultar_auth_gemini(
+    client,
+    api_key: str,
+    *,
+    url: str | None = None,
+    modelo: str | None = None,
+    dim: int | None = None,
+) -> int:
     """Ejecuta el ping de embeddings y devuelve únicamente su código HTTP."""
+    url = url or GEMINI_AUTH_URL
+    modelo = modelo or GEMINI_EMBED_MODEL
+    dim = dim or GEMINI_DIM
     response = client.post(
-        GEMINI_AUTH_URL,
+        url,
         headers={
             "Content-Type": "application/json",
             "x-goog-api-key": api_key,
         },
         json={
-            "model": f"models/{GEMINI_EMBED_MODEL}",
+            "model": f"models/{modelo}",
             "content": {"parts": [{"text": "ok"}]},
             "taskType": "RETRIEVAL_DOCUMENT",
-            "outputDimensionality": GEMINI_DIM,
+            "outputDimensionality": dim,
         },
         timeout=30.0,
     )

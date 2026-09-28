@@ -51,9 +51,13 @@ from seace_monitor.documents.seace_files import (
     SeaceHttp,
     listar_archivos as listar_archivos_seace,
 )
-from seace_monitor.ocr.gemini_provider import (
-    solicitar_ocr_gemini,
+from seace_monitor.ia.pipeline import (
+    cfg_con_credencial,
+    cfg_resuelta,
+    extras_embeddings,
+    solicitar_ocr_cfg,
 )
+from seace_monitor.ocr.gemini_provider import solicitar_ocr_gemini
 from seace_monitor.logging import PASO_CONTENEDORES, registrar_run
 
 # ── Cargar .env ────────────────────────────────────────────────────────────────
@@ -73,15 +77,29 @@ def listar_archivos(http: SeaceHttp, cid: int) -> tuple[str, list]:
 
 
 def ocr_pagina_gemini(img_bytes: bytes, mime: str = "image/jpeg") -> str:
-    if not GEMINI_API_KEY:
+    cfg = cfg_con_credencial("ocr", resolver=cfg_resuelta)
+    if cfg is None and not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY ausente; no se puede hacer OCR")
-    return limpiar_texto(
-        solicitar_ocr_gemini(httpx, img_bytes, mime, GEMINI_API_KEY)
-    )
+    if cfg is None:
+        # Camino histórico por env.
+        return limpiar_texto(
+            solicitar_ocr_gemini(httpx, img_bytes, mime, GEMINI_API_KEY)
+        )
+    return limpiar_texto(solicitar_ocr_cfg(httpx, cfg, img_bytes, mime))
 
 
 def rechunk_embed_pdf(supa, cid: int) -> None:
-    _rechunk_embed_pdf(supa, cid, api_key=GEMINI_API_KEY)
+    extras = extras_embeddings(cfg_resuelta("embeddings"))
+    api_key = extras.pop("api_key", GEMINI_API_KEY)
+    _rechunk_embed_pdf(supa, cid, api_key=api_key, **extras)
+
+
+def ia_habilitada() -> bool:
+    return (
+        bool(GEMINI_API_KEY)
+        or cfg_con_credencial("ocr", resolver=cfg_resuelta) is not None
+        or bool(extras_embeddings(cfg_resuelta("embeddings")))
+    )
 
 
 def procesar_contenedor(http: SeaceHttp, supa, c: dict, dry_run: bool) -> str:
@@ -92,7 +110,7 @@ def procesar_contenedor(http: SeaceHttp, supa, c: dict, dry_run: bool) -> str:
         dry_run,
         listar_archivos=listar_archivos,
         descargar_url=DESCARGAR_URL,
-        ocr_page=ocr_pagina_gemini if GEMINI_API_KEY else None,
+        ocr_page=ocr_pagina_gemini if ia_habilitada() else None,
         rechunk_embed=rechunk_embed_pdf,
     )
 
@@ -118,7 +136,8 @@ def main() -> None:
     print("Fase 3.5 — Contenedores no-PDF (vigentes TI/IA)", flush=True)
     print(
         f"  dry-run={args.dry_run}  ids={ids or '-'}  cola={len(filas)}  "
-        f"GEMINI_API_KEY set={bool(GEMINI_API_KEY)}",
+        f"GEMINI_API_KEY set={bool(GEMINI_API_KEY)}  "
+        f"ocr_cfg={cfg_con_credencial('ocr', resolver=cfg_resuelta) is not None}",
         flush=True,
     )
     print("=" * 60, flush=True)

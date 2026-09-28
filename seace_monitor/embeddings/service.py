@@ -54,21 +54,28 @@ def run_gemini(
     api_key: str = "",
     http_client_factory=httpx.Client,
     sleep=time.sleep,
+    solicitar=None,
+    modelo: str | None = None,
+    precio_in: float | None = None,
+    version_config: int = 0,
 ) -> dict:
     if not api_key:
         raise SystemExit("ERROR: GEMINI_API_KEY no encontrado (env / .env / GitHub secret)")
+    solicitar = solicitar or solicitar_embeddings_gemini
+    modelo = modelo or GEMINI_EMBED_MODEL
+    precio_in = EMBED_USD_PER_M if precio_in is None else precio_in
 
     lote_n = batch if batch and batch > 0 else BATCH_GEMINI
     pause = delay if delay is not None and delay >= 0 else (
         (2.0 if fail_fast else 8.0) if lote_n <= 2 else DELAY_GEMINI_S
     )
     print("=" * 60, flush=True)
-    print("Embeddings gemini-embedding-001 @1536 -> embedding_v2", flush=True)
-    print("  taskType=RETRIEVAL_DOCUMENT  WHERE embedding_v2 IS NULL", flush=True)
+    print(f"Embeddings {modelo} -> embedding_v2", flush=True)
+    print("  WHERE embedding_v2 IS NULL", flush=True)
     print(
         f"  fuente={fuente or '(todas)'}  ids={ids or '(vigentes)'}  "
         f"batch={lote_n}  embed_mode={embed_mode}  delay={pause:.1f}s  "
-        f"fail_fast={fail_fast}",
+        f"fail_fast={fail_fast}  version_config={version_config or '-'}",
         flush=True,
     )
     print("=" * 60, flush=True)
@@ -105,7 +112,7 @@ def run_gemini(
                 preview = texts[0][:80].replace("\n", " | ")
                 print(f"  preview embed[0]={preview!r}", flush=True)
             try:
-                embs = solicitar_embeddings_gemini(
+                embs = solicitar(
                     http, texts, api_key, fail_fast=fail_fast
                 )
                 # Un solo upsert por lote (no N requests). Las filas ya existen,
@@ -157,10 +164,10 @@ def run_gemini(
         try:
             supa.table("uso_ia").insert({
                 "componente": "embedding",
-                "modelo": GEMINI_EMBED_MODEL,
+                "modelo": modelo,
                 "tokens_prompt": tok,
                 "tokens_total": tok,
-                "costo_usd": round(tok / 1_000_000.0 * EMBED_USD_PER_M, 8),
+                "costo_usd": round(tok / 1_000_000.0 * precio_in, 8),
                 "cache_hit": False,
                 "detalle": {
                     "texts": EMBED_STATS["texts"],
@@ -169,6 +176,7 @@ def run_gemini(
                     "n_contratos": len(por_contrato),
                     "fuente": fuente,
                     "ids": ids or None,
+                    "version_config": version_config or None,
                 },
             }).execute()
         except Exception as e:
@@ -178,7 +186,7 @@ def run_gemini(
     for cid, acc in por_contrato.items():
         chars = acc["chars"]
         tokens_est = chars // 4
-        costo = tokens_est / 1_000_000.0 * EMBED_USD_PER_M
+        costo = tokens_est / 1_000_000.0 * precio_in
         registrar_evento(
             supa,
             cid,
@@ -187,7 +195,7 @@ def run_gemini(
             n_chunks_api=acc["chunks"] if fuente == "api" else None,
             tokens_est=tokens_est,
             costo_usd=costo,
-            detalle={"chars": chars, "fuente": fuente, "modelo": GEMINI_EMBED_MODEL},
+            detalle={"chars": chars, "fuente": fuente, "modelo": modelo},
         )
 
     registrar_run(
@@ -199,9 +207,11 @@ def run_gemini(
             "total": total,
             "contratos": len(por_contrato),
             "tokens_api": tok,
-            "costo_usd": round(tok / 1_000_000.0 * EMBED_USD_PER_M, 8),
+            "costo_usd": round(tok / 1_000_000.0 * precio_in, 8),
             "fuente": fuente,
             "ids": ids or None,
+            "modelo": modelo,
+            "version_config": version_config or None,
         },
     )
     return {"ok": ok, "err": errores, "total": total, "pendientes": total - ok}

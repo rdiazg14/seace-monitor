@@ -13,9 +13,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from seace_monitor.config import RAIZ_REPO
-from seace_monitor.gemini import fecha_lima, usd_flash
+from seace_monitor.gemini import fecha_lima
 
-from .gemini_provider import GEMINI_FLASH, LAST_OCR_USAGE, CupoFlash
+from .gemini_provider import LAST_OCR_USAGE, OCR_ACTIVO, CupoFlash
 
 CUOTA_OCR_TABLA = "pipeline_cuota_ocr"
 CUOTA_OCR_PATH = RAIZ_REPO / "data" / "flash_ocr_cuota.json"
@@ -120,7 +120,10 @@ def registrar_ocr_ok(
     usage = LAST_OCR_USAGE if last_usage is None else last_usage
     prompt = int(usage.get("prompt") or 0)
     out = int(usage.get("candidates") or 0)
-    page_usd = usd_flash(prompt, out)
+    page_usd = (
+        prompt / 1_000_000.0 * float(OCR_ACTIVO["usd_in"])
+        + out / 1_000_000.0 * float(OCR_ACTIVO["usd_out"])
+    )
     cuota["requests"] = int(cuota.get("requests") or 0) + 1
     cuota["prompt_tokens"] = int(cuota.get("prompt_tokens") or 0) + prompt
     cuota["out_tokens"] = int(cuota.get("out_tokens") or 0) + out
@@ -130,12 +133,15 @@ def registrar_ocr_ok(
         try:
             supa.table("uso_ia").insert({
                 "componente": "ocr",
-                "modelo": GEMINI_FLASH,
+                "modelo": OCR_ACTIVO["modelo"],
                 "tokens_prompt": prompt,
                 "tokens_completion": out,
                 "tokens_total": prompt + out,
                 "costo_usd": page_usd,
                 "cache_hit": False,
+                "detalle": {
+                    "version_config": OCR_ACTIVO.get("version_config") or None,
+                },
             }).execute()
         except Exception as e:
             print(f"  [warn] log_uso_ia OCR: {e}", flush=True)

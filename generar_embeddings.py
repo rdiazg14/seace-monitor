@@ -56,6 +56,7 @@ from seace_monitor.embeddings.service import (
     run_gemini as _run_gemini,
 )
 from seace_monitor.gemini import EMBED_USD_PER_M
+from seace_monitor.ia.pipeline import cfg_resuelta, extras_embeddings
 cargar_env()
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
@@ -92,6 +93,8 @@ def run_gemini(
     fail_fast: bool = False,
 ) -> dict:
     """Fachada historica del CLI; la orquestacion vive en el paquete."""
+    extras = extras_embeddings(cfg_resuelta("embeddings"))
+    api_key = extras.pop("api_key", GEMINI_API_KEY)
     return _run_gemini(
         supa,
         limit,
@@ -101,7 +104,8 @@ def run_gemini(
         embed_mode=embed_mode,
         delay=delay,
         fail_fast=fail_fast,
-        api_key=GEMINI_API_KEY,
+        api_key=api_key,
+        **extras,
     )
 
 def auth_check_gemini() -> int:

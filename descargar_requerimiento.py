@@ -118,6 +118,12 @@ from seace_monitor.ocr.cuota import (
     guardar_cuota_ocr,
     registrar_ocr_ok,
 )
+from seace_monitor.ia.pipeline import (
+    cfg_con_credencial,
+    cfg_resuelta,
+    extras_embeddings,
+    solicitar_ocr_cfg,
+)
 from seace_monitor.ocr.gemini_provider import (
     GEMINI_FLASH,
     LAST_OCR_USAGE,
@@ -214,12 +220,27 @@ def listar_archivos(http: SeaceHttp, cid: int) -> tuple[str, list]:
     return listar_archivos_seace(http, cid, LISTAR_URL)
 
 
+def resolver_cfg(endpoint: str):
+    """Costura inyectable: config dinámica ia_* o None → camino por env."""
+    return cfg_resuelta(endpoint)
+
+
+def _cfg_ocr():
+    """Config dinámica utilizable para OCR (con credencial) o None."""
+    return cfg_con_credencial("ocr", resolver=resolver_cfg)
+
+
 def ocr_pagina_gemini(img_bytes: bytes, mime: str = "image/jpeg") -> str:
-    if not GEMINI_API_KEY:
+    cfg = _cfg_ocr()
+    if cfg is None and not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY ausente; no se puede hacer OCR")
     respetar_rpm()
-    text = solicitar_ocr_gemini(httpx, img_bytes, mime, GEMINI_API_KEY)
-    return limpiar_texto(text)
+    if cfg is None:
+        # Camino histórico por env: mismo punto de inyección documentado.
+        return limpiar_texto(
+            solicitar_ocr_gemini(httpx, img_bytes, mime, GEMINI_API_KEY)
+        )
+    return limpiar_texto(solicitar_ocr_cfg(httpx, cfg, img_bytes, mime))
 
 
 def extraer_paginas(path: Path, *, permitir_ocr: bool = True) -> dict:
@@ -262,7 +283,9 @@ def _update_contrato(supa, cid: int, payload: dict) -> None:
 
 def rechunk_embed_pdf(supa, cid: int) -> None:
     """Fachada histórica para consumidores externos del entrypoint."""
-    _rechunk_embed_pdf(supa, cid, api_key=GEMINI_API_KEY)
+    extras = extras_embeddings(cfg_resuelta("embeddings"))
+    api_key = extras.pop("api_key", GEMINI_API_KEY)
+    _rechunk_embed_pdf(supa, cid, api_key=api_key, **extras)
 
 
 def ocr_contrato_selectivo(
@@ -531,7 +554,11 @@ def main() -> None:
         temp_prefix=TEMP_PREFIX,
         listar_url=LISTAR_URL,
         descargar_url=DESCARGAR_URL,
-        gemini_habilitado=bool(GEMINI_API_KEY),
+        gemini_habilitado=(
+            bool(GEMINI_API_KEY)
+            or _cfg_ocr() is not None
+            or bool(extras_embeddings(resolver_cfg("embeddings")))
+        ),
         procesar=procesar_contrato,
         imprimir_linea=imprimir_linea,
         imprimir_resultado=imprimir_resultado,

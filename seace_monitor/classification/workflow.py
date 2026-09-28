@@ -90,10 +90,21 @@ class ConfigClasificacion:
     cargar_pistas: Callable[[Any], str] | None = None
     registrar_keywords: Callable[[Any, list[dict]], tuple[int, int]] | None = None
     clasificar: Callable[..., list[dict]] | None = None
+    # Transporte IA: None = el histórico Gemini; la composición puede inyectar
+    # un callable con la misma firma (p.ej. clasificar_lote_openai con
+    # modelo/params pre-ligados vía functools.partial) desde la config ia_*.
+    transporte: Callable[..., list[dict]] | None = None
+    timeout: float | None = None
+    version_config: int = 0
 
     def clasificar_lote(self, client: httpx.Client, lote: list[dict], **kw):
         if self.clasificar is not None:
             return self.clasificar(client, lote, **kw)
+        extra: dict = {}
+        if self.transporte is not None:
+            extra["transporte"] = self.transporte
+        if self.timeout is not None:
+            extra["timeout"] = self.timeout
         return clasificar_lote(
             client,
             lote,
@@ -103,6 +114,7 @@ class ConfigClasificacion:
             stats=self.stats,
             max_llamadas=self.max_llamadas,
             cuota_path=self.cuota_path,
+            **extra,
             **kw,
         )
 
@@ -312,6 +324,7 @@ def comando_proponer(
         "meta": {
             "generado_utc": ahora.isoformat(),
             "modelo": cfg.modelo,
+            "version_config": cfg.version_config or None,
             "filtro": filtro,
             "limit": limit,
             "batch_p1": batch,

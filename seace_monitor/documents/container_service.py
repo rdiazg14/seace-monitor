@@ -18,14 +18,13 @@ from seace_monitor.documents.containers import (
 from seace_monitor.documents.pdf_extraction import chars_utiles
 from seace_monitor.documents.repository import guardar_texto_contenedor
 from seace_monitor.documents.seace_files import elegir_pdf, resumen_archivos
-from seace_monitor.gemini import usd_flash as usd_de_tokens
 from seace_monitor.ingestion.repository import (
     payload_rechazo,
     registrar_rechazo,
 )
 from seace_monitor.logging import registrar_evento
 from seace_monitor.ocr.gemini_provider import (
-    GEMINI_FLASH,
+    OCR_ACTIVO,
     OCR_USAGE_ACUM,
 )
 
@@ -161,19 +160,24 @@ def procesar_contenedor(
             try:
                 supa.table("uso_ia").insert({
                     "componente": "ocr",
-                    "modelo": GEMINI_FLASH,
+                    "modelo": OCR_ACTIVO["modelo"],
                     "tokens_prompt": int(OCR_USAGE_ACUM["prompt"]),
                     "tokens_completion": int(OCR_USAGE_ACUM["candidates"]),
                     "tokens_total": int(OCR_USAGE_ACUM["total"]),
-                    "costo_usd": usd_de_tokens(
-                        int(OCR_USAGE_ACUM["prompt"]),
-                        int(OCR_USAGE_ACUM["candidates"]),
+                    "costo_usd": (
+                        int(OCR_USAGE_ACUM["prompt"]) / 1_000_000.0
+                        * float(OCR_ACTIVO["usd_in"])
+                        + int(OCR_USAGE_ACUM["candidates"]) / 1_000_000.0
+                        * float(OCR_ACTIVO["usd_out"])
                     ),
                     "cache_hit": False,
                     "detalle": {
                         "paginas_ocr": int(OCR_USAGE_ACUM["llamadas"]),
                         "origen": f"contenedor_{tipo}",
                         "contrato_id": cid,
+                        "version_config": (
+                            OCR_ACTIVO.get("version_config") or None
+                        ),
                     },
                 }).execute()
             except Exception as e:

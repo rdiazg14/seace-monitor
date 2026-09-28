@@ -157,6 +157,7 @@ def test_errores_agotan_los_cuatro_intentos() -> None:
 def test_entrypoint_exige_clave_antes_de_aplicar_rpm(monkeypatch) -> None:
     calls: list[str] = []
     monkeypatch.setattr(entrypoint, "GEMINI_API_KEY", "")
+    monkeypatch.setattr(entrypoint, "resolver_cfg", lambda endpoint: None)
     monkeypatch.setattr(entrypoint, "respetar_rpm", lambda: calls.append("rpm"))
 
     with pytest.raises(RuntimeError, match="GEMINI_API_KEY ausente"):
@@ -173,6 +174,7 @@ def test_entrypoint_aplica_rpm_limpia_texto_y_conserva_reexportaciones(monkeypat
         return "primera  \n\n\n segunda\x00"
 
     monkeypatch.setattr(entrypoint, "GEMINI_API_KEY", "runtime-key")
+    monkeypatch.setattr(entrypoint, "resolver_cfg", lambda endpoint: None)
     monkeypatch.setattr(entrypoint, "respetar_rpm", lambda: calls.append(("rpm",)))
     monkeypatch.setattr(entrypoint, "solicitar_ocr_gemini", fake_ocr)
 

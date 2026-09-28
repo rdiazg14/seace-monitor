@@ -44,14 +44,16 @@ def clasificar_lote(
     cuota_path: Path = CUOTA_C4_PATH,
     backoff: tuple[float, ...] = GEMINI_BACKOFF,
     timeout: float = TIMEOUT_S,
+    transporte: Callable[..., list[dict]] | None = None,
 ) -> list[dict]:
+    transporte = transporte or clasificar_lote_gemini
     def on_success(body: dict) -> None:
         acumular_tokens(stats, body)
         registrar_llamada_c4(
             supa, body, max_llamadas=max_llamadas, path=cuota_path
         )
 
-    return clasificar_lote_gemini(
+    return transporte(
         client,
         lote,
         system_prompt=system_prompt,

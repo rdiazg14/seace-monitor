@@ -47,7 +47,15 @@ from seace_monitor.config import cargar_env
 import argparse
 import os
 import sys
+from functools import partial
 
+from seace_monitor.classification.openai_provider import clasificar_lote_openai
+from seace_monitor.ia.openai import url_openai
+from seace_monitor.ia.pipeline import (
+    cfg_resuelta,
+    clave_config,
+    url_gemini_generate,
+)
 from seace_monitor.supabase_client import crear_cliente
 
 from vocabulario import cargar_pistas, registrar_desde_items
@@ -64,6 +72,11 @@ GEMINI_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     f"{GEMINI_FLASH}:generateContent"
 )
+
+
+def resolver_cfg(endpoint: str):
+    """Costura inyectable: config dinámica ia_* o None → camino por env."""
+    return cfg_resuelta(endpoint)
 
 
 def init_supabase():
@@ -91,6 +104,52 @@ def supa_opcional():
 
 
 def construir_config(args, supa=None) -> ConfigClasificacion:
+    cfg_ia = resolver_cfg("clasificar")
+    if cfg_ia is not None:
+        key = clave_config(cfg_ia)
+        if key and cfg_ia.tipo_api == "openai":
+            return ConfigClasificacion(
+                api_key=key,
+                url=url_openai(cfg_ia.base_url or "", "chat/completions"),
+                modelo=cfg_ia.modelo,
+                supa=supa,
+                supa_opcional=supa_opcional,
+                conectar_supa=init_supabase,
+                max_llamadas=args.max_llamadas_dia,
+                data_dir=DATA_DIR,
+                cuota_path=CUOTA_C4_PATH,
+                cargar_pistas=cargar_pistas,
+                registrar_keywords=registrar_desde_items,
+                transporte=partial(
+                    clasificar_lote_openai,
+                    modelo=cfg_ia.modelo,
+                    params=cfg_ia.params,
+                    proveedor=cfg_ia.proveedor,
+                ),
+                timeout=cfg_ia.timeout_ms / 1000.0,
+                version_config=cfg_ia.version_config,
+            )
+        if key and cfg_ia.tipo_api == "gemini":
+            return ConfigClasificacion(
+                api_key=key,
+                url=url_gemini_generate(cfg_ia),
+                modelo=cfg_ia.modelo,
+                supa=supa,
+                supa_opcional=supa_opcional,
+                conectar_supa=init_supabase,
+                max_llamadas=args.max_llamadas_dia,
+                data_dir=DATA_DIR,
+                cuota_path=CUOTA_C4_PATH,
+                cargar_pistas=cargar_pistas,
+                registrar_keywords=registrar_desde_items,
+                timeout=cfg_ia.timeout_ms / 1000.0,
+                version_config=cfg_ia.version_config,
+            )
+        print(
+            f"  [aviso] ia_endpoints.clasificar sin clave utilizable o tipo "
+            f"{cfg_ia.tipo_api!r} no soportado; camino por env",
+            flush=True,
+        )
     return ConfigClasificacion(
         api_key=GEMINI_API_KEY,
         url=GEMINI_URL,
