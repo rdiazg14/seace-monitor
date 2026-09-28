@@ -54,7 +54,9 @@ from seace_monitor.documents.seace_files import (
 from seace_monitor.ia.pipeline import (
     cfg_con_credencial,
     cfg_resuelta,
+    embeddings_configurados,
     extras_embeddings,
+    fijar_ocr_activo,
     solicitar_ocr_cfg,
 )
 from seace_monitor.ocr.gemini_provider import solicitar_ocr_gemini
@@ -81,6 +83,7 @@ def ocr_pagina_gemini(img_bytes: bytes, mime: str = "image/jpeg") -> str:
     if cfg is None and not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY ausente; no se puede hacer OCR")
     if cfg is None:
+        fijar_ocr_activo(None)
         # Camino histórico por env.
         return limpiar_texto(
             solicitar_ocr_gemini(httpx, img_bytes, mime, GEMINI_API_KEY)
@@ -98,7 +101,7 @@ def ia_habilitada() -> bool:
     return (
         bool(GEMINI_API_KEY)
         or cfg_con_credencial("ocr", resolver=cfg_resuelta) is not None
-        or bool(extras_embeddings(cfg_resuelta("embeddings")))
+        or embeddings_configurados(cfg_resuelta)
     )
 
 

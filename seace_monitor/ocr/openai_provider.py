@@ -101,6 +101,7 @@ def solicitar_ocr_openai(
             if not error.retriable:
                 raise
             last_error = error
-        except Exception as error:
-            last_error = error
+        except Exception:
+            raise ErrorProveedor("invalid_json", "Respuesta OCR inválida",
+                proveedor=proveedor, modelo=modelo, retriable=False) from None
     raise RuntimeError(f"OCR OpenAI fallo: {last_error}")

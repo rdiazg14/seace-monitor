@@ -14,8 +14,11 @@ def rechunk_embed_pdf(
     modelo: str | None = None,
     precio_in: float | None = None,
     version_config: int = 0,
+    verificar_config=None,
 ) -> None:
     """Regenera unicamente la fuente PDF y sus embeddings para un contrato."""
+    if verificar_config is not None:
+        verificar_config()
     run_solo_pdf(supa, [contrato_id], 0)
     kwargs: dict = {}
     if solicitar is not None:
@@ -26,6 +29,8 @@ def rechunk_embed_pdf(
         kwargs["precio_in"] = precio_in
     if version_config:
         kwargs["version_config"] = version_config
+    if verificar_config is not None:
+        kwargs["verificar_config"] = verificar_config
     run_gemini(
         supa,
         0,

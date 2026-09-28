@@ -11,6 +11,7 @@ corpus ``buscar_tdr_v2``. ``EMBED_STATS`` es el canal de uso compartido.
 from __future__ import annotations
 
 import time
+import math
 from collections.abc import Callable
 
 import httpx
@@ -40,6 +41,8 @@ def solicitar_embeddings_openai(
     sleep: Callable[[float], None] = time.sleep,
 ) -> list[list[float]]:
     """Solicita embeddings por lotes; devuelve vectores normalizados."""
+    if type(batch_max) is not int or batch_max < 1 or type(dimensiones) is not int or dimensiones < 1:
+        raise ValueError("batch_max y dimensiones deben ser enteros positivos")
     out: list[list[float]] = []
     for i in range(0, len(texts), max(1, batch_max)):
         out.extend(
@@ -106,9 +109,12 @@ def _lote_openai(
                     f"{len(raw) if isinstance(raw, list) else None}/{len(texts)}",
                     proveedor=proveedor, modelo=modelo, retriable=True,
                 )
-            ordenados = sorted(
-                raw, key=lambda item: (item or {}).get("index") or 0
-            )
+            indices = [item.get("index") if isinstance(item, dict) else None for item in raw]
+            if (any(type(index) is not int for index in indices)
+                    or sorted(indices) != list(range(len(texts)))):
+                raise ErrorProveedor("invalid_json", "Índices de embeddings inválidos",
+                    proveedor=proveedor, modelo=modelo, retriable=False)
+            ordenados = sorted(raw, key=lambda item: item["index"])
             vectores: list[list[float]] = []
             for item in ordenados:
                 values = (item or {}).get("embedding")
@@ -120,7 +126,12 @@ def _lote_openai(
                         f" != {dimensiones}",
                         proveedor=proveedor, modelo=modelo, retriable=False,
                     )
-                vectores.append(l2_normalize([float(v) for v in values]))
+                if (any(type(v) not in (int, float) or not math.isfinite(v) for v in values)
+                        or not math.isfinite(math.hypot(*values)) or math.hypot(*values) == 0):
+                    raise ErrorProveedor("invalid_json", "Vector inválido",
+                        proveedor=proveedor, modelo=modelo, retriable=False)
+                norm = math.hypot(*values)
+                vectores.append([v / norm for v in values])
             EMBED_STATS["requests"] += 1
             EMBED_STATS["texts"] += len(texts)
             EMBED_STATS["chars"] += sum(len(t) for t in texts)
@@ -150,9 +161,9 @@ def _lote_openai(
             if not error.retriable:
                 raise
             print(f"    [retry {attempt}] {error}", flush=True)
-        except Exception as error:
-            last_error = error
-            print(f"    [retry {attempt}] {error}", flush=True)
-            if fail_fast:
-                raise
-    raise RuntimeError(f"embed_lote_openai falló: {last_error}")
+        except Exception:
+            raise ErrorProveedor("invalid_json", "Respuesta de embeddings inválida",
+                proveedor=proveedor, modelo=modelo, retriable=False) from None
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("No se ejecutó la solicitud de embeddings")

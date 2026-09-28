@@ -21,6 +21,11 @@ from seace_monitor.ia.contracts import ModeloCfg
 from seace_monitor.ia.crypto import descifrar_clave
 
 TTL_S = 60.0
+CORPUS_ENV = "gemini-emb001-1536"
+
+
+class ConfigEmbeddingInsegura(RuntimeError):
+    """No se puede demostrar compatibilidad del proveedor con el corpus."""
 
 SELECT_ENDPOINTS = (
     "endpoint,hereda,config,activo,"
@@ -83,8 +88,7 @@ class ResolverCfg:
         status = getattr(response, "status_code", 0) or 0
         if status < 200 or status >= 300:
             # Tabla aún no migrada / relación inexistente → camino por env.
-            texto = getattr(response, "text", "") or ""
-            raise ErrorLectura(status, texto[:200])
+            raise ErrorLectura(status, "lectura rechazada")
         try:
             return response.json()
         except ValueError:
@@ -94,11 +98,11 @@ class ResolverCfg:
         mapa: dict[str, ModeloCfg] = {}
         if not self._key or not self._url:
             return {"map": mapa, "version": 0, "fetched": self._now()}
-        filas = self._fetch_json(
-            f"ia_endpoints?select={SELECT_ENDPOINTS}&activo=eq.true"
-        ) or []
         meta = self._fetch_json(
             "ia_meta?clave=eq.version_config&select=valor"
+        ) or []
+        filas = self._fetch_json(
+            f"ia_endpoints?select={SELECT_ENDPOINTS}&activo=eq.true"
         ) or []
         try:
             version = int((meta[0] or {}).get("valor") or 0)
@@ -114,10 +118,13 @@ class ResolverCfg:
         if meta_corpus:
             valor = (meta_corpus[0] or {}).get("valor")
             corpus = valor if isinstance(valor, str) else ""
+        if self._fetch_json("ia_meta?clave=eq.version_config&select=valor") != meta:
+            raise ErrorLectura(409, "configuración cambió durante lectura")
 
         claves: dict[str, str | None] = {}
         por_endpoint = {
-            f["endpoint"]: f for f in filas if isinstance(f, dict) and f.get("endpoint")
+            f["endpoint"]: f for f in filas
+            if isinstance(f, dict) and f.get("endpoint") and f.get("activo") is True
         }
         for fila in por_endpoint.values():
             modelo = fila.get("ia_modelos")
@@ -131,9 +138,9 @@ class ResolverCfg:
             espacio = modelo.get("espacio_vectorial")
             if (
                 fila["endpoint"] == "embeddings"
-                and corpus
-                and espacio
-                and espacio != corpus
+                and (not corpus or not espacio or espacio != corpus
+                     or modelo.get("tipo") != "embedding"
+                     or modelo.get("dimensiones") != 1536)
             ):
                 self._log({
                     "aviso": "embeddings_fuera_de_espacio",
@@ -179,7 +186,8 @@ class ResolverCfg:
                     **{**heredada.__dict__, "endpoint": endpoint}
                 )
 
-        return {"map": mapa, "version": version, "fetched": self._now()}
+        return {"map": mapa, "version": version, "fetched": self._now(),
+                "corpus": corpus, "embedding_activo": "embeddings" in por_endpoint}
 
     def resolver(self, endpoint: str) -> ModeloCfg | None:
         try:
@@ -188,7 +196,19 @@ class ResolverCfg:
                 or self._now() - self._snapshot["fetched"] >= self._ttl
             ):
                 self._snapshot = self._cargar()
-            return self._snapshot["map"].get(endpoint)
+            cfg = self._snapshot["map"].get(endpoint)
+            if endpoint == "embeddings" and self._url and self._key:
+                if self._snapshot.get("error"):
+                    raise ConfigEmbeddingInsegura("No se pudo verificar el corpus; embeddings detenido")
+                if self._snapshot.get("embedding_activo"):
+                    if (cfg is None or cfg.tipo_api not in ("gemini", "openai")
+                            or not clave_efectiva(cfg)):
+                        raise ConfigEmbeddingInsegura("Configuración activa de embeddings no utilizable")
+                elif self._snapshot.get("corpus") != CORPUS_ENV:
+                    raise ConfigEmbeddingInsegura("Fallback env incompatible o corpus desconocido")
+            return cfg
+        except ConfigEmbeddingInsegura:
+            raise
         except Exception as error:
             if not self._avisado_fallo:
                 self._avisado_fallo = True
@@ -196,13 +216,15 @@ class ResolverCfg:
                 self._log({
                     "aviso": "resolver_fallo",
                     "status": status,
-                    "detalle": str(error)[:160],
+                    "tipo": type(error).__name__,
                 })
             # Snapshot vacío dentro del TTL: un consumidor por página/ítem no
             # debe reintentar la red en cada llamada ante un fallo sostenido.
             self._snapshot = {
-                "map": {}, "version": 0, "fetched": self._now(),
+                "map": {}, "version": 0, "fetched": self._now(), "error": True,
             }
+            if endpoint == "embeddings":
+                raise ConfigEmbeddingInsegura("No se pudo verificar el corpus; embeddings detenido") from None
             return None
 
     def version_vista(self) -> int:

@@ -73,7 +73,7 @@ class ConfigClasificacion:
     es None se usa la llamada real a Gemini con la cuota C4 activa.
     """
 
-    api_key: str
+    api_key: str = field(repr=False)
     url: str
     modelo: str
     supa: Any = None
@@ -96,6 +96,7 @@ class ConfigClasificacion:
     transporte: Callable[..., list[dict]] | None = None
     timeout: float | None = None
     version_config: int = 0
+    precio: dict | None = None
 
     def clasificar_lote(self, client: httpx.Client, lote: list[dict], **kw):
         if self.clasificar is not None:
@@ -105,6 +106,9 @@ class ConfigClasificacion:
             extra["transporte"] = self.transporte
         if self.timeout is not None:
             extra["timeout"] = self.timeout
+        if self.precio is not None:
+            extra.update(modelo=self.modelo, precio=self.precio,
+                         version_config=self.version_config)
         return clasificar_lote(
             client,
             lote,

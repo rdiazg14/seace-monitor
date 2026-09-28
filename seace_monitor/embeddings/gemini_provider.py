@@ -40,6 +40,7 @@ def solicitar_embeddings_gemini(
     url: str | None = None,
     modelo: str | None = None,
     dim: int | None = None,
+    timeout: float = 120.0,
     sleep: Callable[[float], None] = time.sleep,
 ) -> list[list[float]]:
     """Solicita y normaliza un lote, conservando la política de reintentos."""
@@ -71,7 +72,7 @@ def solicitar_embeddings_gemini(
                     "x-goog-api-key": api_key,
                 },
                 json=payload,
-                timeout=120.0,
+                timeout=timeout,
             )
             if response.status_code == 429:
                 message = f"429 {response.text[:200]}"

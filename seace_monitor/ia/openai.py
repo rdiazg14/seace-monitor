@@ -9,6 +9,7 @@ en cada dominio.
 from __future__ import annotations
 
 import httpx
+import math
 
 from seace_monitor.ia.errores import (
     ErrorProveedor,
@@ -40,20 +41,21 @@ def post_openai(
             timeout=timeout,
         )
     except httpx.TimeoutException as error:
-        raise error_timeout(proveedor, modelo) from error
+        raise error_timeout(proveedor, modelo) from None
     except httpx.HTTPError as error:
-        raise error_red(error, proveedor, modelo) from error
+        raise error_red(error, proveedor, modelo) from None
     if response.status_code < 200 or response.status_code >= 300:
         retry_after: float | None = None
         raw_ra = response.headers.get("Retry-After")
         if raw_ra:
             try:
-                retry_after = float(raw_ra)
+                parsed_ra = float(raw_ra)
+                retry_after = min(120.0, max(0.0, parsed_ra)) if math.isfinite(parsed_ra) else None
             except ValueError:
                 retry_after = None
         raise clasificar_http(
             response.status_code,
-            response.text[:400] if response.text else "",
+            response.text if response.text else "",
             proveedor,
             modelo,
             retry_after=retry_after,

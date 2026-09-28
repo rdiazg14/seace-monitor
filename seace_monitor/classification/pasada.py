@@ -45,6 +45,9 @@ def clasificar_lote(
     backoff: tuple[float, ...] = GEMINI_BACKOFF,
     timeout: float = TIMEOUT_S,
     transporte: Callable[..., list[dict]] | None = None,
+    modelo: str | None = None,
+    precio: dict | None = None,
+    version_config: int = 0,
 ) -> list[dict]:
     transporte = transporte or clasificar_lote_gemini
     def on_success(body: dict) -> None:
@@ -52,6 +55,24 @@ def clasificar_lote(
         registrar_llamada_c4(
             supa, body, max_llamadas=max_llamadas, path=cuota_path
         )
+        if modelo is not None and supa is not None:
+            um = body.get("usageMetadata") or {}
+            prompt = int(um.get("promptTokenCount") or 0)
+            completion = int(um.get("candidatesTokenCount") or 0)
+            tarifas = precio or {}
+            try:
+                supa.table("uso_ia").insert({
+                    "componente": "clasificar", "modelo": modelo,
+                    "tokens_prompt": prompt, "tokens_completion": completion,
+                    "tokens_total": prompt + completion,
+                    "costo_usd": (prompt * float(tarifas.get("in", 0))
+                                  + completion * float(tarifas.get("out", 0))) / 1_000_000,
+                    "cache_hit": False,
+                    "detalle": {"version_config": version_config,
+                                "precio": tarifas, "tarifa_estimada": True},
+                }).execute()
+            except Exception:
+                print("  [warn] log_uso_ia clasificación falló", flush=True)
 
     return transporte(
         client,

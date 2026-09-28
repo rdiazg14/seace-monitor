@@ -52,6 +52,7 @@ jobs:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      IA_MASTER_KEY: ${{ secrets.IA_MASTER_KEY }}
       FUNNEL_TOKEN: ${{ secrets.FUNNEL_TOKEN }}
       ANALIZAR_SERVICE_TOKEN: ${{ secrets.ANALIZAR_SERVICE_TOKEN }}
       DATABASE_URL: ${{ secrets.DATABASE_URL }}

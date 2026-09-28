@@ -99,5 +99,9 @@ def clasificar_lote_openai(
                     print(f"    [retry {attempt}] {error}", flush=True)
                     continue
                 raise
-            print(f"    [retry {attempt}] {error}", flush=True)
-    raise RuntimeError(f"clasificar_lote fallo: {last_error}")
+            # Paridad con Gemini: una salida no parseable se reintenta. Solo el
+            # tipo llega al log; el texto puede repetir contenido del lote.
+            print(f"    [retry {attempt}] {type(error).__name__}", flush=True)
+    detalle = (str(last_error) if isinstance(last_error, ErrorProveedor)
+               else type(last_error).__name__)
+    raise RuntimeError(f"clasificar_lote fallo: {detalle}")

@@ -53,6 +53,7 @@ def solicitar_ocr_gemini(
     api_key: str,
     *,
     url: str | None = None,
+    timeout: float = 120.0,
     sleep: Callable[[float], None] = time.sleep,
 ) -> str:
     """Envía una imagen y devuelve el texto visible informado por Gemini."""
@@ -84,7 +85,7 @@ def solicitar_ocr_gemini(
                     "x-goog-api-key": api_key,
                 },
                 json=payload,
-                timeout=120.0,
+                timeout=timeout,
             )
             if response.status_code == 429:
                 raise CupoFlash(f"429 OCR: {response.text[:160]}", motivo="429")

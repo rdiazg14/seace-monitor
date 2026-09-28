@@ -69,18 +69,17 @@ def clasificar_http(
     viene del header Retry-After cuando existe.
     """
     tipo: str | None = None
-    msg = cuerpo[:400]
     try:
         parsed = json.loads(cuerpo)
         error = parsed.get("error") if isinstance(parsed, dict) else None
         if isinstance(error, dict):
-            tipo = error.get("type") or error.get("code") or None
-            if error.get("message"):
-                msg = str(error["message"])[:400]
+            tipos = (error.get("type"), error.get("code"))
+            tipo = next((v for v in tipos if isinstance(v, str) and v in TIPOS_CUOTA), None)
     except (ValueError, AttributeError):
         pass  # cuerpo no-JSON: se conserva el texto crudo
 
-    base = f"{proveedor} HTTP {status}{f' [{modelo}]' if modelo else ''}: {msg}"
+    # La respuesta puede repetir claves, documentos o cabeceras. No publicarla.
+    base = f"{proveedor} HTTP {status}{f' [{modelo}]' if modelo else ''}"
 
     def mk(kind: str, retriable: bool) -> ErrorProveedor:
         return ErrorProveedor(
@@ -110,9 +109,8 @@ def error_timeout(proveedor: str, modelo: str | None = None) -> ErrorProveedor:
 
 def error_red(error: BaseException, proveedor: str, modelo: str | None = None) -> ErrorProveedor:
     """Fallo de transporte sin respuesta HTTP."""
-    msg = str(error)[:200]
     return ErrorProveedor(
         "red",
-        f"{proveedor} red{f' [{modelo}]' if modelo else ''}: {msg}",
+        f"{proveedor} red{f' [{modelo}]' if modelo else ''}",
         proveedor=proveedor, modelo=modelo, retriable=True,
     )

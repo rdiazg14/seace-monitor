@@ -16,7 +16,12 @@ from seace_monitor.gemini import (
     FLASH_USD_OUT_PER_M,
 )
 from seace_monitor.ia.openai import url_openai
-from seace_monitor.ia.resolver import ModeloCfg, clave_efectiva, resolver_compartido
+from seace_monitor.ia.resolver import (
+    ConfigEmbeddingInsegura,
+    ModeloCfg,
+    clave_efectiva,
+    resolver_compartido,
+)
 
 DIMENSIONES_EMBEDDING_V2 = 1536  # espacio activo gemini-emb001-1536 (DATOS)
 
@@ -54,17 +59,31 @@ def cfg_con_credencial(
     return cfg
 
 
+def embeddings_configurados(resolver=None) -> bool:
+    """Predicado de habilitación: nunca aborta la corrida documental.
+
+    Si el corpus no se puede verificar, la corrida sigue (texto/OCR/chunks) y
+    el rechunk de cada contrato se detiene con ``ConfigEmbeddingInsegura``.
+    """
+    try:
+        return bool(extras_embeddings((resolver or cfg_resuelta)("embeddings")))
+    except ConfigEmbeddingInsegura:
+        return False
+
+
 def fijar_ocr_activo(cfg: ModeloCfg | None) -> None:
     """Publica modelo/tarifa del proveedor OCR para cuota y uso_ia."""
-    if cfg is None:
-        return
     from seace_monitor.ocr.gemini_provider import GEMINI_FLASH, OCR_ACTIVO
 
+    if cfg is None:
+        OCR_ACTIVO.update(modelo=GEMINI_FLASH, usd_in=FLASH_USD_IN_PER_M,
+                          usd_out=FLASH_USD_OUT_PER_M, version_config=0)
+        return
     precio = cfg.precio or {}
     OCR_ACTIVO.update({
         "modelo": cfg.modelo or GEMINI_FLASH,
-        "usd_in": float(precio.get("in") or FLASH_USD_IN_PER_M),
-        "usd_out": float(precio.get("out") or FLASH_USD_OUT_PER_M),
+        "usd_in": float(precio.get("in", FLASH_USD_IN_PER_M)),
+        "usd_out": float(precio.get("out", FLASH_USD_OUT_PER_M)),
         "version_config": cfg.version_config,
     })
 
@@ -101,7 +120,8 @@ def solicitar_ocr_cfg(
             timeout=cfg.timeout_ms / 1000.0,
         )
     return solicitar_ocr_gemini(
-        client, img_bytes, mime, key, url=url_gemini_generate(cfg)
+        client, img_bytes, mime, key, url=url_gemini_generate(cfg),
+        timeout=cfg.timeout_ms / 1000.0,
     )
 
 
@@ -125,8 +145,14 @@ def extras_embeddings(cfg: ModeloCfg | None) -> dict[str, Any]:
         "modelo": cfg.modelo,
         "version_config": cfg.version_config,
     }
+    def verificar_config() -> None:
+        actual = cfg_resuelta("embeddings")
+        campos = ("version_config", "proveedor", "modelo", "dimensiones", "espacio_vectorial")
+        if actual is None or any(getattr(actual, c) != getattr(cfg, c) for c in campos):
+            raise ConfigEmbeddingInsegura("Configuración embeddings cambió durante el lote; detener y reanudar")
+    extras["verificar_config"] = verificar_config
     precio_in = (cfg.precio or {}).get("in")
-    if precio_in:
+    if precio_in is not None:
         extras["precio_in"] = float(precio_in)
     if cfg.tipo_api == "openai":
         from seace_monitor.embeddings.openai_provider import (
@@ -141,6 +167,7 @@ def extras_embeddings(cfg: ModeloCfg | None) -> dict[str, Any]:
             batch_max=int((cfg.capacidades or {}).get("batch_max") or 10),
             params=cfg.params,
             proveedor=cfg.proveedor,
+            timeout=cfg.timeout_ms / 1000.0,
         )
     else:
         from seace_monitor.embeddings.gemini_provider import (
@@ -155,5 +182,6 @@ def extras_embeddings(cfg: ModeloCfg | None) -> dict[str, Any]:
             ),
             modelo=cfg.modelo,
             dim=dim,
+            timeout=cfg.timeout_ms / 1000.0,
         )
     return extras

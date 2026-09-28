@@ -128,6 +128,7 @@ def construir_config(args, supa=None) -> ConfigClasificacion:
                 ),
                 timeout=cfg_ia.timeout_ms / 1000.0,
                 version_config=cfg_ia.version_config,
+                precio=cfg_ia.precio,
             )
         if key and cfg_ia.tipo_api == "gemini":
             return ConfigClasificacion(
@@ -144,6 +145,7 @@ def construir_config(args, supa=None) -> ConfigClasificacion:
                 registrar_keywords=registrar_desde_items,
                 timeout=cfg_ia.timeout_ms / 1000.0,
                 version_config=cfg_ia.version_config,
+                precio=cfg_ia.precio,
             )
         print(
             f"  [aviso] ia_endpoints.clasificar sin clave utilizable o tipo "

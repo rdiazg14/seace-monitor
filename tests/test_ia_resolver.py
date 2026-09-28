@@ -57,7 +57,7 @@ def fila_endpoint(
 ) -> dict:
     model_row = None if sin_modelo else {
         "modelo": modelo,
-        "tipo": "generacion",
+        "tipo": "embedding" if endpoint == "embeddings" else "generacion",
         "dimensiones": dimensiones,
         "espacio_vectorial": espacio,
         "timeout_ms": timeout_ms,
@@ -197,7 +197,8 @@ def test_embeddings_fuera_del_espacio_del_corpus_se_descarta(capsys) -> None:
         dimensiones=1536,
         espacio="qwen-tev4-1536",
     )])
-    assert resolver.resolver("embeddings") is None
+    with pytest.raises(RuntimeError, match="embeddings"):
+        resolver.resolver("embeddings")
     assert "embeddings_fuera_de_espacio" in capsys.readouterr().out
 
 
@@ -210,7 +211,7 @@ def test_embeddings_en_espacio_del_corpus_resuelve() -> None:
         base_url="https://generativelanguage.googleapis.com/v1beta",
         dimensiones=1536,
         espacio="gemini-emb001-1536",
-        blob=None,
+        blob=BLOB_OK,
     )])
     cfg = resolver.resolver("embeddings")
     assert cfg is not None

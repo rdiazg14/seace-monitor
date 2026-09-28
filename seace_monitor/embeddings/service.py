@@ -58,6 +58,7 @@ def run_gemini(
     modelo: str | None = None,
     precio_in: float | None = None,
     version_config: int = 0,
+    verificar_config=None,
 ) -> dict:
     if not api_key:
         raise SystemExit("ERROR: GEMINI_API_KEY no encontrado (env / .env / GitHub secret)")
@@ -106,6 +107,8 @@ def run_gemini(
 
     with http_client_factory() as http:
         for i in range(0, total, lote_n):
+            if verificar_config is not None:
+                verificar_config()
             lote = pendientes[i:i + lote_n]
             texts = [texto_para_embed(row, embed_mode) for row in lote]
             if i == 0 and texts:
@@ -115,6 +118,8 @@ def run_gemini(
                 embs = solicitar(
                     http, texts, api_key, fail_fast=fail_fast
                 )
+                if verificar_config is not None:
+                    verificar_config()
                 # Un solo upsert por lote (no N requests). Las filas ya existen,
                 # así que on_conflict=id solo actualiza embedding_v2.
                 guardar_embeddings_v2(supa, lote, embs)
