@@ -5630,3 +5630,4 @@
 {"id": 98366, "tdr_tipo_extraccion": "imagen_total", "paginas_ocr_pendientes": [4, 5], "paginas_ocr_hechas": [1, 2, 3], "tdr_n_paginas": 5, "tdr_n_paginas_nativas": 0, "tdr_n_paginas_ocr": 5, "pdf_es_imagen": true, "chars_final": 10206}
 {"id": 98366, "tdr_tipo_extraccion": "imagen_total", "paginas_ocr_pendientes": [5], "paginas_ocr_hechas": [1, 2, 3, 4], "tdr_n_paginas": 5, "tdr_n_paginas_nativas": 0, "tdr_n_paginas_ocr": 5, "pdf_es_imagen": true, "chars_final": 15575}
 {"id": 98366, "tdr_tipo_extraccion": "imagen_total", "paginas_ocr_pendientes": [], "paginas_ocr_hechas": [1, 2, 3, 4, 5], "tdr_n_paginas": 5, "tdr_n_paginas_nativas": 0, "tdr_n_paginas_ocr": 5, "pdf_es_imagen": true, "chars_final": 17605}
+{"id": 98908, "tdr_tipo_extraccion": "nativo_puro", "paginas_ocr_pendientes": [], "paginas_ocr_hechas": [], "tdr_n_paginas": 6, "tdr_n_paginas_nativas": 6, "tdr_n_paginas_ocr": 0, "pdf_es_imagen": false, "chars_final": 17295}
