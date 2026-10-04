@@ -11,7 +11,7 @@ import math
 from datetime import datetime, timedelta, timezone
 
 # Precios de referencia Gemini en USD por 1M de tokens.
-# Fuente canónica: MODEL_PRICES en seace-ai-proxy/src/telemetry/usoIa.ts
+# Fuente canónica: MODEL_PRICES en seace-ai-proxy/src/telemetry/costo.ts
 # (GEMINI_FLASH = gemini-3.7-flash → 0.75/3.75). Mantener alineado (FIX-004).
 FLASH_USD_IN_PER_M = 0.75   # gemini-3.7-flash (OCR/clasificación): entrada
 FLASH_USD_OUT_PER_M = 3.75  # gemini-3.7-flash: salida

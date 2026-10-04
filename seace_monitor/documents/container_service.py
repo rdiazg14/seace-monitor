@@ -23,6 +23,7 @@ from seace_monitor.ingestion.repository import (
     registrar_rechazo,
 )
 from seace_monitor.logging import registrar_evento
+from seace_monitor.ocr.cuota import costo_ocr
 from seace_monitor.ocr.gemini_provider import (
     OCR_ACTIVO,
     OCR_USAGE_ACUM,
@@ -157,6 +158,10 @@ def procesar_contenedor(
         )
         # OCR embebido (imágenes de DOCX/ZIP/RAR): traza a uso_ia.
         if OCR_USAGE_ACUM.get("llamadas", 0) > 0:
+            costo_emb, det_costo = costo_ocr(
+                int(OCR_USAGE_ACUM["prompt"]), int(OCR_USAGE_ACUM["candidates"]),
+                llamadas=int(OCR_USAGE_ACUM["llamadas"]),
+            )
             try:
                 supa.table("uso_ia").insert({
                     "componente": "ocr",
@@ -164,12 +169,7 @@ def procesar_contenedor(
                     "tokens_prompt": int(OCR_USAGE_ACUM["prompt"]),
                     "tokens_completion": int(OCR_USAGE_ACUM["candidates"]),
                     "tokens_total": int(OCR_USAGE_ACUM["total"]),
-                    "costo_usd": (
-                        int(OCR_USAGE_ACUM["prompt"]) / 1_000_000.0
-                        * float(OCR_ACTIVO["usd_in"])
-                        + int(OCR_USAGE_ACUM["candidates"]) / 1_000_000.0
-                        * float(OCR_ACTIVO["usd_out"])
-                    ),
+                    "costo_usd": costo_emb,
                     "cache_hit": False,
                     "detalle": {
                         "paginas_ocr": int(OCR_USAGE_ACUM["llamadas"]),
@@ -178,6 +178,7 @@ def procesar_contenedor(
                         "version_config": (
                             OCR_ACTIVO.get("version_config") or None
                         ),
+                        **det_costo,
                     },
                 }).execute()
             except Exception as e:

@@ -42,6 +42,8 @@ def reset_ocr_activo():
         "usd_in": 0.75,
         "usd_out": 3.75,
         "version_config": 0,
+        "precio": {"in": 0.75, "out": 3.75, "tramos": []},
+        "precio_fuente": "tabla",
     })
 
 

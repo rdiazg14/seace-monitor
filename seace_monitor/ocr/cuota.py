@@ -15,6 +15,8 @@ from pathlib import Path
 from seace_monitor.config import RAIZ_REPO
 from seace_monitor.gemini import fecha_lima
 
+from seace_monitor.ia.costo import estimar
+
 from .gemini_provider import LAST_OCR_USAGE, OCR_ACTIVO, CupoFlash
 
 CUOTA_OCR_TABLA = "pipeline_cuota_ocr"
@@ -108,6 +110,14 @@ def guardar_cuota_ocr(
     )
 
 
+def costo_ocr(prompt: int, out: int, llamadas: int = 1) -> tuple[float | None, dict]:
+    """Costo del proveedor OCR activo con su precio validado (FIX-008)."""
+    return estimar(
+        OCR_ACTIVO.get("precio"), prompt, out, llamadas=llamadas,
+        fuente=OCR_ACTIVO.get("precio_fuente") or "tabla",
+    )
+
+
 def registrar_ocr_ok(
     supa,
     cuota: dict,
@@ -120,14 +130,11 @@ def registrar_ocr_ok(
     usage = LAST_OCR_USAGE if last_usage is None else last_usage
     prompt = int(usage.get("prompt") or 0)
     out = int(usage.get("candidates") or 0)
-    page_usd = (
-        prompt / 1_000_000.0 * float(OCR_ACTIVO["usd_in"])
-        + out / 1_000_000.0 * float(OCR_ACTIVO["usd_out"])
-    )
+    page_usd, det_costo = costo_ocr(prompt, out)
     cuota["requests"] = int(cuota.get("requests") or 0) + 1
     cuota["prompt_tokens"] = int(cuota.get("prompt_tokens") or 0) + prompt
     cuota["out_tokens"] = int(cuota.get("out_tokens") or 0) + out
-    cuota["usd_est"] = float(cuota.get("usd_est") or 0) + page_usd
+    cuota["usd_est"] = float(cuota.get("usd_est") or 0) + (page_usd or 0.0)
     guardar_cuota_ocr(supa, cuota, path=path)
     if supa is not None:
         try:
@@ -141,6 +148,7 @@ def registrar_ocr_ok(
                 "cache_hit": False,
                 "detalle": {
                     "version_config": OCR_ACTIVO.get("version_config") or None,
+                    **det_costo,
                 },
             }).execute()
         except Exception as e:

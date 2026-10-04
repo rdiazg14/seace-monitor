@@ -35,6 +35,10 @@ OCR_ACTIVO: dict = {
     "usd_in": FLASH_USD_IN_PER_M,
     "usd_out": FLASH_USD_OUT_PER_M,
     "version_config": 0,
+    # Precio validado (FIX-008): tabla en el camino env, ia_modelos.precio con
+    # config dinámica; None = sin precio conocido (costo no se inventa).
+    "precio": {"in": FLASH_USD_IN_PER_M, "out": FLASH_USD_OUT_PER_M, "tramos": []},
+    "precio_fuente": "tabla",
 }
 
 

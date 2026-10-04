@@ -12,6 +12,8 @@ from pathlib import Path
 
 import httpx
 
+from seace_monitor.ia.costo import estimar, parse_precio
+
 from .contracts import RESPONSE_SCHEMA, SYSTEM_PROMPT
 from .cuota import (
     CUOTA_C4_PATH,
@@ -59,17 +61,16 @@ def clasificar_lote(
             um = body.get("usageMetadata") or {}
             prompt = int(um.get("promptTokenCount") or 0)
             completion = int(um.get("candidatesTokenCount") or 0)
-            tarifas = precio or {}
+            costo, det_costo = estimar(parse_precio(precio), prompt, completion)
             try:
                 supa.table("uso_ia").insert({
                     "componente": "clasificar", "modelo": modelo,
                     "tokens_prompt": prompt, "tokens_completion": completion,
                     "tokens_total": prompt + completion,
-                    "costo_usd": (prompt * float(tarifas.get("in", 0))
-                                  + completion * float(tarifas.get("out", 0))) / 1_000_000,
+                    "costo_usd": costo,
                     "cache_hit": False,
                     "detalle": {"version_config": version_config,
-                                "precio": tarifas, "tarifa_estimada": True},
+                                "precio": precio or {}, **det_costo},
                 }).execute()
             except Exception:
                 print("  [warn] log_uso_ia clasificación falló", flush=True)

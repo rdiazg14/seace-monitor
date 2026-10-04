@@ -15,6 +15,7 @@ from seace_monitor.gemini import (
     FLASH_USD_IN_PER_M,
     FLASH_USD_OUT_PER_M,
 )
+from seace_monitor.ia.costo import parse_precio
 from seace_monitor.ia.openai import url_openai
 from seace_monitor.ia.resolver import (
     ConfigEmbeddingInsegura,
@@ -76,15 +77,24 @@ def fijar_ocr_activo(cfg: ModeloCfg | None) -> None:
     from seace_monitor.ocr.gemini_provider import GEMINI_FLASH, OCR_ACTIVO
 
     if cfg is None:
-        OCR_ACTIVO.update(modelo=GEMINI_FLASH, usd_in=FLASH_USD_IN_PER_M,
-                          usd_out=FLASH_USD_OUT_PER_M, version_config=0)
+        OCR_ACTIVO.update(
+            modelo=GEMINI_FLASH, usd_in=FLASH_USD_IN_PER_M,
+            usd_out=FLASH_USD_OUT_PER_M, version_config=0,
+            precio={"in": FLASH_USD_IN_PER_M, "out": FLASH_USD_OUT_PER_M, "tramos": []},
+            precio_fuente="tabla",
+        )
         return
-    precio = cfg.precio or {}
+    precio = parse_precio(cfg.precio)
+    if precio is None:
+        print(f"  [warn] ia_modelos.precio inválido o ausente para {cfg.modelo}; "
+              "costo OCR sin estimar", flush=True)
     OCR_ACTIVO.update({
         "modelo": cfg.modelo or GEMINI_FLASH,
-        "usd_in": float(precio.get("in", FLASH_USD_IN_PER_M)),
-        "usd_out": float(precio.get("out", FLASH_USD_OUT_PER_M)),
+        "usd_in": precio["in"] if precio else None,
+        "usd_out": precio["out"] if precio else None,
         "version_config": cfg.version_config,
+        "precio": precio,
+        "precio_fuente": "config",
     })
 
 
@@ -151,9 +161,10 @@ def extras_embeddings(cfg: ModeloCfg | None) -> dict[str, Any]:
         if actual is None or any(getattr(actual, c) != getattr(cfg, c) for c in campos):
             raise ConfigEmbeddingInsegura("Configuración embeddings cambió durante el lote; detener y reanudar")
     extras["verificar_config"] = verificar_config
-    precio_in = (cfg.precio or {}).get("in")
-    if precio_in is not None:
-        extras["precio_in"] = float(precio_in)
+    precio = parse_precio(cfg.precio)
+    if precio is not None:
+        # Embeddings: tarifa base (sin output); el texto se trocea bajo el primer tramo.
+        extras["precio_in"] = precio["in"]
     if cfg.tipo_api == "openai":
         from seace_monitor.embeddings.openai_provider import (
             solicitar_embeddings_openai,
