@@ -35,8 +35,8 @@ def test_run_gemini_inyecta_clave_y_persiste_lote(monkeypatch) -> None:
 
     monkeypatch.setattr(
         service,
-        "chunks_sin_v2_por_fuente",
-        lambda supa, fuente, limit: [row],
+        "chunks_sin_por_fuente",
+        lambda supa, col, fuente, limit: [row],
     )
     monkeypatch.setattr(
         service,
@@ -52,12 +52,12 @@ def test_run_gemini_inyecta_clave_y_persiste_lote(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         service,
-        "guardar_embeddings_v2",
-        lambda supa, rows, vectors: captured.update(
-            {"supa": supa, "rows": rows, "vectors": vectors}
+        "guardar_embeddings",
+        lambda supa, col, rows, vectors: captured.update(
+            {"supa": supa, "col": col, "rows": rows, "vectors": vectors}
         ),
     )
-    monkeypatch.setattr(service, "contar_embeddings_v2", lambda *args: 1)
+    monkeypatch.setattr(service, "contar_embeddings", lambda *args: 1)
     events: list[tuple] = []
     monkeypatch.setattr(
         service,
@@ -92,6 +92,7 @@ def test_run_gemini_inyecta_clave_y_persiste_lote(monkeypatch) -> None:
         "api_key": "test-key",
         "fail_fast": True,
         "supa": supa,
+        "col": "embedding_v2",
         "rows": [row],
         "vectors": [[1.0, 0.0]],
     }

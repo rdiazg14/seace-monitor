@@ -16,11 +16,11 @@ from seace_monitor.embeddings.preparation import (
     texto_para_embed,
 )
 from seace_monitor.embeddings.repository import (
-    chunks_sin_embedding_v2,
-    chunks_sin_v2_por_fuente,
-    contar_embeddings_v2,
-    cobertura_vigentes,
-    guardar_embeddings_v2,
+    chunks_sin_embedding,
+    chunks_sin_por_fuente,
+    contar_embeddings,
+    cobertura_columna,
+    guardar_embeddings,
     paginar_ids_vigentes,
 )
 from seace_monitor.gemini import EMBED_USD_PER_M
@@ -29,16 +29,27 @@ from seace_monitor.logging import PASO_EMBEDDING, registrar_evento, registrar_ru
 BATCH_GEMINI = 16
 DELAY_GEMINI_S = 0.4
 
+# Espacio vectorial que alimenta cada columna de chunks_tdr (IA-007).
+ESPACIO_POR_COLUMNA = {
+    "embedding_v2": "gemini-emb001-1536",
+    "embedding_v3": "qwen-tev4-1536",
+}
 
-def print_cobertura(cov: dict[str, int]) -> None:
-    tot = cov["chunks_vigentes"]
-    pct = (100.0 * cov["chunks_v2"] / tot) if tot else 0.0
+
+def print_cobertura(cov: dict) -> None:
+    # cobertura_columna usa claves genéricas; cobertura_vigentes conserva las
+    # históricas chunks_v2* — ambas se imprimen igual.
+    col = str(cov.get("col") or "embedding_v2")
+    tot = int(cov["chunks_vigentes"])
+    con = int(cov.get("chunks_col", cov.get("chunks_v2", 0)))
+    nul = int(cov.get("chunks_col_null", cov.get("chunks_v2_null", 0)))
+    pct = (100.0 * con / tot) if tot else 0.0
     print("=" * 60, flush=True)
-    print("COBERTURA chunks de VIGENTES", flush=True)
+    print(f"COBERTURA chunks de VIGENTES ({col})", flush=True)
     print(f"  contratos vigentes     : {cov['vigentes']:,}", flush=True)
     print(f"  chunks vigentes        : {tot:,}", flush=True)
-    print(f"  embedding_v2 NOT NULL  : {cov['chunks_v2']:,}  ({pct:.1f}%)", flush=True)
-    print(f"  embedding_v2 NULL      : {cov['chunks_v2_null']:,}", flush=True)
+    print(f"  {col} NOT NULL : {con:,}  ({pct:.1f}%)", flush=True)
+    print(f"  {col} NULL     : {nul:,}", flush=True)
     print("=" * 60, flush=True)
 
 
@@ -59,9 +70,13 @@ def run_gemini(
     precio_in: float | None = None,
     version_config: int = 0,
     verificar_config=None,
+    columna: str = "embedding_v2",
 ) -> dict:
     if not api_key:
         raise SystemExit("ERROR: GEMINI_API_KEY no encontrado (env / .env / GitHub secret)")
+    espacio = ESPACIO_POR_COLUMNA.get(columna)
+    if espacio is None:
+        raise ValueError(f"columna de embedding no soportada: {columna!r}")
     solicitar = solicitar or solicitar_embeddings_gemini
     modelo = modelo or GEMINI_EMBED_MODEL
     precio_in = EMBED_USD_PER_M if precio_in is None else precio_in
@@ -71,8 +86,8 @@ def run_gemini(
         (2.0 if fail_fast else 8.0) if lote_n <= 2 else DELAY_GEMINI_S
     )
     print("=" * 60, flush=True)
-    print(f"Embeddings {modelo} -> embedding_v2", flush=True)
-    print("  WHERE embedding_v2 IS NULL", flush=True)
+    print(f"Embeddings {modelo} -> {columna}", flush=True)
+    print(f"  WHERE {columna} IS NULL", flush=True)
     print(
         f"  fuente={fuente or '(todas)'}  ids={ids or '(vigentes)'}  "
         f"batch={lote_n}  embed_mode={embed_mode}  delay={pause:.1f}s  "
@@ -84,20 +99,20 @@ def run_gemini(
     vigente_ids = ids if ids else paginar_ids_vigentes(supa)
     print(f"  contratos: {len(vigente_ids):,}", flush=True)
     if fuente:
-        pendientes = chunks_sin_v2_por_fuente(supa, fuente, limit)
+        pendientes = chunks_sin_por_fuente(supa, columna, fuente, limit)
         if ids:
             idset = set(ids)
             pendientes = [p for p in pendientes if int(p["contrato_id"]) in idset]
     else:
-        pendientes = chunks_sin_embedding_v2(supa, vigente_ids, limit, fuente=fuente)
+        pendientes = chunks_sin_embedding(supa, columna, vigente_ids, limit, fuente=fuente)
     total = len(pendientes)
-    print(f"  chunks vigentes sin embedding_v2: {total:,}", flush=True)
+    print(f"  chunks vigentes sin {columna}: {total:,}", flush=True)
     if total == 0:
         print("Nada que hacer (idempotente).", flush=True)
         if fuente or ids:
             print("  (muestra: 0 pendientes)", flush=True)
         else:
-            print_cobertura(cobertura_vigentes(supa))
+            print_cobertura(cobertura_columna(supa, columna))
         return {"ok": 0, "err": 0, "total": 0, "pendientes": 0}
 
     t0 = time.time()
@@ -121,8 +136,8 @@ def run_gemini(
                 if verificar_config is not None:
                     verificar_config()
                 # Un solo upsert por lote (no N requests). Las filas ya existen,
-                # así que on_conflict=id solo actualiza embedding_v2.
-                guardar_embeddings_v2(supa, lote, embs)
+                # así que on_conflict=id solo actualiza la columna del espacio.
+                guardar_embeddings(supa, columna, lote, embs)
                 ok += len(lote)
                 for row, t in zip(lote, texts):
                     cid = int(row["contrato_id"])
@@ -156,13 +171,17 @@ def run_gemini(
             sleep(pause)
 
     elapsed = time.time() - t0
-    print(f"\nGemini v2 completado en {elapsed:.0f}s  ok={ok:,} err={errores:,}", flush=True)
+    print(
+        f"\n{modelo} {columna} completado en {elapsed:.0f}s  "
+        f"ok={ok:,} err={errores:,}",
+        flush=True,
+    )
     print_embed_stats("  ")
     if fuente or ids:
-        n_embedded = contar_embeddings_v2(supa, vigente_ids, fuente)
-        print(f"  embedding_v2 NOT NULL en muestra: {n_embedded}", flush=True)
+        n_embedded = contar_embeddings(supa, columna, vigente_ids, fuente)
+        print(f"  {columna} NOT NULL en muestra: {n_embedded}", flush=True)
     else:
-        print_cobertura(cobertura_vigentes(supa))
+        print_cobertura(cobertura_columna(supa, columna))
     # Traza unificada de consumo: una fila por corrida de embeddings.
     tok = EMBED_STATS["tokens_api"]
     if tok > 0:
@@ -182,6 +201,8 @@ def run_gemini(
                     "fuente": fuente,
                     "ids": ids or None,
                     "version_config": version_config or None,
+                    "columna": columna,
+                    "espacio": espacio,
                 },
             }).execute()
         except Exception as e:
@@ -200,7 +221,12 @@ def run_gemini(
             n_chunks_api=acc["chunks"] if fuente == "api" else None,
             tokens_est=tokens_est,
             costo_usd=costo,
-            detalle={"chars": chars, "fuente": fuente, "modelo": modelo},
+            detalle={
+                "chars": chars,
+                "fuente": fuente,
+                "modelo": modelo,
+                "espacio": espacio,
+            },
         )
 
     registrar_run(
@@ -217,6 +243,8 @@ def run_gemini(
             "ids": ids or None,
             "modelo": modelo,
             "version_config": version_config or None,
+            "columna": columna,
+            "espacio": espacio,
         },
     )
     return {"ok": ok, "err": errores, "total": total, "pendientes": total - ok}

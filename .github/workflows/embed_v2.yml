@@ -1,5 +1,6 @@
-# One-shot / re-runnable: llena embedding_v2 de vigentes (WHERE NULL).
-# No reemplaza el cron BGE. No hace --rechunk.
+# One-shot / re-runnable: llena embedding_v2 (gemini) y embedding_v3 (qwen)
+# de vigentes (WHERE NULL en cada espacio). No reemplaza el cron BGE.
+# No hace --rechunk.
 name: Embeddings Gemini v2
 
 on:
@@ -26,6 +27,7 @@ jobs:
       SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       GEMINI_API_KEY:       ${{ secrets.GEMINI_API_KEY }}
+      DASHSCOPE_API_KEY:    ${{ secrets.DASHSCOPE_API_KEY }}
       IA_MASTER_KEY: ${{ secrets.IA_MASTER_KEY }}
     steps:
       - name: Checkout
@@ -51,4 +53,13 @@ jobs:
             python generar_embeddings.py
           else
             python generar_embeddings.py --limit "$LIMIT"
+          fi
+
+      - name: Embeddings text-embedding-v4 → embedding_v3
+        run: |
+          LIMIT="${{ github.event.inputs.limit }}"
+          if [ -z "$LIMIT" ] || [ "$LIMIT" = "0" ]; then
+            python generar_embeddings.py --espacio qwen
+          else
+            python generar_embeddings.py --espacio qwen --limit "$LIMIT"
           fi
