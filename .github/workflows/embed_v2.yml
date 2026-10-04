@@ -1,13 +1,15 @@
 # One-shot / re-runnable: llena embedding_v2 (gemini) y embedding_v3 (qwen)
 # de vigentes (WHERE NULL en cada espacio). No reemplaza el cron BGE.
-# No hace --rechunk.
-name: Embeddings Gemini v2
+# No hace --rechunk. IA-007: cada proveedor corre aunque el otro falle
+# (if: always()), así un corte de cuota deja su diferencial NULL y el otro
+# espacio sigue al día.
+name: Embeddings dual v2/v3
 
 on:
   workflow_dispatch:
     inputs:
       limit:
-        description: "0 = todos los chunks vigentes con embedding_v2 NULL"
+        description: "0 = todos los chunks vigentes con vector NULL en cada columna"
         required: false
         default: "0"
 
@@ -55,7 +57,12 @@ jobs:
             python generar_embeddings.py --limit "$LIMIT"
           fi
 
+      - name: Probar DASHSCOPE_API_KEY
+        if: ${{ !cancelled() }}
+        run: python generar_embeddings.py --espacio qwen --auth-check
+
       - name: Embeddings text-embedding-v4 → embedding_v3
+        if: ${{ !cancelled() }}
         run: |
           LIMIT="${{ github.event.inputs.limit }}"
           if [ -z "$LIMIT" ] || [ "$LIMIT" = "0" ]; then
