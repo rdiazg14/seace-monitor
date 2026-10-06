@@ -91,6 +91,7 @@ def test_postproceso_encadena_pdf_y_embeddings_con_clave_inyectada(
                 "ids": [42],
                 "embed_mode": "auto",
                 "api_key": "test-key",
+                "columna": "embedding_v2",
             },
         ),
     ]

@@ -15,6 +15,7 @@ def rechunk_embed_pdf(
     precio_in: float | None = None,
     version_config: int = 0,
     verificar_config=None,
+    columna: str = "embedding_v2",
 ) -> None:
     """Regenera unicamente la fuente PDF y sus embeddings para un contrato."""
     if verificar_config is not None:
@@ -38,5 +39,6 @@ def rechunk_embed_pdf(
         ids=[contrato_id],
         embed_mode="auto",
         api_key=api_key,
+        columna=columna,
         **kwargs,
     )

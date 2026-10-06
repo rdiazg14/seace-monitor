@@ -35,6 +35,10 @@ ESPACIO_POR_COLUMNA = {
     "embedding_v3": "qwen-tev4-1536",
 }
 
+# Inverso (FIX-012): el espacio_vectorial de la config dinámica determina la
+# columna destino; un espacio jamás escribe en la columna de otro.
+COLUMNA_POR_ESPACIO = {espacio: col for col, espacio in ESPACIO_POR_COLUMNA.items()}
+
 
 def print_cobertura(cov: dict) -> None:
     # cobertura_columna usa claves genéricas; cobertura_vigentes conserva las

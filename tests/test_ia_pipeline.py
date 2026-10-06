@@ -94,11 +94,56 @@ def test_extras_embeddings_openai_arma_transporte() -> None:
     assert extras["modelo"] == "text-embedding-v4"
     assert extras["precio_in"] == 0.07
     assert extras["version_config"] == 9
+    assert extras["columna"] == "embedding_v3"
     assert "solicitar" in extras
 
 
 def test_extras_embeddings_sin_cfg_vacio() -> None:
     assert pipeline.extras_embeddings(None) == {}
+
+
+def test_extras_embeddings_gemma_mapea_v2() -> None:
+    cfg = cfg_openai(
+        endpoint="embeddings", proveedor="gemini", tipo_api="gemini",
+        modelo="gemini-embedding-001", dimensiones=1536,
+        espacio_vectorial="gemini-emb001-1536",
+    )
+    assert pipeline.extras_embeddings(cfg)["columna"] == "embedding_v2"
+
+
+def test_extras_embeddings_filtro_espacio() -> None:
+    qwen = cfg_openai(
+        endpoint="embeddings", proveedor="qwen", tipo_api="openai",
+        modelo="text-embedding-v4", dimensiones=1536,
+        espacio_vectorial="qwen-tev4-1536",
+    )
+    gem = cfg_openai(
+        endpoint="embeddings", proveedor="gemini", tipo_api="gemini",
+        modelo="gemini-embedding-001", dimensiones=1536,
+        espacio_vectorial="gemini-emb001-1536",
+    )
+    # FIX-012: el escritor de un espacio no adopta la config de otro.
+    assert pipeline.extras_embeddings(qwen, espacio="gemini-emb001-1536") == {}
+    assert pipeline.extras_embeddings(qwen, espacio="qwen-tev4-1536")["columna"] \
+        == "embedding_v3"
+    assert pipeline.extras_embeddings(gem, espacio="gemini-emb001-1536")["columna"] \
+        == "embedding_v2"
+
+
+def test_extras_embeddings_espacio_desconocido_vacio() -> None:
+    cfg = cfg_openai(
+        endpoint="embeddings", tipo_api="openai", modelo="text-embedding-v4",
+        dimensiones=1536, espacio_vectorial="otro-espacio-1536",
+    )
+    assert pipeline.extras_embeddings(cfg) == {}
+
+
+def test_extras_embeddings_sin_espacio_legacy_v2() -> None:
+    cfg = cfg_openai(
+        endpoint="embeddings", tipo_api="openai", modelo="text-embedding-v4",
+        dimensiones=1536, espacio_vectorial=None,
+    )
+    assert pipeline.extras_embeddings(cfg)["columna"] == "embedding_v2"
 
 
 # ── descargar_requerimiento ──────────────────────────────────────────────────
@@ -160,6 +205,24 @@ def test_dr_rechunk_usa_cfg_embeddings(monkeypatch) -> None:
     assert calls[0]["api_key"] == "gkey-db"
     assert calls[0]["modelo"] == "gemini-embedding-001"
     assert calls[0]["version_config"] == 9
+    assert calls[0]["columna"] == "embedding_v2"
+
+
+def test_dr_rechunk_corpus_qwen_embebe_v3(monkeypatch) -> None:
+    # FIX-012: con corpus=qwen el rechunk escribe la columna del espacio
+    # activo (v3); el diferencial diario rellena v2 con Gemini.
+    calls: list[dict] = []
+    cfg = cfg_openai(
+        endpoint="embeddings", proveedor="qwen", tipo_api="openai",
+        modelo="text-embedding-v4", dimensiones=1536,
+        espacio_vectorial="qwen-tev4-1536",
+    )
+    monkeypatch.setattr(dr, "cfg_resuelta", lambda e: cfg)
+    monkeypatch.setattr(
+        dr, "_rechunk_embed_pdf", lambda supa, cid, **kw: calls.append(kw))
+    dr.rechunk_embed_pdf(object(), 5)
+    assert calls[0]["columna"] == "embedding_v3"
+    assert calls[0]["modelo"] == "text-embedding-v4"
 
 
 def test_dr_rechunk_sin_cfg_usa_env(monkeypatch) -> None:
@@ -238,17 +301,38 @@ def test_ge_run_gemini_env_sin_cfg(monkeypatch) -> None:
 def test_ge_run_gemini_con_cfg(monkeypatch) -> None:
     calls: list[dict] = []
     cfg = cfg_openai(
-        endpoint="embeddings", proveedor="qwen", tipo_api="openai",
-        modelo="text-embedding-v4", dimensiones=1536,
-        espacio_vectorial="qwen-tev4-1536",
+        endpoint="embeddings", proveedor="gemini", tipo_api="gemini",
+        modelo="gemini-embedding-001", dimensiones=1536,
+        espacio_vectorial="gemini-emb001-1536",
     )
     monkeypatch.setattr(ge, "cfg_resuelta", lambda e: cfg)
     monkeypatch.setattr(
         ge, "_run_gemini", lambda supa, limit, **kw: calls.append(kw) or {})
     ge.run_gemini(object(), 0)
     assert calls[0]["api_key"] == "db-key"
-    assert calls[0]["modelo"] == "text-embedding-v4"
+    assert calls[0]["modelo"] == "gemini-embedding-001"
+    assert calls[0]["columna"] == "embedding_v2"
     assert "solicitar" in calls[0]
+
+
+def test_ge_run_gemini_v2_ignora_cfg_qwen(monkeypatch) -> None:
+    # FIX-012: con corpus=qwen el escritor v2 (espacio gemini) sigue por env,
+    # jamás escribe vectores text-embedding-v4 en embedding_v2.
+    calls: list[dict] = []
+    cfg = cfg_openai(
+        endpoint="embeddings", proveedor="qwen", tipo_api="openai",
+        modelo="text-embedding-v4", dimensiones=1536,
+        espacio_vectorial="qwen-tev4-1536",
+    )
+    monkeypatch.setattr(ge, "GEMINI_API_KEY", "env-key")
+    monkeypatch.setattr(ge, "cfg_resuelta", lambda e: cfg)
+    monkeypatch.setattr(
+        ge, "_run_gemini", lambda supa, limit, **kw: calls.append(kw) or {})
+    ge.run_gemini(object(), 0)
+    assert calls[0]["api_key"] == "env-key"
+    assert calls[0]["columna"] == "embedding_v2"
+    assert "modelo" not in calls[0]
+    assert "solicitar" not in calls[0]
 
 
 # ── extraer_contenedores ─────────────────────────────────────────────────────

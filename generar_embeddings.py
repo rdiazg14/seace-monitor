@@ -136,7 +136,12 @@ def run_gemini(
             precio_in=QWEN_EMBED_USD_PER_M,
             columna="embedding_v3",
         )
-    extras = extras_embeddings(cfg_resuelta("embeddings"))
+    # El escritor v2 solo adopta la config cuando el endpoint 'embeddings'
+    # apunta al espacio gemini; con corpus=qwen la config describe el espacio
+    # activo y v2 sigue por env (FIX-012, sin mezcla de espacios).
+    extras = extras_embeddings(
+        cfg_resuelta("embeddings"), espacio="gemini-emb001-1536"
+    )
     api_key = extras.pop("api_key", GEMINI_API_KEY)
     return _run_gemini(
         supa,
@@ -148,7 +153,7 @@ def run_gemini(
         delay=delay,
         fail_fast=fail_fast,
         api_key=api_key,
-        columna="embedding_v2",
+        columna=extras.pop("columna", "embedding_v2"),
         **extras,
     )
 

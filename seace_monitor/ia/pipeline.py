@@ -11,6 +11,7 @@ from __future__ import annotations
 from functools import partial
 from typing import Any
 
+from seace_monitor.embeddings.service import COLUMNA_POR_ESPACIO
 from seace_monitor.gemini import (
     FLASH_USD_IN_PER_M,
     FLASH_USD_OUT_PER_M,
@@ -25,6 +26,7 @@ from seace_monitor.ia.resolver import (
 )
 
 DIMENSIONES_EMBEDDING_V2 = 1536  # espacio activo gemini-emb001-1536 (DATOS)
+ESPACIO_EMBEDDING_V2 = "gemini-emb001-1536"
 
 
 def cfg_resuelta(endpoint: str) -> ModeloCfg | None:
@@ -135,8 +137,17 @@ def solicitar_ocr_cfg(
     )
 
 
-def extras_embeddings(cfg: ModeloCfg | None) -> dict[str, Any]:
-    """Kwargs para run_gemini/rechunk según la config dinámica 'embeddings'."""
+def extras_embeddings(
+    cfg: ModeloCfg | None,
+    espacio: str | None = None,
+) -> dict[str, Any]:
+    """Kwargs para run_gemini/rechunk según la config dinámica 'embeddings'.
+
+    La columna destino la fija ``espacio_vectorial`` del modelo resuelto
+    (FIX-012): un endpoint nunca escribe vectores en la columna de otro
+    espacio. Con ``espacio`` el llamador exige un espacio concreto; si la
+    config apunta a otro, devuelve {} → camino por env.
+    """
     if cfg is None or cfg.tipo_api not in ("openai", "gemini"):
         return {}
     key = clave_config(cfg)
@@ -150,10 +161,15 @@ def extras_embeddings(cfg: ModeloCfg | None) -> dict[str, Any]:
             f"({cfg.modelo}); el corpus activo es {DIMENSIONES_EMBEDDING_V2}. "
             "La migración de espacio vectorial corresponde a IA-007."
         )
+    esp_cfg = cfg.espacio_vectorial or ESPACIO_EMBEDDING_V2
+    columna = COLUMNA_POR_ESPACIO.get(esp_cfg)
+    if columna is None or (espacio is not None and esp_cfg != espacio):
+        return {}
     extras: dict[str, Any] = {
         "api_key": key,
         "modelo": cfg.modelo,
         "version_config": cfg.version_config,
+        "columna": columna,
     }
     def verificar_config() -> None:
         actual = cfg_resuelta("embeddings")
