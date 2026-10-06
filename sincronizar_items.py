@@ -13,7 +13,12 @@ Este paso reconstruye contrato_items como espejo de items_json:
       cantidad, unidad, distrito).
 
 Idempotente: correrlo N veces deja el mismo estado. Atómico: una sola
-transacción. Pensado para correr como paso `continue-on-error` tras
+transacción. Además toma un pg_try_advisory_xact_lock: pipeline.yml y
+deteccion_temprana.yml lo ejecutan en horarios que pueden solaparse; si
+otra corrida está en curso, esta se salta (ambas producen el mismo
+espejo, la que gana ya hizo el trabajo). Sin el lock, DELETE+INSERT
+concurrentes chocaban con UniqueViolation en el PK (FIX-011).
+Pensado para correr como paso `continue-on-error` tras
 enriquecer_detalle.py; si falla, items_json ya quedó guardado (fuente de
 verdad) y el pipeline no se cae.
 
@@ -31,6 +36,10 @@ from seace_monitor.db import connect
 cargar_env()
 
 # Mismo mapeo que docs/sql/migraciones/capas_fase3_items.sql. Espejo exacto de items_json.
+# Lock de sesión por transacción: una sola corrida DELETE+INSERT a la vez
+# (pipeline y deteccion_temprana pueden solaparse). 726001 = clave fija del paso.
+SQL_LOCK = "SELECT pg_try_advisory_xact_lock(726001)"
+
 SQL_DELETE = "DELETE FROM contrato_items"
 
 SQL_INSERT = """
@@ -69,6 +78,9 @@ def main() -> int:
     t0 = time.perf_counter()
     with connect(dsn) as conn:
         with conn.transaction():
+            if not conn.execute(SQL_LOCK).fetchone()[0]:
+                print("[items] otra sincronización en curso; se omite (mismo resultado)", flush=True)
+                return 0
             n_del = conn.execute(SQL_DELETE).rowcount
             n_ins = conn.execute(SQL_INSERT).rowcount
         filas = conn.execute(
