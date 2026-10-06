@@ -1,5 +1,5 @@
-2026-10-05 14:01:51 UTC
-total_registros=78,160
-nuevos_esta_corrida=8
+2026-10-06 03:32:20 UTC
+total_registros=78,161
+nuevos_esta_corrida=1
 rechazados_esta_corrida=0
 alerta_anomala=0
