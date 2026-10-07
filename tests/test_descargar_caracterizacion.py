@@ -56,6 +56,12 @@ class Q:
     def is_(self, *a):
         return self._op("is_", *a)
 
+    def neq(self, *a):
+        return self._op("neq", *a)
+
+    def gte(self, *a):
+        return self._op("gte", *a)
+
     def or_(self, *a):
         return self._op("or_", *a)
 
@@ -983,3 +989,93 @@ def test_entrypoint_reexporta_los_nombres_movidos():
     assert dr.meta_local_por_id is meta.meta_local_por_id
     assert dr.REQ_PENDIENTE_OCR == "pendiente_ocr"
     assert dr.PAGE_DB == 1_000
+
+
+# ── FIX-015: dead-letter de la cola OCR ───────────────────────────────────────
+
+def test_selectivo_agotado_sale_de_cola_sin_gastar_ocr():
+    captured: dict = {}
+    fila = {"id": 7, "paginas_ocr_pendientes": [2, 3]}
+    colas = iter([([fila], {}), ([], {})])
+    ocr_calls: list = []
+    agotados: list = []
+    estados: list = []
+
+    _run_selectivo(
+        FakeSupa(), captured,
+        pendientes=lambda *a, **k: next(colas),
+        ocr_contrato=lambda *a, **k: ocr_calls.append(1),
+        rechazos_ocr=lambda *a, **k: 9,
+        agotar=lambda supa, c, rechazos=0: agotados.append(
+            (int(c["id"]), rechazos)),
+        imprimir=lambda i, n, cid, estado, detalle: estados.append(estado),
+    )
+
+    assert ocr_calls == []          # no gastó ni una página
+    assert agotados == [(7, 9)]     # se vació con el conteo observado
+    assert estados == ["OCR_AGOTADO"]
+    assert captured["agotados"] == 1
+    assert captured["err"] == 0
+
+
+def test_selectivo_bajo_umbral_procesa_normal():
+    captured: dict = {}
+    fila = {"id": 8, "paginas_ocr_pendientes": [1]}
+    colas = iter([([fila], {}), ([], {})])
+    ocr_calls: list = []
+
+    _run_selectivo(
+        FakeSupa(), captured,
+        pendientes=lambda *a, **k: next(colas),
+        ocr_contrato=lambda *a, **k: ocr_calls.append(1) or {
+            "nuevas": [1], "pend": []},
+        rechazos_ocr=lambda *a, **k: 7,
+    )
+
+    assert ocr_calls == [1]         # 7 < umbral: sigue reintentando
+    assert captured["agotados"] == 0
+
+
+def test_rechazos_ocr_recientes_filtra_ventana_resueltos_y_sin_pdf():
+    from seace_monitor.ocr.agotado import rechazos_ocr_recientes
+
+    supa = FakeSupa(lambda q: SimpleNamespace(data=[], count=5))
+    n = rechazos_ocr_recientes(supa, 42)
+
+    assert n == 5
+    q = supa.queries[0]
+    assert q.table_name == "ingesta_rechazados"
+    assert q.has_op("eq", "id_contrato", 42)
+    assert q.has_op("eq", "origen", "pdf")
+    assert q.has_op("eq", "resuelto", False)
+    assert q.has_op("neq", "motivo", "sin archivo PDF")
+    assert any(op[0] == "gte" and op[1][0] == "created_at" for op in q.ops)
+
+
+def test_agotar_ocr_vacia_cola_audita_perdida_y_limpia_sidecar(tmp_path):
+    from seace_monitor.ocr.agotado import agotar_ocr
+
+    meta_file = tmp_path / "meta.jsonl"
+    contrato = {
+        "id": 55, "nro_contratacion": "X-1", "tdr_texto": "texto previo",
+        "tdr_tipo_extraccion": "mixto", "tdr_n_paginas": 10,
+        "paginas_ocr_pendientes": [4, 5], "paginas_ocr_hechas": [1, 2, 3],
+    }
+    supa = FakeSupa()
+    agotar_ocr(supa, contrato, rechazos=9, meta_path=meta_file)
+
+    updates = [q for q in supa.queries
+               if q.table_name == "contratos" and q.update_payload]
+    assert updates and updates[0].update_payload == {
+        "paginas_ocr_pendientes": []}
+    inserts = [q for q in supa.queries
+               if q.table_name == "ingesta_rechazados" and q.insert_payload]
+    assert inserts
+    row = inserts[0].insert_payload
+    assert row["motivo"] == "ocr_agotado"
+    assert row["origen"] == "ocr"
+    assert row["payload"]["paginas_perdidas"] == [4, 5]
+    assert row["payload"]["rechazos_ventana"] == 9
+    side = json.loads(meta_file.read_text(encoding="utf-8").strip())
+    assert side["paginas_ocr_pendientes"] == []
+    assert side["paginas_ocr_hechas"] == [1, 2, 3]

@@ -28,6 +28,7 @@ from seace_monitor.ingestion.repository import (
 )
 from seace_monitor.logging import PASO_OCR, registrar_run
 
+from .agotado import OCR_AGOTADO_UMBRAL, agotar_ocr, rechazos_ocr_recientes
 from .cuota import cargar_cuota_ocr
 from .gemini_provider import CupoFlash
 from .pendientes import contrato_ocr_sigue_elegible, pendientes_ocr_paginas
@@ -96,6 +97,9 @@ def run_ocr_selectivo(
     cargar_cuota: Callable = cargar_cuota_ocr,
     pendientes: Callable = pendientes_ocr_paginas,
     elegible: Callable = contrato_ocr_sigue_elegible,
+    rechazos_ocr: Callable = rechazos_ocr_recientes,
+    agotar: Callable = agotar_ocr,
+    umbral_agotado: int = OCR_AGOTADO_UMBRAL,
     columnas_ok: Callable = columnas_extraccion_ok,
     http_factory: Callable = SeaceHttp,
     rechazar: Callable = registrar_rechazo,
@@ -144,6 +148,7 @@ def run_ocr_selectivo(
         ok_c: int = 0,
         pags_ok: int = 0,
         err: int = 0,
+        agotados: int = 0,
         cola_c: int = 0,
         cola_p: int = 0,
         ids_tocados: list[int] | None = None,
@@ -170,6 +175,7 @@ def run_ocr_selectivo(
             "ocr_contratos": ok_c,
             "ocr_paginas": pags_ok,
             "err": err,
+            "agotados": agotados,
             "flash_hoy": cuota["requests"],
             "max_dia": max_dia,
             "usd_est": round(float(cuota["usd_est"]), 6),
@@ -262,6 +268,7 @@ def run_ocr_selectivo(
     ok_c = 0
     pags_ok = 0
     err = 0
+    agotados = 0
     ids_tocados: list[int] = []
     motivo_parada = "completo"
     http = http_factory(headed=headed)
@@ -286,6 +293,19 @@ def run_ocr_selectivo(
                 )
                 if not ok_el:
                     print(f"  skip id={cid} {razon}", flush=True)
+                    continue
+                n_rech = rechazos_ocr(supa, cid)
+                if n_rech >= umbral_agotado:
+                    agotados += 1
+                    imprimir(
+                        i, len(filas), cid, "OCR_AGOTADO",
+                        f"rechazos={n_rech} "
+                        f"perdidas={len(c.get('paginas_ocr_pendientes') or [])}",
+                    )
+                    try:
+                        agotar(supa, c, rechazos=n_rech)
+                    except Exception as e:
+                        print(f"  [warn] agotar id={cid}: {e}", flush=True)
                     continue
                 entro_ocr = True
                 row = ocr_contrato(
@@ -365,6 +385,7 @@ def run_ocr_selectivo(
         ok_c=ok_c,
         pags_ok=pags_ok,
         err=err,
+        agotados=agotados,
         cola_c=cola_c,
         cola_p=cola_p,
         ids_tocados=ids_tocados,
