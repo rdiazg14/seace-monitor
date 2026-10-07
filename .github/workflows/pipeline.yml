@@ -73,13 +73,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           playwright install --with-deps chromium
-          # Backend RAR (rarfile): en ubuntu-26.04 el paquete es '7zip' (binario
-          # 7zz); p7zip-full solo existe en imágenes antiguas. Sin backend, el
-          # extractor degrada a rechazo controlado 'rar_sin_binario' por contrato,
-          # sin tumbar la corrida. La sonda deja evidencia en el log.
+          # Backend RAR (rarfile): '7zip' trae 7z/7zz pero el codec RAR vive en
+          # '7zip-rar' — sin él 7z existe y la extracción falla igual. Sonda de
+          # capacidad real: 'i' lista codecs. Sin backend, el extractor degrada
+          # a rechazo controlado por contrato, sin tumbar la corrida.
           sudo apt-get update -qq
-          sudo apt-get install -y 7zip || sudo apt-get install -y p7zip-full || true
+          sudo apt-get install -y 7zip 7zip-rar || sudo apt-get install -y p7zip-full || true
           command -v 7zz || command -v 7z || command -v unrar || echo "::warning::sin backend RAR — RAR se rechazará como rar_sin_binario"
+          (7zz i 2>/dev/null || 7z i 2>/dev/null) | grep -qi rar || echo "::warning::backend sin codec RAR — instalar 7zip-rar"
 
       - name: Ingesta incremental corpus completo
         id: ingesta

@@ -152,3 +152,127 @@ def test_servicio_rechaza_doc_binario_sin_escribir(monkeypatch) -> None:
     assert result == "doc_sin_soporte"
     assert len(rejects) == 1
     assert rejects[0][1] == {"origen": "contenedor"}
+
+
+# ── RAR (OPS-001): tool global correcto y motivo honesto ──────────────────────
+
+def _fake_rarfile():
+    import sys
+    import types
+
+    fake = types.SimpleNamespace(
+        UNRAR_TOOL="unrar",
+        SEVENZIP_TOOL="7z",
+        SEVENZIP2_TOOL="7zz",
+        BSDTAR_TOOL="bsdtar",
+        UNAR_TOOL="unar",
+    )
+
+    class FakeRar:
+        def __init__(self, path):
+            pass
+
+        def infolist(self):
+            return [types.SimpleNamespace(
+                is_dir=lambda: False, filename="t.txt")]
+
+        def read(self, name):
+            return b"texto"
+
+    fake.RarFile = FakeRar
+    return fake
+
+
+def test_extraer_rar_7z_asigna_sevenzip_no_unrar(monkeypatch) -> None:
+    # OPS-001: UNRAR_TOOL='7z' ejecutaba 7z con sintaxis unrar y fallaba.
+    import sys
+    import seace_monitor.documents.containers as containers
+
+    fake = _fake_rarfile()
+    monkeypatch.setitem(sys.modules, "rarfile", fake)
+    monkeypatch.setattr(containers, "_find_rar_tool", lambda: "7z")
+
+    containers.extraer_rar(b"Rar!\x1a\x07\x00fake")
+
+    assert fake.SEVENZIP_TOOL == "7z"
+    assert fake.UNRAR_TOOL == "unrar"  # no pisado
+
+
+def test_extraer_rar_7zz_asigna_sevenzip2(monkeypatch) -> None:
+    import sys
+    import seace_monitor.documents.containers as containers
+
+    fake = _fake_rarfile()
+    monkeypatch.setitem(sys.modules, "rarfile", fake)
+    monkeypatch.setattr(containers, "_find_rar_tool", lambda: "7zz")
+
+    containers.extraer_rar(b"Rar!\x1a\x07\x00fake")
+
+    assert fake.SEVENZIP2_TOOL == "7zz"
+
+
+def test_servicio_rar_error_real_no_se_enmascara(monkeypatch) -> None:
+    # OPS-001: antes todo fallo RAR se re-etiquetaba 'sin binario' aunque el
+    # binario existiera y la causa fuera otra (codec ausente, archivo dañado).
+    body = b"Rar!\x1a\x07\x00resto"
+    http = FakeHttp((200, {"content-type": "application/octet-stream"}, body))
+    rejects: list = []
+    monkeypatch.setattr(
+        container_service,
+        "registrar_rechazo",
+        lambda *args, **kwargs: rejects.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        container_service,
+        "extraer_rar",
+        lambda *a, **k: (_ for _ in ()).throw(
+            RuntimeError("rar con 120 archivos (> 100)")),
+    )
+
+    result = container_service.procesar_contenedor(
+        http,
+        object(),
+        {"id": 42, "req_url": "sin_pdf"},
+        False,
+        listar_archivos=lambda client, cid: (
+            "listar",
+            [{"idContratoArchivo": 77, "nombre": "REQUERIMIENTO.rar"}],
+        ),
+        descargar_url="https://seace.test/{idContratoArchivo}",
+    )
+
+    assert "extraccion_fallo" in result
+    assert rejects and rejects[0][0][2] != container_service.MOTIVO_RAR
+    assert "120 archivos" in rejects[0][0][2]
+
+
+def test_servicio_rar_sin_binario_se_normaliza(monkeypatch) -> None:
+    body = b"Rar!\x1a\x07\x00resto"
+    http = FakeHttp((200, {"content-type": "application/octet-stream"}, body))
+    rejects: list = []
+    monkeypatch.setattr(
+        container_service,
+        "registrar_rechazo",
+        lambda *args, **kwargs: rejects.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        container_service,
+        "extraer_rar",
+        lambda *a, **k: (_ for _ in ()).throw(
+            RuntimeError(container_service.MOTIVO_RAR)),
+    )
+
+    result = container_service.procesar_contenedor(
+        http,
+        object(),
+        {"id": 42, "req_url": "sin_pdf"},
+        False,
+        listar_archivos=lambda client, cid: (
+            "listar",
+            [{"idContratoArchivo": 77, "nombre": "REQUERIMIENTO.rar"}],
+        ),
+        descargar_url="https://seace.test/{idContratoArchivo}",
+    )
+
+    assert "extraccion_fallo" in result
+    assert rejects[0][0][2] == container_service.MOTIVO_RAR

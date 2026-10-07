@@ -113,7 +113,7 @@ def procesar_contenedor(
             return f"tipo_{tipo}"
     except Exception as e:
         motivo = str(e)
-        if "rar sin binario" in motivo or "rar" in tipo:
+        if "rar sin binario" in motivo:
             motivo = MOTIVO_RAR
         if not dry_run:
             registrar_rechazo(

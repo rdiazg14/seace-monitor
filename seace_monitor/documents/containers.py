@@ -274,7 +274,19 @@ def extraer_rar(
     tool = _find_rar_tool()
     if not tool:
         raise RuntimeError(MOTIVO_RAR)
-    rarfile.UNRAR_TOOL = tool
+    # Cada backend lleva su global propio en rarfile (la línea de comandos
+    # difiere: unrar usa 'p -inul', 7z usa 'e -so', etc.). Asignar
+    # UNRAR_TOOL='7z' ejecuta 7z con sintaxis de unrar y falla (OPS-001).
+    if tool == "7zz":
+        rarfile.SEVENZIP2_TOOL = tool
+    elif tool in ("7z", "7za"):
+        rarfile.SEVENZIP_TOOL = tool
+    elif tool == "bsdtar":
+        rarfile.BSDTAR_TOOL = tool
+    elif tool == "unar":
+        rarfile.UNAR_TOOL = tool
+    else:
+        rarfile.UNRAR_TOOL = tool
     fd, tmp_name = tempfile.mkstemp(prefix="seace-rar-", suffix=".rar")
     os.close(fd)
     tmp = Path(tmp_name)
