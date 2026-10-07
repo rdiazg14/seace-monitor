@@ -202,6 +202,48 @@ def test_ocr_openai_imagen_data_uri_y_uso_compartido() -> None:
     assert ocr_gemini.OCR_USAGE_ACUM["llamadas"] == 1
 
 
+def test_ocr_openai_prompt_nativo_por_proveedor() -> None:
+    # FIX-014: deepseek-ocr-2 (novita) emite EOS inmediato con el prompt
+    # conversacional; su instrucción nativa es "Free OCR.".
+    client = FakeClient([response(200, {
+        "choices": [{"message": {"content": "t"}}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+    })])
+
+    solicitar_ocr_openai(
+        client, b"img", "image/jpeg", "k", url="u",
+        modelo="deepseek/deepseek-ocr-2", proveedor="novita",
+        params={"enable_thinking": False}, sleep=lambda s: None,
+    )
+
+    payload = client.calls[0][1]["json"]
+    assert payload["messages"][0]["content"][0]["text"] == "Free OCR."
+    # params genéricos pasan intactos al payload; ocr_prompt nunca se filtra.
+    assert payload["enable_thinking"] is False
+    assert "ocr_prompt" not in payload
+
+
+def test_ocr_openai_prompt_por_defecto_y_override_cfg() -> None:
+    client = FakeClient([response(200, {
+        "choices": [{"message": {"content": "t"}}], "usage": {},
+    }), response(200, {
+        "choices": [{"message": {"content": "t"}}], "usage": {},
+    })])
+
+    solicitar_ocr_openai(
+        client, b"i", "image/jpeg", "k", url="u",
+        modelo="otro-modelo", proveedor="otro", sleep=lambda s: None)
+    solicitar_ocr_openai(
+        client, b"i", "image/jpeg", "k", url="u",
+        modelo="m", proveedor="novita",
+        params={"ocr_prompt": "Custom."}, sleep=lambda s: None)
+
+    p1 = client.calls[0][1]["json"]["messages"][0]["content"][0]["text"]
+    p2 = client.calls[1][1]["json"]["messages"][0]["content"][0]["text"]
+    assert p1 == ocr_gemini.OCR_PROMPT  # proveedor sin mapa → prompt histórico
+    assert p2 == "Custom."            # params.ocr_prompt gana al mapa
+
+
 def test_ocr_openai_429_traduce_a_cupoflash_reanudable() -> None:
     client = FakeClient([response(429, {"error": {"type": "rate_limit"}})])
     with pytest.raises(CupoFlash) as caught:

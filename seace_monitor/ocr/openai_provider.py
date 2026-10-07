@@ -27,6 +27,24 @@ from .gemini_provider import (
     CupoFlash,
 )
 
+# FIX-014: los OCR especializados no procesan instrucciones largas — con el
+# prompt conversacional genérico emiten EOS inmediato (choices[0].content="")
+# o caen en bucles degenerados. Su contrato nativo es la instrucción corta
+# del entrenamiento (Novita deepseek-ocr-2: "Free OCR."). La cfg puede fijar
+# otro texto con params={"ocr_prompt": "..."} sin tocar código.
+OCR_PROMPT_POR_PROVEEDOR = {"novita": "Free OCR."}
+
+
+def _prompt_ocr(params: dict | None, proveedor: str) -> tuple[str, dict]:
+    """Prompt efectivo y ``params`` sin la clave interna ``ocr_prompt``."""
+    limpios = dict(params or {})
+    prompt = (
+        limpios.pop("ocr_prompt", None)
+        or OCR_PROMPT_POR_PROVEEDOR.get(proveedor)
+        or OCR_PROMPT
+    )
+    return prompt, limpios
+
 
 def solicitar_ocr_openai(
     client: httpx.Client,
@@ -43,13 +61,14 @@ def solicitar_ocr_openai(
 ) -> str:
     """Envía una imagen a un chat/completions con visión y devuelve el texto."""
     encoded = base64.b64encode(image_bytes).decode("ascii")
+    prompt, params_limpios = _prompt_ocr(params, proveedor)
     payload = {
-        **(params or {}),
+        **params_limpios,
         "model": modelo,
         "messages": [{
             "role": "user",
             "content": [
-                {"type": "text", "text": OCR_PROMPT},
+                {"type": "text", "text": prompt},
                 {
                     "type": "image_url",
                     "image_url": {"url": f"data:{mime};base64,{encoded}"},
