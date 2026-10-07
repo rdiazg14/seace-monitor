@@ -185,6 +185,78 @@ def test_dr_ocr_cfg_openai_desplaza_env(monkeypatch) -> None:
     assert OCR_ACTIVO["modelo"] == "deepseek/deepseek-ocr-2"
 
 
+# ── FIX-014: contingencia Gemini env cuando la cfg agota reintentos ───────────
+
+def _lanzar(exc: Exception):
+    return lambda *a, **k: (_ for _ in ()).throw(exc)
+
+
+def test_dr_ocr_contingencia_gemini_si_cfg_falla(monkeypatch) -> None:
+    llamadas: list = []
+    cfg = cfg_openai()
+    monkeypatch.setattr(dr, "resolver_cfg", lambda e: cfg)
+    monkeypatch.setattr(dr, "respetar_rpm", lambda: None)
+    monkeypatch.setattr(dr, "GEMINI_API_KEY", "env-key")
+    monkeypatch.setattr(
+        "seace_monitor.ocr.contingencia.solicitar_ocr_cfg",
+        _lanzar(RuntimeError("novita respuesta vacía")))
+    monkeypatch.setattr(
+        "seace_monitor.ocr.contingencia.solicitar_ocr_gemini",
+        lambda http, b, m, k: llamadas.append(k) or "texto gemini")
+
+    assert dr.ocr_pagina_gemini(b"img") == "texto gemini"
+    assert llamadas == ["env-key"]
+    # Telemetría: la página salió por el modelo env, no por la cfg novita.
+    assert OCR_ACTIVO["modelo"] == ocr_provider.GEMINI_FLASH
+
+
+def test_dr_ocr_cupoflash_propaga_sin_contingencia(monkeypatch) -> None:
+    # Cuota/rate-limit agotada = parada; nunca trasladar gasto a Gemini.
+    monkeypatch.setattr(dr, "resolver_cfg", lambda e: cfg_openai())
+    monkeypatch.setattr(dr, "respetar_rpm", lambda: None)
+    monkeypatch.setattr(dr, "GEMINI_API_KEY", "env-key")
+    monkeypatch.setattr(
+        "seace_monitor.ocr.contingencia.solicitar_ocr_cfg",
+        _lanzar(ocr_provider.CupoFlash("tope diario", motivo="cupo")))
+    monkeypatch.setattr(
+        "seace_monitor.ocr.contingencia.solicitar_ocr_gemini",
+        lambda *a, **k: pytest.fail("gemini env llamado pese a CupoFlash"))
+
+    with pytest.raises(ocr_provider.CupoFlash):
+        dr.ocr_pagina_gemini(b"img")
+
+
+def test_dr_ocr_cfg_gemini_no_reintenta_env(monkeypatch) -> None:
+    # La cfg ya es Gemini: el env es el mismo modelo, reintentar no aporta.
+    monkeypatch.setattr(
+        dr, "resolver_cfg",
+        lambda e: cfg_openai(proveedor="gemini", tipo_api="gemini"))
+    monkeypatch.setattr(dr, "respetar_rpm", lambda: None)
+    monkeypatch.setattr(dr, "GEMINI_API_KEY", "env-key")
+    monkeypatch.setattr(
+        "seace_monitor.ocr.contingencia.solicitar_ocr_cfg",
+        _lanzar(RuntimeError("gemini cfg falló")))
+    monkeypatch.setattr(
+        "seace_monitor.ocr.contingencia.solicitar_ocr_gemini",
+        lambda *a, **k: pytest.fail("reintento redundante al mismo modelo"))
+
+    with pytest.raises(RuntimeError, match="gemini cfg falló"):
+        dr.ocr_pagina_gemini(b"img")
+
+
+def test_ec_ocr_tambien_delega_en_contingencia(monkeypatch) -> None:
+    monkeypatch.setattr(ec, "cfg_resuelta", lambda e: cfg_openai())
+    monkeypatch.setattr(ec, "GEMINI_API_KEY", "env-key")
+    monkeypatch.setattr(
+        "seace_monitor.ocr.contingencia.solicitar_ocr_cfg",
+        _lanzar(RuntimeError("novita vacío")))
+    monkeypatch.setattr(
+        "seace_monitor.ocr.contingencia.solicitar_ocr_gemini",
+        lambda http, b, m, k: "via ec")
+
+    assert ec.ocr_pagina_gemini(b"img") == "via ec"
+
+
 def test_dr_rechunk_usa_cfg_embeddings(monkeypatch) -> None:
     calls: list[dict] = []
     cfg = cfg_openai(

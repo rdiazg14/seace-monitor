@@ -59,6 +59,7 @@ from seace_monitor.ia.pipeline import (
     fijar_ocr_activo,
     solicitar_ocr_cfg,
 )
+from seace_monitor.ocr.contingencia import ocr_con_contingencia
 from seace_monitor.ocr.gemini_provider import solicitar_ocr_gemini
 from seace_monitor.logging import PASO_CONTENEDORES, registrar_run
 
@@ -88,7 +89,8 @@ def ocr_pagina_gemini(img_bytes: bytes, mime: str = "image/jpeg") -> str:
         return limpiar_texto(
             solicitar_ocr_gemini(httpx, img_bytes, mime, GEMINI_API_KEY)
         )
-    return limpiar_texto(solicitar_ocr_cfg(httpx, cfg, img_bytes, mime))
+    return ocr_con_contingencia(
+        httpx, cfg, img_bytes, mime, gemini_key=GEMINI_API_KEY)
 
 
 def rechunk_embed_pdf(supa, cid: int) -> None:
