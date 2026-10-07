@@ -141,6 +141,72 @@ def test_guardar_embeddings_escribe_en_la_columna_pedida() -> None:
     assert "embedding_v2" not in upserts[0]
 
 
+# ── FIX-013: escritura por RPC con sub-lotes y fallback a upsert ─────────────
+
+class FakeSupabaseRpc(FakeSupabase):
+    def __init__(self, handler=None, rpc_error: Exception | None = None):
+        super().__init__(handler)
+        self.rpc_error = rpc_error
+        self.rpc_calls: list[tuple] = []
+
+    def rpc(self, name: str, params: dict):
+        self.rpc_calls.append((name, params))
+        error = self.rpc_error
+        return SimpleNamespace(
+            execute=lambda: (_ for _ in ()).throw(error) if error else response()
+        )
+
+
+def _pgrst202() -> Exception:
+    exc = Exception("Could not find the function")
+    exc.code = "PGRST202"  # type: ignore[attr-defined]
+    return exc
+
+
+def test_guardar_embeddings_usa_rpc_en_sublotes() -> None:
+    client = FakeSupabaseRpc()
+    rows = [
+        {**fila_chunk(), "id": i} for i in range(repository.SUBLOTE_GUARDAR * 2 + 3)
+    ]
+    vectors = [[float(i), 0.0] for i in range(len(rows))]
+
+    repository.guardar_embeddings(client, "embedding_v2", rows, vectors)
+
+    assert len(client.rpc_calls) == 3  # 8 + 8 + 3
+    assert client.executed == []  # nunca upsert
+    name, params = client.rpc_calls[0]
+    assert name == "guardar_embeddings_v2"
+    assert params["ids"] == list(range(8))
+    assert params["vectores"][0] == "[0.00000000,0.00000000]"
+    assert len(params["vectores"]) == 8
+    assert client.rpc_calls[2][1]["ids"] == [16, 17, 18]
+
+
+def test_guardar_embeddings_cae_a_upsert_si_la_rpc_no_existe() -> None:
+    client = FakeSupabaseRpc(rpc_error=_pgrst202())
+    rows = [fila_chunk(), {**fila_chunk(), "id": 8}]
+
+    repository.guardar_embeddings(client, "embedding_v3", rows, [[1.0], [2.0]])
+
+    assert client.rpc_calls == [("guardar_embeddings_v3", {"ids": [7, 8],
+                                                           "vectores": ["[1.00000000]",
+                                                                        "[2.00000000]"]})]
+    upserts = operation(client.executed[0], "upsert")[1][0]
+    assert upserts[0]["embedding_v3"] == "[1.00000000]"
+    assert upserts[1]["id"] == 8
+
+
+def test_guardar_embeddings_propaga_error_real_de_rpc() -> None:
+    timeout = Exception("canceling statement due to statement timeout")
+    client = FakeSupabaseRpc(rpc_error=timeout)
+
+    with pytest.raises(Exception, match="statement timeout"):
+        repository.guardar_embeddings(
+            client, "embedding_v2", [fila_chunk()], [[1.0]])
+
+    assert client.executed == []  # sin fallback ante error real
+
+
 def test_cobertura_columna_devuelve_claves_genericas(monkeypatch) -> None:
     monkeypatch.setattr(repository, "paginar_ids_vigentes", lambda supa: [1])
     counts = iter([10, 7])

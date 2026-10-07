@@ -131,14 +131,29 @@ def chunks_sin_por_fuente(supa, col: str, fuente: str, limit: int) -> list[dict]
     return out[:limit] if limit else out
 
 
-def guardar_embeddings(
-    supa,
-    col: str,
-    rows: list[dict],
-    vectors: list[list[float]],
-) -> None:
-    """Actualiza ``col`` en un solo upsert, conservando las columnas requeridas."""
-    columna = _col(col)
+# FIX-013: la RPC homónima hace UPDATE por unnest tocando solo la columna del
+# espacio — el statement más liviano posible bajo contención HNSW (service_role
+# tiene statement_timeout=30 s). Si la función no existe en la base (PGRST202)
+# se cae al upsert histórico de fila completa.
+RPC_POR_COLUMNA = {
+    "embedding_v2": "guardar_embeddings_v2",
+    "embedding_v3": "guardar_embeddings_v3",
+}
+
+# Sub-lote por statement: un timeout desperdicia como máximo estos embeddings
+# ya pagados, en vez de todo el lote del proveedor.
+SUBLOTE_GUARDAR = 8
+
+
+def _es_rpc_ausente(exc: Exception) -> bool:
+    """PostgREST responde PGRST202 cuando la función no existe en el esquema."""
+    if getattr(exc, "code", None) == "PGRST202":
+        return True
+    msg = str(exc)
+    return "PGRST202" in msg or "Could not find the function" in msg
+
+
+def _upsert_sub_lote(supa, columna: str, rows: list[dict], vectors) -> None:
     updates = [
         {
             "id": row["id"],
@@ -151,6 +166,36 @@ def guardar_embeddings(
         for row, vector in zip(rows, vectors)
     ]
     supa.table("chunks_tdr").upsert(updates, on_conflict="id").execute()
+
+
+def guardar_embeddings(
+    supa,
+    col: str,
+    rows: list[dict],
+    vectors: list[list[float]],
+) -> None:
+    """Escribe ``col`` por sub-lotes vía RPC; fallback al upsert histórico."""
+    columna = _col(col)
+    rpc_nombre = RPC_POR_COLUMNA[columna]
+    use_rpc = hasattr(supa, "rpc")
+    for i in range(0, len(rows), SUBLOTE_GUARDAR):
+        sub_rows = rows[i:i + SUBLOTE_GUARDAR]
+        sub_vecs = vectors[i:i + SUBLOTE_GUARDAR]
+        if use_rpc:
+            try:
+                supa.rpc(
+                    rpc_nombre,
+                    {
+                        "ids": [int(row["id"]) for row in sub_rows],
+                        "vectores": [vec_literal(v) for v in sub_vecs],
+                    },
+                ).execute()
+                continue
+            except Exception as exc:
+                if not _es_rpc_ausente(exc):
+                    raise
+                use_rpc = False
+        _upsert_sub_lote(supa, columna, sub_rows, sub_vecs)
 
 
 def cobertura_columna(supa, col: str) -> dict[str, int | str]:
