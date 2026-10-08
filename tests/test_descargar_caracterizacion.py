@@ -1135,3 +1135,34 @@ def test_guardar_pdf_truncado_marca_terminal_y_conserva_hechas(tmp_path):
     side = json.loads(meta_file.read_text(encoding="utf-8").strip())
     assert side["paginas_ocr_pendientes"] == []
     assert side["paginas_ocr_hechas"] == [1, 2]
+
+
+def test_analizar_postulables_reconoce_version_con_identidad():
+    """Una fila '1.qwen.<hash>' ya cuenta como análisis del pdf actual."""
+    import scripts.analizar_postulables as ap
+
+    def responder(q):
+        if q.table_name == "v_contratos_estado":
+            return SimpleNamespace(data=[{"id": 7, "es_postulable": True}])
+        if q.table_name == "contratos":
+            return SimpleNamespace(data=[{
+                "id": 7, "nro_contratacion": "1", "entidad": "E",
+                "pdf_hash": "h1", "tdr_texto": "x" * 300,
+                "fecha_fin_cotizacion": None,
+            }])
+        if q.table_name == "analisis_contrato":
+            return SimpleNamespace(data=[{
+                "contrato_id": 7, "pdf_hash": "h1",
+                "prompt_version": "1.qwen.a3815aa6",
+            }])
+        return SimpleNamespace(data=[])
+
+    supa = FakeSupa(responder)
+    filas = ap.cargar_postulables_rest(supa)
+
+    assert len(filas) == 1
+    assert filas[0]["ya_en_bd"] is True   # antes salía False → re-análisis fantasma
+    q_analisis = [q for q in supa.queries
+                  if q.table_name == "analisis_contrato"][0]
+    assert q_analisis.has_op(
+        "or_", "prompt_version.eq.1,prompt_version.like.1.*")

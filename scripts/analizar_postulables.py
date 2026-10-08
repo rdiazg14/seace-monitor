@@ -5,9 +5,10 @@ Llama POST /analizar del Worker (el Worker persiste). No escribe SQL.
 No toca categoria_it ni contratos.
 
 Cola: v_contratos_estado (universo TI/IA) con es_postulable O es_por_abrir
-+ texto + sin fila con el pdf_hash actual y prompt_version. Si SEACE
-reemplaza el PDF, pdf_hash cambia y el análisis viejo no cuenta: vuelve a
-entrar.
++ texto + sin fila con el pdf_hash actual y prompt_version base ('1' o
+'1.<identidad>' — desde FIX-010 el Worker guarda la identidad de endpoint
+como sufijo, p. ej. '1.qwen.a3815aa6'). Si SEACE reemplaza el PDF,
+pdf_hash cambia y el análisis viejo no cuenta: vuelve a entrar.
 
 Análisis anticipado: los es_por_abrir (ventana todavía no abierta) que ya
 tienen su TDR se analizan igual que los postulables, siguiendo la misma
@@ -71,7 +72,7 @@ _SQL_COLA = """
                 WHEN nullif(btrim(coalesce(c.pdf_hash, '')), '') IS NULL THEN 'na'
                 ELSE btrim(c.pdf_hash)
               END
-              AND a.prompt_version = %s
+              AND (a.prompt_version = %s OR a.prompt_version LIKE %s)
           ) AS ya_en_bd,
           v.es_postulable AS es_postulable
         FROM v_contratos_estado v
@@ -120,7 +121,9 @@ def _map_rows(rows: list[tuple]) -> list[dict]:
 
 def cargar_postulables_pg(dsn: str) -> list[dict]:
     with connect(dsn) as conn:
-        rows = conn.execute(_SQL_COLA, (PROMPT_VERSION,)).fetchall()
+        rows = conn.execute(
+            _SQL_COLA, (PROMPT_VERSION, f"{PROMPT_VERSION}.%")
+        ).fetchall()
     return _map_rows(rows)
 
 
@@ -168,7 +171,10 @@ def cargar_postulables_rest(supa) -> list[dict]:
         analisis = (
             supa.table("analisis_contrato")
             .select("contrato_id,pdf_hash,prompt_version")
-            .eq("prompt_version", PROMPT_VERSION)
+            .or_(
+                f"prompt_version.eq.{PROMPT_VERSION},"
+                f"prompt_version.like.{PROMPT_VERSION}.*"
+            )
             .in_("contrato_id", lote)
             .execute()
         )
