@@ -6,7 +6,9 @@ import time
 
 from seace_monitor.logging import PASO_CHUNKING, registrar_evento, registrar_run
 from seace_monitor.rag.chunking import (
-    TARGET_SUBCHUNK,
+    CHUNK_VERSION_PDF,
+    OVERLAP_PDF,
+    TARGET_PDF,
     approx_tokens,
     chunks_de_pdf,
     cuerpo_chunk,
@@ -93,6 +95,9 @@ def run_solo_pdf(
             continue
         try:
             reemplazar_chunks_contrato(supa, cid, chs, fuente="pdf")
+            supa.table("contratos").update(
+                {"chunk_version": CHUNK_VERSION_PDF}
+            ).eq("id", cid).execute()
         except Exception as e:
             print(f"  [error] reemplazo chunks id={cid}: {e}", flush=True)
             continue
@@ -106,8 +111,8 @@ def run_solo_pdf(
             "chunked",
             n_chunks_pdf=len(chs),
             chars_tdr=chars,
-            chunk_version=(c.get("chunk_version") or "500_0"),
-            detalle={"target": TARGET_SUBCHUNK, "overlap": 0},
+            chunk_version=CHUNK_VERSION_PDF,
+            detalle={"target": TARGET_PDF, "overlap": OVERLAP_PDF},
         )
         if len(pendientes) <= 40 or i % 25 == 0 or i == len(pendientes):
             print(
@@ -127,8 +132,9 @@ def run_solo_pdf(
             "contratos": n_contratos,
             "chunks": n_chunks,
             "elapsed_s": round(elapsed, 1),
-            "target": TARGET_SUBCHUNK,
-            "overlap": 0,
+            "target": TARGET_PDF,
+            "overlap": OVERLAP_PDF,
+            "chunk_version": CHUNK_VERSION_PDF,
             "ids": ids_fijos or None,
             "solo_nuevos": solo_nuevos,
         },

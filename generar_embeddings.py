@@ -157,6 +157,17 @@ def run_gemini(
         **extras,
     )
 
+def embed_columna_reserva(supa, contrato_id: int, columna_activa: str) -> None:
+    """Paridad v2/v3 al nacer (DATA-001): rellena la columna del espacio
+    reserva para los chunks pdf recién escritos del contrato. Un fallo no
+    bloquea: queda NULL y el diferencial diario lo iguala al recargar cupo."""
+    reserva = "qwen" if columna_activa == "embedding_v2" else "gemini"
+    try:
+        run_gemini(supa, 0, fuente="pdf", ids=[contrato_id], espacio=reserva)
+    except (Exception, SystemExit) as e:
+        print(f"  [warn] reserva espacio={reserva} id={contrato_id}: {e}", flush=True)
+
+
 def auth_check_gemini() -> int:
     """Llama a Gemini y reporta solo el HTTP. No imprime la key ni el body."""
     if not GEMINI_API_KEY:

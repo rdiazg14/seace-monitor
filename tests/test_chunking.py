@@ -90,8 +90,29 @@ def test_chunk_pdf_incluye_offset_metadata_y_texto_de_embedding() -> None:
 def test_chunk_pdf_largo_se_divide_sin_cambiar_indices() -> None:
     contrato = contrato_base(tdr_texto=("a" * 2000) + "\n" + ("b" * 2000))
     chunks = chunks_de_pdf(contrato, chunk_index_offset=7)
-    assert [chunk["chunk_index"] for chunk in chunks] == [7, 8]
-    assert [chunk["tipo"] for chunk in chunks] == ["TDR PDF (1/2)", "TDR PDF (2/2)"]
+    assert [chunk["chunk_index"] for chunk in chunks] == [7, 8, 9]
+    assert [chunk["tipo"] for chunk in chunks] == [
+        "TDR PDF (1/3)", "TDR PDF (2/3)", "TDR PDF (3/3)",
+    ]
+    # 300/60: cada párrafo (~500 tok) supera el target; el solape re-expone el
+    # párrafo previo en el chunk siguiente.
+    textos = [chunk["texto"] for chunk in chunks]
+    assert textos[0].endswith("a" * 2000)
+    assert ("a" * 2000) in textos[1] and ("b" * 2000) in textos[1]
+    assert textos[2].endswith("b" * 2000)
+
+
+def test_split_parrafos_overlap_solapa_cola_del_chunk_previo() -> None:
+    from seace_monitor.rag.chunking import split_parrafos_overlap
+    texto = "\n".join("p" + str(i) + " " + "x" * 396 for i in range(5))
+    partes = split_parrafos_overlap(texto, 120, 40)
+    assert len(partes) == 5
+    cuerpos = [p.split("\n") for p in partes]
+    assert cuerpos[0] == ["p0 " + "x" * 396, "p1 " + "x" * 396]
+    for i in range(1, 4):
+        assert cuerpos[i][0] == cuerpos[i - 1][-1]
+    assert cuerpos[4] == ["p4 " + "x" * 396]
+    assert split_parrafos_overlap(texto, 120, 0) == split_por_parrafos(texto, 120)
 
 
 def test_chunks_api_preservan_descripcion_items_y_metadata() -> None:

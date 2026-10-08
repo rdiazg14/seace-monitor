@@ -57,6 +57,9 @@ class FakeQuery:
     def delete(self, *args, **kwargs):
         return self._record("delete", *args, **kwargs)
 
+    def update(self, *args, **kwargs):
+        return self._record("update", *args, **kwargs)
+
     def limit(self, *args, **kwargs):
         return self._record("limit", *args, **kwargs)
 

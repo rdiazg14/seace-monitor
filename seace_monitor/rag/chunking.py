@@ -12,6 +12,9 @@ import re
 
 MAX_TOKENS_ANTES_SPLIT = 800
 TARGET_SUBCHUNK = 500
+TARGET_PDF = 300
+OVERLAP_PDF = 60
+CHUNK_VERSION_PDF = "300_60"
 
 _STOP_SIGLAS = frozenset({
     "DE", "DEL", "Y", "E", "DA", "DO", "DAS", "AL", "A",
@@ -64,6 +67,43 @@ def split_por_parrafos(texto: str, target_tokens: int) -> list[str]:
         else:
             buf.append(parte)
             buf_tok += parte_tokens
+    if buf:
+        chunks.append("\n".join(buf))
+    return chunks
+
+
+def split_parrafos_overlap(
+    texto: str, target_tokens: int, overlap_tokens: int
+) -> list[str]:
+    """Split por párrafos reteniendo los últimos ~overlap_tokens del chunk previo.
+
+    Promovido desde ``deuda/migrar_chunk_300_60.py``: el A/B offline
+    (``eval_chunking.py``) eligió 300/60 sobre 500/0.
+    """
+    if overlap_tokens <= 0:
+        return split_por_parrafos(texto, target_tokens)
+    partes = [p.strip() for p in texto.replace("\r\n", "\n").split("\n") if p.strip()]
+    if not partes:
+        return [texto.strip()] if texto.strip() else []
+    chunks: list[str] = []
+    buf: list[str] = []
+    buf_tok = 0
+    for p in partes:
+        pt = approx_tokens(p)
+        buf.append(p)
+        buf_tok += pt
+        if buf_tok >= target_tokens:
+            chunks.append("\n".join(buf))
+            ov: list[str] = []
+            ov_tok = 0
+            for pp in reversed(buf):
+                ov_tok += approx_tokens(pp)
+                ov.append(pp)
+                if ov_tok >= overlap_tokens:
+                    break
+            ov.reverse()
+            buf = ov
+            buf_tok = ov_tok
     if buf:
         chunks.append("\n".join(buf))
     return chunks
@@ -182,12 +222,12 @@ def meta_de_contrato(contrato: dict) -> dict:
 
 
 def chunks_de_pdf(contrato: dict, chunk_index_offset: int = 0) -> list[dict]:
-    """Construye chunks del TDR extraído sin persistirlos."""
+    """Construye chunks del TDR extraído sin persistirlos (300/60, DATA-001)."""
     tdr = (contrato.get("tdr_texto") or "").strip()
     if not tdr:
         return []
     partes = (
-        split_por_parrafos(tdr, TARGET_SUBCHUNK)
+        split_parrafos_overlap(tdr, TARGET_PDF, OVERLAP_PDF)
         if approx_tokens(tdr) > MAX_TOKENS_ANTES_SPLIT
         else [tdr]
     )

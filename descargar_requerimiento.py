@@ -288,9 +288,11 @@ def _update_contrato(supa, cid: int, payload: dict) -> None:
 
 def rechunk_embed_pdf(supa, cid: int) -> None:
     """Fachada histórica para consumidores externos del entrypoint."""
+    from generar_embeddings import embed_columna_reserva
     extras = extras_embeddings(cfg_resuelta("embeddings"))
     api_key = extras.pop("api_key", GEMINI_API_KEY)
     _rechunk_embed_pdf(supa, cid, api_key=api_key, **extras)
+    embed_columna_reserva(supa, cid, extras.get("columna", "embedding_v2"))
 
 
 def ocr_contrato_selectivo(

@@ -94,9 +94,11 @@ def ocr_pagina_gemini(img_bytes: bytes, mime: str = "image/jpeg") -> str:
 
 
 def rechunk_embed_pdf(supa, cid: int) -> None:
+    from generar_embeddings import embed_columna_reserva
     extras = extras_embeddings(cfg_resuelta("embeddings"))
     api_key = extras.pop("api_key", GEMINI_API_KEY)
     _rechunk_embed_pdf(supa, cid, api_key=api_key, **extras)
+    embed_columna_reserva(supa, cid, extras.get("columna", "embedding_v2"))
 
 
 def ia_habilitada() -> bool:

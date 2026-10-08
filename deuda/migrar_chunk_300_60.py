@@ -5,20 +5,27 @@ El A/B offline (eval_chunking.py) dio ganadora a la variante 300_60:
   success@10 0.933 -> 0.967,  P@5 0.620 -> 0.667,  P@10 0.511 -> 0.571,
   recall (relevantes) 190 -> 188 (ruido de re-frontera, mitigado por overlap).
 
-Para no gastar créditos de Gemini en todo el corpus, se migra SOLO lo que
+Para no gastar créditos en todo el corpus, se migra SOLO lo que
 importa ahora (postulables TI/IA con TDR). El resto queda en `chunk_version`
-= '500_0' y se completa cuando haya créditos.
+= '500_0' y se completa cuando haya créditos. Los TDR nuevos ya nacen en
+300/60 vía ``chunks_de_pdf`` (DATA-001).
+
+Doble escritura (regla de paridad v2=v3): cada chunk nuevo se embebe en
+embedding_v3 (Qwen, espacio activo) Y embedding_v2 (Gemini, reserva).
+Si Qwen agota cupo el contrato NO se migra (conserva chunks viejos);
+si Gemini agota cupo el swap se hace con embedding_v2 NULL y el
+diferencial diario lo iguala al recargar.
 
 Estado en BD: contratos.chunk_version
   '500_0'  (default)  -> legacy, pendiente de migrar
   '300_60'            -> re-chunkeado a 300/60 y embebido
 
 Atómico por contrato: primero se re-chunkea y se embebe el TDR (el paso
-caro y propenso a 429). Recién cuando TODO el contrato está embebido se
-borran sus chunks fuente=pdf viejos y se insertan los nuevos con
-embedding_v2. Si Gemini devuelve 429 (cupo), el contrato conserva sus
-chunks 500/0 intactos y el script se detiene; los ya migrados quedan
-marcados y el resto es reanudable re-ejecutando el mismo comando.
+caro y propenso a 429). Recién cuando el espacio activo está embebido se
+borran sus chunks fuente=pdf viejos y se insertan los nuevos. Si Qwen
+devuelve 429 (cupo), el contrato conserva sus chunks 500/0 intactos y el
+script se detiene; los ya migrados quedan marcados y el resto es
+reanudable re-ejecutando el mismo comando.
 
 Uso:
   uv run python migrar_chunk_300_60.py --dry-run            # alcance + costo
@@ -44,6 +51,7 @@ from seace_monitor.embeddings.gemini_provider import (
     QuotaExceeded,
     solicitar_embeddings_gemini,
 )
+from seace_monitor.embeddings.openai_provider import solicitar_embeddings_openai
 from seace_monitor.embeddings.preparation import (
     EMBED_STATS,
     texto_para_embed,
@@ -51,77 +59,34 @@ from seace_monitor.embeddings.preparation import (
 )
 from seace_monitor.embeddings.service import BATCH_GEMINI, DELAY_GEMINI_S
 from seace_monitor.gemini import EMBED_USD_PER_M
+from seace_monitor.rag.repository import reemplazar_chunks_contrato
 from seace_monitor.logging import PASO_EMBEDDING, registrar_evento, registrar_run
 
 cargar_env()
 
-TARGET = 300
-OVERLAP = 60
-CHUNK_VERSION_DEST = "300_60"
+TARGET = cc.TARGET_PDF
+OVERLAP = cc.OVERLAP_PDF
+CHUNK_VERSION_DEST = cc.CHUNK_VERSION_PDF
 PAGE = 1_000
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY", "")
+QWEN_EMBED_URL = "https://maas.qwencloudapi.com/compatible-mode/v1/embeddings"
+QWEN_EMBED_MODEL = "text-embedding-v4"
+QWEN_EMBED_USD_PER_M = 0.07
+BATCH_QWEN = 10
 
 
 def split_parrafos_overlap(
     texto: str, target_tokens: int, overlap_tokens: int
 ) -> list[str]:
-    if overlap_tokens <= 0:
-        return cc.split_por_parrafos(texto, target_tokens)
-    partes = [p.strip() for p in texto.replace("\r\n", "\n").split("\n") if p.strip()]
-    if not partes:
-        return [texto.strip()] if texto.strip() else []
-    chunks: list[str] = []
-    buf: list[str] = []
-    buf_tok = 0
-    for p in partes:
-        pt = cc.approx_tokens(p)
-        buf.append(p)
-        buf_tok += pt
-        if buf_tok >= target_tokens:
-            chunks.append("\n".join(buf))
-            ov: list[str] = []
-            ov_tok = 0
-            for pp in reversed(buf):
-                ov_tok += cc.approx_tokens(pp)
-                ov.append(pp)
-                if ov_tok >= overlap_tokens:
-                    break
-            ov.reverse()
-            buf = ov
-            buf_tok = ov_tok
-    if buf:
-        chunks.append("\n".join(buf))
-    return chunks
+    return cc.split_parrafos_overlap(texto, target_tokens, overlap_tokens)
 
 
 def chunks_pdf_300_60(c: dict) -> list[dict]:
-    """Chunks fuente=pdf del TDR a target=300 overlap=60 (espejo de chunks_de_pdf)."""
-    tdr = (c.get("tdr_texto") or "").strip()
-    if not tdr:
-        return []
-    cid = int(c["id"])
-    partes = (
-        split_parrafos_overlap(tdr, TARGET, OVERLAP)
-        if cc.approx_tokens(tdr) > cc.MAX_TOKENS_ANTES_SPLIT
-        else [tdr]
-    )
-    meta = cc.meta_de_contrato(c)
-    out: list[dict] = []
-    for i, parte in enumerate(partes):
-        texto = cc.con_contexto_pdf(c, parte)
-        row = {
-            "contrato_id": cid,
-            "chunk_index": 0,  # se reasigna al offset real antes de insertar
-            "tipo": "TDR PDF" if len(partes) == 1 else f"TDR PDF ({i + 1}/{len(partes)})",
-            "texto": texto,
-            "fuente": "pdf",
-            "chunk_embed_text": cc.embed_text_pdf(c, texto),
-        }
-        row.update(meta)
-        out.append(row)
-    return out
+    """Chunks fuente=pdf del TDR a 300/60; hoy coincide con cc.chunks_de_pdf."""
+    return cc.chunks_de_pdf(c)
 
 
 def cargar_cola(supa, incluir_por_abrir: bool) -> list[dict]:
@@ -186,10 +151,6 @@ def max_chunk_index_api(supa, cid: int) -> int:
     return int(res.data[0]["chunk_index"]) if res.data else -1
 
 
-def borrar_pdf(supa, cid: int) -> None:
-    supa.table("chunks_tdr").delete().eq("contrato_id", cid).eq("fuente", "pdf").execute()
-
-
 def insertar_pdf(supa, chunks: list[dict]) -> None:
     if not chunks:
         return
@@ -225,6 +186,8 @@ def main() -> int:
         raise SystemExit("ERROR: SUPABASE_URL / SUPABASE_SERVICE_KEY no encontrados")
     if not GEMINI_API_KEY:
         raise SystemExit("ERROR: GEMINI_API_KEY no encontrado")
+    if not DASHSCOPE_API_KEY:
+        raise SystemExit("ERROR: DASHSCOPE_API_KEY no encontrado (escribe embedding_v3)")
 
     supa = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -268,9 +231,9 @@ def main() -> int:
         total_chunks += len(chs)
         total_chars += sum(len((x.get("chunk_embed_text") or "")) for x in chs)
     est_tokens = total_chars / 4.0
-    est_usd = est_tokens / 1_000_000.0 * EMBED_USD_PER_M
+    est_usd = est_tokens / 1_000_000.0 * (EMBED_USD_PER_M + QWEN_EMBED_USD_PER_M)
     print(f"  estimación: chunks={total_chunks:,}  chars={total_chars:,}  "
-          f"tokens~{est_tokens:,.0f}  costo~USD {est_usd:.4f}", flush=True)
+          f"tokens~{est_tokens:,.0f}x2 espacios  costo~USD {est_usd:.4f}", flush=True)
     for c in cola:
         chs = chunks_pdf_300_60(c)
         print(
@@ -285,6 +248,8 @@ def main() -> int:
 
     migrados = 0
     cupo = False
+    tok_qwen = 0
+    tok_gem = 0
     t0 = time.time()
     tokens_ini = int(EMBED_STATS.get("tokens_api") or 0)
     with httpx.Client() as http:
@@ -294,36 +259,69 @@ def main() -> int:
             if not new_chunks:
                 print(f"[{i}/{len(cola)}] id={cid} sin chunks (tdr vacío), omitido", flush=True)
                 continue
-            # 1) Embeber TODO el contrato (paso caro). fail_fast: 429 => QuotaExceeded.
-            embebido = True
+            # 1) Embeber ambos espacios ANTES del swap (paridad v2=v3, DATA-001).
+            #    v3 = espacio activo del corpus: si Qwen se queda sin cupo el
+            #    contrato NO se migra (sus chunks viejos siguen recuperables).
+            #    v2 = reserva: si Gemini agota cupo la columna queda NULL y el
+            #    diferencial diario la iguala al recargar créditos.
+            texts = [texto_para_embed(r, "auto") for r in new_chunks]
             n_ok = 0
+            tok_qwen_ini = int(EMBED_STATS.get("tokens_api") or 0)
             try:
-                for j in range(0, len(new_chunks), args.batch):
-                    lote = new_chunks[j:j + args.batch]
-                    texts = [texto_para_embed(r, "auto") for r in lote]
-                    vecs = solicitar_embeddings_gemini(
-                        http, texts, GEMINI_API_KEY, fail_fast=True
+                for j in range(0, len(new_chunks), BATCH_QWEN):
+                    lote_t = texts[j:j + BATCH_QWEN]
+                    vecs = solicitar_embeddings_openai(
+                        http, lote_t, DASHSCOPE_API_KEY, fail_fast=True,
+                        url=QWEN_EMBED_URL, modelo=QWEN_EMBED_MODEL,
+                        dimensiones=1536, batch_max=BATCH_QWEN, proveedor="qwen",
                     )
-                    for r, v in zip(lote, vecs):
-                        r["embedding_v2"] = vec_literal(v)
-                    n_ok += len(lote)
-                    if j + args.batch < len(new_chunks):
+                    for r, v in zip(new_chunks[j:j + BATCH_QWEN], vecs):
+                        r["embedding_v3"] = vec_literal(v)
+                    n_ok += len(lote_t)
+                    if j + BATCH_QWEN < len(new_chunks):
                         time.sleep(args.delay)
             except QuotaExceeded as e:
-                print(f"  STOP 429 en id={cid} (embebidos {n_ok}/{len(new_chunks)}). {e}", flush=True)
+                print(f"  STOP 429 qwen en id={cid} (v3 {n_ok}/{len(new_chunks)}). {e}", flush=True)
                 print(f"  pendientes={[int(x['id']) for x in cola[i - 1:]]}", flush=True)
                 cupo = True
                 break
             except Exception as e:
-                print(f"  [error] id={cid}: {e}", flush=True)
+                print(f"  [error] id={cid} embed v3: {e}", flush=True)
                 continue
+            tok_qwen += int(EMBED_STATS.get("tokens_api") or 0) - tok_qwen_ini
 
-            # 2) Recién ahora reemplazar (borrar viejos + insertar nuevos con offset).
+            v2_parcial = False
+            n_v2 = 0
+            tok_gem_ini = int(EMBED_STATS.get("tokens_api") or 0)
+            try:
+                for j in range(0, len(new_chunks), args.batch):
+                    lote_t = texts[j:j + args.batch]
+                    vecs = solicitar_embeddings_gemini(
+                        http, lote_t, GEMINI_API_KEY, fail_fast=True
+                    )
+                    for r, v in zip(new_chunks[j:j + args.batch], vecs):
+                        r["embedding_v2"] = vec_literal(v)
+                    n_v2 += len(lote_t)
+                    if j + args.batch < len(new_chunks):
+                        time.sleep(args.delay)
+            except QuotaExceeded as e:
+                v2_parcial = True
+                print(
+                    f"  [aviso] v2 cupo gemini en id={cid} ({n_v2}/{len(new_chunks)}); "
+                    "los NULL los iguala el diferencial al recargar.",
+                    flush=True,
+                )
+            except Exception as e:
+                v2_parcial = True
+                print(f"  [aviso] id={cid} embed v2: {e}; columna queda NULL", flush=True)
+            tok_gem += int(EMBED_STATS.get("tokens_api") or 0) - tok_gem_ini
+
+            # 2) Recién ahora reemplazar (upsert primero, limpieza de restos
+            #    después — FIX-003; un fallo intermedio jamás deja el corpus vacío).
             offset = max_chunk_index_api(supa, cid) + 1
             for k, r in enumerate(new_chunks):
                 r["chunk_index"] = offset + k
-            borrar_pdf(supa, cid)
-            insertar_pdf(supa, new_chunks)
+            reemplazar_chunks_contrato(supa, cid, new_chunks, fuente="pdf")
             marcar_version(supa, cid)
             migrados += 1
             cost = estimar_costo(new_chunks)
@@ -336,24 +334,36 @@ def main() -> int:
                 tokens_est=cost["tokens"],
                 costo_usd=cost["usd"],
                 chunk_version=CHUNK_VERSION_DEST,
-                detalle={"target": TARGET, "overlap": OVERLAP},
+                detalle={
+                    "target": TARGET,
+                    "overlap": OVERLAP,
+                    "v3": n_ok,
+                    "v2": n_v2,
+                    "v2_parcial": v2_parcial,
+                },
             )
             print(
                 f"[{i}/{len(cola)}] id={cid} chunks={len(new_chunks)} "
-                f"offset={offset} -> {CHUNK_VERSION_DEST}",
+                f"offset={offset} v3={n_ok} v2={n_v2} -> {CHUNK_VERSION_DEST}",
                 flush=True,
             )
 
     elapsed = time.time() - t0
     tok_run = int(EMBED_STATS.get("tokens_api") or 0) - tokens_ini
-    if tok_run > 0:
+    # uso_ia separado por proveedor: cada espacio tiene su tarifa.
+    for modelo, tokens, usd_per_m in (
+        (GEMINI_EMBED_MODEL, tok_gem, EMBED_USD_PER_M),
+        (QWEN_EMBED_MODEL, tok_qwen, QWEN_EMBED_USD_PER_M),
+    ):
+        if not tokens:
+            continue
         try:
             supa.table("uso_ia").insert({
                 "componente": "embedding",
-                "modelo": GEMINI_EMBED_MODEL,
-                "tokens_prompt": tok_run,
-                "tokens_total": tok_run,
-                "costo_usd": round(tok_run / 1_000_000.0 * EMBED_USD_PER_M, 8),
+                "modelo": modelo,
+                "tokens_prompt": tokens,
+                "tokens_total": tokens,
+                "costo_usd": round(tokens / 1_000_000.0 * usd_per_m, 8),
                 "cache_hit": False,
                 "detalle": {
                     "n_contratos": migrados,
@@ -363,7 +373,10 @@ def main() -> int:
                 },
             }).execute()
         except Exception as e:
-            print(f"  [warn] log_uso_ia migración: {e}", flush=True)
+            print(f"  [warn] log_uso_ia {modelo}: {e}", flush=True)
+    costo_total = (
+        tok_gem / 1e6 * EMBED_USD_PER_M + tok_qwen / 1e6 * QWEN_EMBED_USD_PER_M
+    )
     registrar_run(
         supa,
         PASO_EMBEDDING,
@@ -371,7 +384,9 @@ def main() -> int:
             "migrados": migrados,
             "cola": len(cola),
             "tokens_api": tok_run,
-            "costo_usd": round(tok_run / 1_000_000.0 * EMBED_USD_PER_M, 8),
+            "tokens_gemini": tok_gem,
+            "tokens_qwen": tok_qwen,
+            "costo_usd": round(costo_total, 8),
             "chunk_version": CHUNK_VERSION_DEST,
             "cupo": cupo,
             "elapsed_s": round(elapsed, 1),
