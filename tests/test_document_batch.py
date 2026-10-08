@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 from seace_monitor.documents import batch
 from seace_monitor.documents.pdf_extraction import NecesitaOcr, PdfExtractError
-from seace_monitor.documents.seace_files import NoEsPdf, SinPdf
+from seace_monitor.documents.seace_files import NoEsPdf, PdfTruncado, SinPdf
 
 
 COUNTS = {
@@ -73,10 +73,11 @@ def test_batch_clasifica_resultados_y_persiste_cada_rama(tmp_path, monkeypatch):
         {"id": 4, "descripcion_contrato": "no pdf"},
         {"id": 5, "descripcion_contrato": "extract"},
         {"id": 6, "descripcion_contrato": "unexpected", "req_url": "sin_pdf"},
+        {"id": 7, "descripcion_contrato": "truncado"},
     ]
     calls: dict[str, list] = {
         "ok": [], "ocr": [], "sin_pdf": [], "storage": [], "rechazo": [],
-        "linea": [], "summary": [], "sleep": [],
+        "linea": [], "summary": [], "sleep": [], "truncado": [],
     }
     closed = []
 
@@ -96,6 +97,11 @@ def test_batch_clasifica_resultados_y_persiste_cada_rama(tmp_path, monkeypatch):
         lambda _supa, cid, meta: calls["ocr"].append((cid, meta)),
     )
     monkeypatch.setattr(batch, "guardar_sin_pdf", lambda _supa, cid: calls["sin_pdf"].append(cid))
+    monkeypatch.setattr(
+        batch,
+        "guardar_pdf_truncado",
+        lambda _supa, cid, c: calls["truncado"].append((cid, c)),
+    )
     monkeypatch.setattr(
         batch,
         "persistir_storage_si_hay",
@@ -128,6 +134,8 @@ def test_batch_clasifica_resultados_y_persiste_cada_rama(tmp_path, monkeypatch):
             raise NoEsPdf("html")
         if cid == 5:
             raise PdfExtractError("fallo", {"pdf_storage_path": "tdr/5.pdf"})
+        if cid == 7:
+            raise PdfTruncado("n=704349 sin startxref/%%EOF en la cola")
         raise RuntimeError("inesperado")
 
     moments = iter((10.0, 12.9))
@@ -146,8 +154,11 @@ def test_batch_clasifica_resultados_y_persiste_cada_rama(tmp_path, monkeypatch):
     assert len(calls["ok"]) == 1
     assert calls["ocr"][0][0] == 2
     assert calls["sin_pdf"] == [3, 4]
+    assert calls["truncado"] == [(7, contracts[6])]
     assert calls["storage"] == [(5, {"pdf_storage_path": "tdr/5.pdf"})]
-    assert len(calls["rechazo"]) == 4
+    assert len(calls["rechazo"]) == 5
+    motivos = [motivo for _payload, motivo, _kw in calls["rechazo"]]
+    assert "pdf truncado en origen" in motivos
     assert len(calls["sleep"]) == len(contracts)
     assert closed == [True]
     assert stats is calls["summary"][0]
@@ -155,6 +166,7 @@ def test_batch_clasifica_resultados_y_persiste_cada_rama(tmp_path, monkeypatch):
     assert stats["skip_ocr"] == 1
     assert stats["ocr_paginas_estimadas"] == 2
     assert stats["sin_pdf_cola"] == 1
+    assert stats["pdf_truncado"] == 1
     assert stats["err"] == 2
     assert stats["elapsed_s"] == 2
 

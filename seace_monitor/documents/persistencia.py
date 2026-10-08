@@ -101,6 +101,47 @@ def guardar_sin_pdf(supa, cid: int) -> None:
     })
 
 
+def guardar_pdf_truncado(supa, cid: int, contrato: dict | None = None, *, meta_path=None) -> None:
+    """PDF corrupto en origen: terminal — sale de pendientes_pdf y de la cola OCR."""
+    contrato = contrato or {"id": cid}
+    hechas = list(contrato.get("paginas_ocr_hechas") or [])
+    n_pag = int(contrato.get("tdr_n_paginas") or contrato.get("n_paginas") or 0)
+    n_ocr = int(contrato.get("tdr_n_paginas_ocr") or contrato.get("n_paginas_ocr") or 0)
+    n_nat = int(
+        contrato.get("tdr_n_paginas_nativas")
+        or contrato.get("n_paginas_nativas")
+        or max(n_pag - n_ocr, 0)
+    )
+    try:
+        registrar_meta_local({
+            "id": cid,
+            "tdr_tipo_extraccion": contrato.get("tdr_tipo_extraccion"),
+            "ocr_paginas": [],
+            "ocr_hechas": hechas,
+            "n_paginas": n_pag,
+            "n_paginas_nativas": n_nat,
+            "n_paginas_ocr": n_ocr,
+            "chars_final": chars_utiles(contrato.get("tdr_texto") or ""),
+        }, path=meta_path)
+    except Exception as e:
+        print(f"  [warn] meta local pdf_truncado id={cid}: {e}", flush=True)
+    update_contrato(supa, cid, {
+        "tdr_texto": None,
+        "pdf_es_imagen": None,
+        "pdf_descargado": True,
+        "pdf_procesado": True,
+        "req_url": "pdf_truncado",
+        "tdr_tipo_extraccion": None,
+        "paginas_ocr_pendientes": [],
+        "paginas_ocr_hechas": hechas,
+        "tdr_n_paginas": None,
+        "tdr_n_paginas_nativas": None,
+        "tdr_n_paginas_ocr": None,
+        "_pdf_nombre": contrato.get("_pdf_nombre"),
+        "_pdf_archivo_id": contrato.get("_pdf_archivo_id"),
+    })
+
+
 def persistir_storage_si_hay(supa, cid: int, meta: dict) -> None:
     """Persiste solo columnas pdf_storage_* si el upload ya llenó meta."""
     path = meta.get("pdf_storage_path")

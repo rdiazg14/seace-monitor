@@ -22,6 +22,7 @@ DEFAULT_DESCARGAR_URL = (
 )
 MOTIVO_SIN_PDF = "sin archivo PDF"
 MOTIVO_NO_PDF = "archivo no es PDF"
+MOTIVO_PDF_TRUNCADO = "pdf truncado en origen"
 
 
 class SinPdf(Exception):
@@ -37,6 +38,30 @@ class NoEsPdf(Exception):
 
     def __init__(self, message: str):
         super().__init__(f"{MOTIVO_NO_PDF} ({message})")
+
+
+class PdfTruncado(Exception):
+    """El binario empieza como PDF pero le falta el cierre estructural.
+
+    Un PDF válido termina con ``startxref`` y ``%%EOF``: ahí viven el
+    trailer y la tabla xref que ubican el árbol de páginas. Si la cola
+    no los trae, el objeto quedó cortado en el servidor de origen —
+    ningún parser podrá armar páginas y re-descargar trae exactamente
+    lo mismo, así que el fallo es terminal, no transitorio.
+    """
+
+    def __init__(self, message: str):
+        super().__init__(f"{MOTIVO_PDF_TRUNCADO} ({message})")
+
+
+def pdf_estructura_completa(body: bytes) -> bool:
+    """Regla de cierre: la cola del binario debe traer startxref + %%EOF.
+
+    Cubre xref clásico y xref-stream (ambos terminan igual). Una cola
+    sin ambos marcadores indica un objeto truncado en origen.
+    """
+    tail = body[-2048:]
+    return b"startxref" in tail and b"%%EOF" in tail
 
 
 class SeaceHttp:
@@ -209,6 +234,8 @@ def descargar_binario(http: SeaceHttp, url: str, destination: Path) -> None:
             f"binario no es PDF (content-type={content_type[:80]} n={len(body)} "
             f"magic={body[:8]!r})"
         )
+    if not pdf_estructura_completa(body):
+        raise PdfTruncado(f"n={len(body)} sin startxref/%%EOF en la cola")
     destination.write_bytes(body)
 
 

@@ -17,6 +17,7 @@ import pytest
 import descargar_requerimiento as dr
 from seace_monitor.documents import meta, persistencia, reportes
 from seace_monitor.documents import pdf_extraction
+from seace_monitor.documents.seace_files import PdfTruncado
 from seace_monitor.ingestion import repository as ingestion_repository
 from seace_monitor.ocr import cuota as ocr_cuota
 from seace_monitor.ocr import pendientes as ocr_pendientes
@@ -1079,3 +1080,58 @@ def test_agotar_ocr_vacia_cola_audita_perdida_y_limpia_sidecar(tmp_path):
     side = json.loads(meta_file.read_text(encoding="utf-8").strip())
     assert side["paginas_ocr_pendientes"] == []
     assert side["paginas_ocr_hechas"] == [1, 2, 3]
+
+
+def test_selectivo_pdf_truncado_cierra_contrato_y_audita():
+    """La redescarga dentro de la cola OCR también detecta el origen corrupto."""
+    captured: dict = {}
+    fila = {"id": 9, "paginas_ocr_pendientes": [4],
+            "paginas_ocr_hechas": [1, 2]}
+    colas = iter([([fila], {}), ([], {})])
+    cerrados: list = []
+    rechazos: list = []
+    estados: list = []
+
+    _run_selectivo(
+        FakeSupa(), captured,
+        pendientes=lambda *a, **k: next(colas),
+        ocr_contrato=lambda *a, **k: (_ for _ in ()).throw(
+            PdfTruncado("n=704349 sin startxref/%%EOF en la cola")),
+        guardar_truncado=lambda supa, cid, c: cerrados.append(
+            (cid, list(c["paginas_ocr_hechas"]))),
+        rechazar=lambda supa, payload, motivo, origen=None:
+            rechazos.append((payload, motivo, origen)),
+        imprimir=lambda i, n, cid, estado, *d: estados.append(estado),
+    )
+
+    assert cerrados == [(9, [1, 2])]         # sale de la cola, conserva hechas
+    assert rechazos and rechazos[0][1] == "pdf truncado en origen"
+    assert rechazos[0][2] == "pdf"
+    assert estados == ["PDF_TRUNCADO"]
+    assert captured["err"] == 1
+    assert captured["agotados"] == 0
+
+
+def test_guardar_pdf_truncado_marca_terminal_y_conserva_hechas(tmp_path):
+    contrato = {
+        "id": 66, "_pdf_nombre": "PC.494.pdf", "_pdf_archivo_id": 399699,
+        "paginas_ocr_pendientes": [3, 4], "paginas_ocr_hechas": [1, 2],
+        "n_paginas": 4, "n_paginas_ocr": 2,
+    }
+    meta_file = tmp_path / "meta.jsonl"
+    supa = FakeSupa()
+
+    persistencia.guardar_pdf_truncado(supa, 66, contrato, meta_path=meta_file)
+
+    updates = [q for q in supa.queries
+               if q.table_name == "contratos" and q.update_payload]
+    payload = updates[0].update_payload
+    assert payload["pdf_descargado"] is True      # sale de pendientes_pdf
+    assert payload["req_url"] == "pdf_truncado"   # marcador terminal auditable
+    assert payload["paginas_ocr_pendientes"] == []  # sale de la cola OCR
+    assert payload["paginas_ocr_hechas"] == [1, 2]  # trabajo previo se conserva
+    assert payload["pdf_archivo_id"] == 399699
+    assert payload["pdf_nombre"] == "PC.494.pdf"
+    side = json.loads(meta_file.read_text(encoding="utf-8").strip())
+    assert side["paginas_ocr_pendientes"] == []
+    assert side["paginas_ocr_hechas"] == [1, 2]

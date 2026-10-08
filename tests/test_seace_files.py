@@ -103,13 +103,40 @@ def test_listar_archivos_rechaza_respuestas_invalidas(result, message: str) -> N
 
 
 def test_descargar_binario_escribe_pdf_validado(tmp_path) -> None:
-    body = b"%PDF-1.7\ncontenido"
+    body = b"%PDF-1.7\ncontenido\nstartxref\n123\n%%EOF"
     destination = tmp_path / "tdr.pdf"
     http = FakeHttp((200, {"content-type": "application/octet-stream"}, body))
 
     seace_files.descargar_binario(http, "https://seace.test/file", destination)
 
     assert destination.read_bytes() == body
+
+
+@pytest.mark.parametrize(
+    "body, esperado",
+    [
+        (b"%PDF-1.7\nobjetos\nstartxref\n9\n%%EOF", True),            # xref clásico
+        (b"%PDF-1.5\nobjetos\nstartxref\n9\n%%EOF\n", True),         # xref-stream
+        (b"%PDF-1.7\n" + b"x" * 3000 + b"\nstartxref\n%%EOF", True), # EOF lejos del corte
+        (b"%PDF-1.4\n" + b"imagen" * 100, False),                    # truncado mid-stream
+        (b"%PDF-1.7\nobjetos\nstartxref\n9", False),                 # falta %%EOF
+        (b"%PDF-1.7\n%%EOF", False),                                 # falta startxref
+        (b"", False),
+    ],
+)
+def test_pdf_estructura_completa_exige_cierre(body, esperado) -> None:
+    assert seace_files.pdf_estructura_completa(body) is esperado
+
+
+def test_descargar_binario_pdf_truncado_no_escribe_ni_abre(tmp_path) -> None:
+    body = b"%PDF-1.4\n" + b"objeto imagen " * 40000  # como el PC.494 real: sin cola
+    destination = tmp_path / "tdr.pdf"
+    http = FakeHttp((200, {"content-type": "application/pdf"}, body))
+
+    with pytest.raises(seace_files.PdfTruncado, match="truncado en origen"):
+        seace_files.descargar_binario(http, "https://seace.test/file", destination)
+
+    assert not destination.exists()  # nunca llega al extractor
 
 
 @pytest.mark.parametrize(
@@ -120,6 +147,7 @@ def test_descargar_binario_escribe_pdf_validado(tmp_path) -> None:
         ((200, {"content-type": "text/html"}, b"<html>error</html>"), seace_files.NoEsPdf, "no es PDF"),
         ((200, {"content-type": "application/json"}, b"{}"), seace_files.NoEsPdf, "no es PDF"),
         ((200, {"content-type": "application/octet-stream"}, b"PK zip"), seace_files.NoEsPdf, "binario no es PDF"),
+        ((200, {"content-type": "application/pdf"}, b"%PDF-1.4\nsin cierre"), seace_files.PdfTruncado, "truncado en origen"),
     ],
 )
 def test_descargar_binario_rechaza_respuestas_no_pdf(

@@ -10,6 +10,7 @@ from pathlib import Path
 from .pdf_extraction import NecesitaOcr, PdfExtractError, extraer_paginas, pdf_sha256
 from .seace_files import (
     NoEsPdf,
+    PdfTruncado,
     SeaceHttp,
     SinPdf,
     descargar_binario,
@@ -111,7 +112,7 @@ def procesar_contrato(
             "por_pagina": extracted["por_pagina"],
         })
         return meta
-    except (PdfExtractError, NecesitaOcr, NoEsPdf):
+    except (PdfExtractError, NecesitaOcr, NoEsPdf, PdfTruncado):
         raise
     except Exception as error:
         raise PdfExtractError(str(error), meta) from error

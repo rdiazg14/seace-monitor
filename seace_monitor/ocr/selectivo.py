@@ -16,8 +16,11 @@ from pathlib import Path
 from seace_monitor.config import RAIZ_REPO
 from seace_monitor.documents.meta import columnas_extraccion_ok
 from seace_monitor.documents.reportes import escribir_resumen
+from seace_monitor.documents.persistencia import guardar_pdf_truncado
 from seace_monitor.documents.seace_files import (
+    MOTIVO_PDF_TRUNCADO,
     MOTIVO_SIN_PDF,
+    PdfTruncado,
     SeaceHttp,
     SinPdf,
     resumen_archivos,
@@ -100,6 +103,7 @@ def run_ocr_selectivo(
     rechazos_ocr: Callable = rechazos_ocr_recientes,
     agotar: Callable = agotar_ocr,
     umbral_agotado: int = OCR_AGOTADO_UMBRAL,
+    guardar_truncado: Callable = guardar_pdf_truncado,
     columnas_ok: Callable = columnas_extraccion_ok,
     http_factory: Callable = SeaceHttp,
     rechazar: Callable = registrar_rechazo,
@@ -357,6 +361,19 @@ def run_ocr_selectivo(
                         "archivos": resumen_archivos(e.archivos),
                     }),
                     MOTIVO_SIN_PDF,
+                    origen="pdf",
+                )
+            except PdfTruncado as e:
+                err += 1
+                imprimir(i, len(filas), cid, "PDF_TRUNCADO", str(e)[:80])
+                try:
+                    guardar_truncado(supa, cid, c)
+                except Exception as e2:
+                    print(f"  [warn] cerrar truncado id={cid}: {e2}", flush=True)
+                rechazar(
+                    supa,
+                    payload_rechazo(c, str(e)[:500]),
+                    MOTIVO_PDF_TRUNCADO,
                     origen="pdf",
                 )
             except Exception as e:

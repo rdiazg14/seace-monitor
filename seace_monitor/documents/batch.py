@@ -21,6 +21,7 @@ from seace_monitor.documents.pdf_extraction import (
 )
 from seace_monitor.documents.persistencia import (
     guardar_ok,
+    guardar_pdf_truncado,
     guardar_pendiente_ocr,
     guardar_sin_pdf,
     persistir_storage_si_hay,
@@ -33,8 +34,10 @@ from seace_monitor.documents.reportes import (
 from seace_monitor.documents.repository import contratos_por_ids, pendientes_pdf
 from seace_monitor.documents.seace_files import (
     MOTIVO_NO_PDF,
+    MOTIVO_PDF_TRUNCADO,
     MOTIVO_SIN_PDF,
     NoEsPdf,
+    PdfTruncado,
     SeaceHttp,
     SinPdf,
     resumen_archivos,
@@ -129,7 +132,7 @@ def ejecutar_descarga_batch(
 
     ok = n_puro = n_mixto = n_imagen = 0
     ocr_paginas_total = skip_ocr = ocr_paginas_estimadas = 0
-    sin_pdf = no_pdf = reintentados = err = 0
+    sin_pdf = no_pdf = reintentados = truncados = err = 0
     started_at = now()
     leftovers_antes = {
         path.name for path in Path(temp_dir()).glob(f"{temp_prefix}*")
@@ -229,6 +232,23 @@ def ejecutar_descarga_batch(
                         MOTIVO_NO_PDF,
                         origen="pdf",
                     )
+            except PdfTruncado as error:
+                truncados += 1
+                imprimir_linea(
+                    index,
+                    len(filas),
+                    contrato_id,
+                    "PDF_TRUNCADO",
+                    descripcion,
+                )
+                if not dry_run:
+                    guardar_pdf_truncado(supa, contrato_id, contrato)
+                    registrar_rechazo(
+                        supa,
+                        payload_rechazo(contrato, str(error)[:500]),
+                        MOTIVO_PDF_TRUNCADO,
+                        origen="pdf",
+                    )
             except PdfExtractError as error:
                 err += 1
                 imprimir_linea(index, len(filas), contrato_id, f"FAIL ({error})", descripcion)
@@ -283,8 +303,8 @@ def ejecutar_descarga_batch(
         f"Listo en {elapsed:.0f}s  ok={ok} "
         f"nativo_puro={n_puro} mixto={n_mixto} imagen_total={n_imagen} "
         f"pags_ocr_cola={ocr_paginas_total} "
-        f"sin_pdf={sin_pdf} no_pdf={no_pdf} reintentados={reintentados} "
-        f"err={err} dry-run={dry_run}",
+        f"sin_pdf={sin_pdf} no_pdf={no_pdf} truncados={truncados} "
+        f"reintentados={reintentados} err={err} dry-run={dry_run}",
         flush=True,
     )
     print(
@@ -326,6 +346,7 @@ def ejecutar_descarga_batch(
         "skip_ocr": skip_ocr,
         "ocr_paginas_estimadas": ocr_paginas_estimadas,
         "sin_pdf_cola": sin_pdf,
+        "pdf_truncado": truncados,
         "err": err,
         "limit": limit,
         "dry_run": dry_run,
