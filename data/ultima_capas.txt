@@ -1,3 +1,3 @@
-ts=2026-10-07 15:24:49 UTC
-run_id=37633200556
-[capas] sin_clasificar=78147 capa_null=0 c1=54 sin_chunks=0 sin_pdf_intento=0 items_desync=0
+ts=2026-10-09 15:11:21 UTC
+run_id=37941077566
+[capas] sin_clasificar=78429 capa_null=0 c1=54 sin_chunks=0 sin_pdf_intento=0 items_desync=0
