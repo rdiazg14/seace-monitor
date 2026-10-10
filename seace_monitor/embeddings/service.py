@@ -124,55 +124,134 @@ def run_gemini(
     errores = 0
     por_contrato: dict[int, dict] = {}
 
-    with http_client_factory() as http:
-        for i in range(0, total, lote_n):
-            if verificar_config is not None:
-                verificar_config()
-            lote = pendientes[i:i + lote_n]
-            texts = [texto_para_embed(row, embed_mode) for row in lote]
-            if i == 0 and texts:
-                preview = texts[0][:80].replace("\n", " | ")
-                print(f"  preview embed[0]={preview!r}", flush=True)
+    def registrar_consumo(resultado: str) -> None:
+        # El proveedor cobra cada lote aunque la corrida no termine: el
+        # consumo se registra tambien cuando se interrumpe (GW-011).
+        # Traza unificada de consumo: una fila por corrida de embeddings.
+        tok = EMBED_STATS["tokens_api"]
+        if tok > 0:
             try:
-                embs = solicitar(
-                    http, texts, api_key, fail_fast=fail_fast
-                )
+                supa.table("uso_ia").insert({
+                    "componente": "embedding",
+                    "modelo": modelo,
+                    "tokens_prompt": tok,
+                    "tokens_total": tok,
+                    "costo_usd": round(tok / 1_000_000.0 * precio_in, 8),
+                    "cache_hit": False,
+                    "detalle": {
+                        "texts": EMBED_STATS["texts"],
+                        "requests": EMBED_STATS["requests"],
+                        "n_chunks": ok,
+                        "n_contratos": len(por_contrato),
+                        "fuente": fuente,
+                        "ids": ids or None,
+                        "version_config": version_config or None,
+                        "columna": columna,
+                        "espacio": espacio,
+                        "resultado": resultado,
+                    },
+                }).execute()
+            except Exception as e:
+                print(f"  [warn] log_uso_ia embeddings: {e}", flush=True)
+
+        # Seguimiento por contrato: prorrateo del costo de embedding por chars.
+        for cid, acc in por_contrato.items():
+            chars = acc["chars"]
+            tokens_est = chars // 4
+            costo = tokens_est / 1_000_000.0 * precio_in
+            registrar_evento(
+                supa,
+                cid,
+                "embedded",
+                n_chunks_pdf=acc["chunks"] if fuente == "pdf" else None,
+                n_chunks_api=acc["chunks"] if fuente == "api" else None,
+                tokens_est=tokens_est,
+                costo_usd=costo,
+                detalle={
+                    "chars": chars,
+                    "fuente": fuente,
+                    "modelo": modelo,
+                    "espacio": espacio,
+                    "resultado": resultado,
+                },
+            )
+
+        registrar_run(
+            supa,
+            PASO_EMBEDDING,
+            {
+                "ok": ok,
+                "errores": errores,
+                "total": total,
+                "contratos": len(por_contrato),
+                "tokens_api": tok,
+                "costo_usd": round(tok / 1_000_000.0 * precio_in, 8),
+                "fuente": fuente,
+                "ids": ids or None,
+                "modelo": modelo,
+                "version_config": version_config or None,
+                "columna": columna,
+                "espacio": espacio,
+                "resultado": resultado,
+            },
+        )
+
+    try:
+        with http_client_factory() as http:
+            for i in range(0, total, lote_n):
                 if verificar_config is not None:
                     verificar_config()
-                # Un solo upsert por lote (no N requests). Las filas ya existen,
-                # así que on_conflict=id solo actualiza la columna del espacio.
-                guardar_embeddings(supa, columna, lote, embs)
-                ok += len(lote)
-                for row, t in zip(lote, texts):
-                    cid = int(row["contrato_id"])
-                    acc = por_contrato.setdefault(cid, {"chunks": 0, "chars": 0})
-                    acc["chunks"] += 1
-                    acc["chars"] += len(t)
-            except QuotaExceeded as e:
-                errores += len(lote)
-                pending = total - ok
-                print(
-                    f"  STOP 429  ok={ok}/{total}  lote={i}-{i+len(lote)}  "
-                    f"sin backoff. {e}",
-                    flush=True,
-                )
-                raise QuotaExceeded(f"ok={ok} pendientes={pending}: {e}") from e
-            except Exception as e:
-                errores += len(lote)
-                print(f"  [error] lote {i}-{i+len(lote)}: {e}", flush=True)
-                if fail_fast:
-                    raise
+                lote = pendientes[i:i + lote_n]
+                texts = [texto_para_embed(row, embed_mode) for row in lote]
+                if i == 0 and texts:
+                    preview = texts[0][:80].replace("\n", " | ")
+                    print(f"  preview embed[0]={preview!r}", flush=True)
+                try:
+                    embs = solicitar(
+                        http, texts, api_key, fail_fast=fail_fast
+                    )
+                    if verificar_config is not None:
+                        verificar_config()
+                    # Un solo upsert por lote (no N requests). Las filas ya existen,
+                    # así que on_conflict=id solo actualiza la columna del espacio.
+                    guardar_embeddings(supa, columna, lote, embs)
+                    ok += len(lote)
+                    for row, t in zip(lote, texts):
+                        cid = int(row["contrato_id"])
+                        acc = por_contrato.setdefault(cid, {"chunks": 0, "chars": 0})
+                        acc["chunks"] += 1
+                        acc["chars"] += len(t)
+                except QuotaExceeded as e:
+                    errores += len(lote)
+                    pending = total - ok
+                    print(
+                        f"  STOP 429  ok={ok}/{total}  lote={i}-{i+len(lote)}  "
+                        f"sin backoff. {e}",
+                        flush=True,
+                    )
+                    raise QuotaExceeded(f"ok={ok} pendientes={pending}: {e}") from e
+                except Exception as e:
+                    errores += len(lote)
+                    print(f"  [error] lote {i}-{i+len(lote)}: {e}", flush=True)
+                    if fail_fast:
+                        raise
 
-            done = min(i + lote_n, total)
-            if done % max(lote_n, 1) == 0 or done == total:
-                elapsed = time.time() - t0
-                rate = ok / elapsed if elapsed else 0
-                print(
-                    f"  [{done}/{total}] ok={ok} err={errores} "
-                    f"{elapsed:.0f}s  {rate:.1f}/s",
-                    flush=True,
-                )
-            sleep(pause)
+                done = min(i + lote_n, total)
+                if done % max(lote_n, 1) == 0 or done == total:
+                    elapsed = time.time() - t0
+                    rate = ok / elapsed if elapsed else 0
+                    print(
+                        f"  [{done}/{total}] ok={ok} err={errores} "
+                        f"{elapsed:.0f}s  {rate:.1f}/s",
+                        flush=True,
+                    )
+                sleep(pause)
+    except BaseException:
+        try:
+            registrar_consumo("interrumpido")
+        except Exception as e:
+            print(f"  [warn] consumo de corrida interrumpida no registrado: {e}", flush=True)
+        raise
 
     elapsed = time.time() - t0
     print(
@@ -186,69 +265,6 @@ def run_gemini(
         print(f"  {columna} NOT NULL en muestra: {n_embedded}", flush=True)
     else:
         print_cobertura(cobertura_columna(supa, columna))
-    # Traza unificada de consumo: una fila por corrida de embeddings.
-    tok = EMBED_STATS["tokens_api"]
-    if tok > 0:
-        try:
-            supa.table("uso_ia").insert({
-                "componente": "embedding",
-                "modelo": modelo,
-                "tokens_prompt": tok,
-                "tokens_total": tok,
-                "costo_usd": round(tok / 1_000_000.0 * precio_in, 8),
-                "cache_hit": False,
-                "detalle": {
-                    "texts": EMBED_STATS["texts"],
-                    "requests": EMBED_STATS["requests"],
-                    "n_chunks": ok,
-                    "n_contratos": len(por_contrato),
-                    "fuente": fuente,
-                    "ids": ids or None,
-                    "version_config": version_config or None,
-                    "columna": columna,
-                    "espacio": espacio,
-                },
-            }).execute()
-        except Exception as e:
-            print(f"  [warn] log_uso_ia embeddings: {e}", flush=True)
+    registrar_consumo("completo")
 
-    # Seguimiento por contrato: prorrateo del costo de embedding por chars.
-    for cid, acc in por_contrato.items():
-        chars = acc["chars"]
-        tokens_est = chars // 4
-        costo = tokens_est / 1_000_000.0 * precio_in
-        registrar_evento(
-            supa,
-            cid,
-            "embedded",
-            n_chunks_pdf=acc["chunks"] if fuente == "pdf" else None,
-            n_chunks_api=acc["chunks"] if fuente == "api" else None,
-            tokens_est=tokens_est,
-            costo_usd=costo,
-            detalle={
-                "chars": chars,
-                "fuente": fuente,
-                "modelo": modelo,
-                "espacio": espacio,
-            },
-        )
-
-    registrar_run(
-        supa,
-        PASO_EMBEDDING,
-        {
-            "ok": ok,
-            "errores": errores,
-            "total": total,
-            "contratos": len(por_contrato),
-            "tokens_api": tok,
-            "costo_usd": round(tok / 1_000_000.0 * precio_in, 8),
-            "fuente": fuente,
-            "ids": ids or None,
-            "modelo": modelo,
-            "version_config": version_config or None,
-            "columna": columna,
-            "espacio": espacio,
-        },
-    )
     return {"ok": ok, "err": errores, "total": total, "pendientes": total - ok}
