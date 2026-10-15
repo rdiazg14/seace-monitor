@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -22,6 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
         ("descargar_requerimiento.py", "--solo-ocr"),
         ("extraer_contenedores.py", "--dry-run"),
         ("clasificar_gemini.py", "--proponer"),
+        ("ingesta_completa.py", "--paginas-conocidas"),
     ],
 )
 def test_cli_historico_conserva_help(script: str, expected_option: str) -> None:
@@ -30,6 +32,9 @@ def test_cli_historico_conserva_help(script: str, expected_option: str) -> None:
         cwd=ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        # La ayuda de algunos CLI usa caracteres fuera de cp1252 (Windows).
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         timeout=20,
         check=False,
     )

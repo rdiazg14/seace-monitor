@@ -69,6 +69,29 @@ def get_max_id(client) -> int:
     return 0
 
 
+def ids_existentes(client, ids: list[int], *, dsn: str = "") -> set[int]:
+    """Cuáles de ``ids`` ya están en contratos.
+
+    Prefiere la conexión directa (DATABASE_URL); si no hay, PostgREST.
+    No captura errores: si no se puede saber, el llamador se detiene en vez
+    de suponer que nada existe.
+    """
+    if not ids:
+        return set()
+    if dsn:
+        with connect(dsn) as connection:
+            rows = connection.execute(
+                "select id from contratos where id = any(%s)", (list(ids),)
+            ).fetchall()
+        return {int(row[0]) for row in rows}
+    if client is None:
+        raise RuntimeError("sin DATABASE_URL ni cliente supabase")
+    response = (
+        client.table("contratos").select("id").in_("id", list(ids)).execute()
+    )
+    return {int(row["id"]) for row in (response.data or [])}
+
+
 def upsert_lote(
     client,
     lote: list[dict],

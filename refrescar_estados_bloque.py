@@ -97,11 +97,12 @@ def upsert_lote(conn, lote: list[dict]) -> int:
 def cargar_ids_existentes(conn) -> set[int]:
     """Ids que ya existen en contratos (los únicos que se refrescan aquí).
 
-    El listado trae contratos históricos que nunca pasaron por la ingesta
-    (id < MAX y fuera del backfill original). Hacerles upsert los insertaría
-    como «fantasmas» con solo estado/fechas y sin descripcion/entidad, que
-    luego aparecen incompletos en el Buscador. Por eso este paso actualiza
-    SOLO ids existentes; las altas las cubre ingesta_completa.py.
+    El listado trae ids que no están en la base (por ejemplo procesos
+    publicados tarde con un id menor que el máximo). Hacerles upsert desde
+    aquí los insertaría como «fantasmas» con solo estado/fechas y sin
+    descripcion/entidad, que luego aparecen incompletos en el Buscador. Por
+    eso este paso actualiza SOLO ids existentes; las altas las cubre
+    ingesta_completa.py.
     """
     rows = conn.execute("select id from contratos").fetchall()
     return {int(r[0]) for r in rows}
@@ -115,8 +116,9 @@ def main():
                     help=(
                         "Tope de reloj en segundos (0 = sin tope). Al alcanzarlo "
                         "corta y lo restante corre en la próxima pasada. El "
-                        "listado viene por id descendente (vigentes/nuevos "
-                        "primero), así que cortar no pierde los importantes."
+                        "listado viene por fecha de publicación descendente "
+                        "(lo reciente primero), así que cortar no pierde los "
+                        "importantes."
                     ))
     ap.add_argument("--headed", action="store_true")
     args = ap.parse_args()

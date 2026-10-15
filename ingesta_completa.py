@@ -4,8 +4,11 @@ Ingesta completa del corpus de contrataciones menores del SEACE.
 
 Modos:
   COMPLETA     Primera corrida o --forzar-completa. Descarga los ~76k registros.
-  INCREMENTAL  Corridas siguientes. Detecta MAX(id) en Supabase (o parquet local)
-               y solo baja lo publicado después de ese punto.
+  INCREMENTAL  Corridas siguientes. El listado viene por fecha de publicación
+               descendente (no por idContrato): da de alta los ids de cada
+               página que no existen en la base y corta tras
+               --paginas-conocidas páginas seguidas sin altas, con tope
+               --max-paginas.
 
 Salidas:
   Supabase  tabla 'contratos' via UPSERT — si SUPABASE_URL y
@@ -27,12 +30,18 @@ from seace_monitor.ingestion.models import (
 from seace_monitor.ingestion.repository import (
     COLS_CONTRATOS as _COLS_CONTRATOS,
     get_max_id as obtener_max_id,
+    ids_existentes,
     registrar_rechazo,
     upsert_contratos_pg,
     upsert_lote as persistir_lote,
     upsert_supabase as persistir_supabase,
 )
-from seace_monitor.ingestion.service import preparar_fila_db as transformar_fila_db
+from seace_monitor.ingestion.service import (
+    ids_de_lote,
+    motivo_parada,
+    preparar_fila_db as transformar_fila_db,
+    seleccionar_altas,
+)
 
 import argparse
 import json
@@ -208,6 +217,18 @@ def main():
                         "clasificacion_contrato (capa 3) y keywords no pisan "
                         "gemini/humano."
                     ))
+    ap.add_argument("--max-paginas", type=int, default=10,
+                    help="Tope de páginas en modo incremental (0 = sin tope).")
+    ap.add_argument(
+        "--paginas-conocidas",
+        type=int,
+        default=2,
+        help=(
+            "Corta tras N páginas seguidas sin altas (todos sus ids ya están "
+            "en la base). 0 = no corta por esto, solo por --max-paginas o fin "
+            "del listado."
+        ),
+    )
     ap.add_argument("--headed", action="store_true",
                     help="navegador visible (útil para depurar)")
     ap.add_argument("--simular-rechazo", action="store_true",
@@ -294,7 +315,9 @@ def main():
         cats = cats_tabla
 
     # ── 2. Determinar punto de partida (incremental vs completo) ───────
+    dsn = (os.getenv("DATABASE_URL") or "").strip()
     max_id = 0
+    ids_locales: set[int] | None = None
     if not args.forzar_completa:
         if supa:
             max_id = get_max_id_supabase(supa)
@@ -304,14 +327,21 @@ def main():
             if not df_local.empty:
                 max_id = int(df_local["idContrato"].max())
                 print(f"[incremental] MAX id en parquet local: {max_id:,}")
+                if not dsn:
+                    ids_locales = {int(x) for x in df_local["idContrato"]}
 
     modo = "INCREMENTAL" if max_id > 0 else "COMPLETA"
-    print(f"[modo] {modo}" + (f" — solo id > {max_id:,}" if max_id else ""))
+    print(f"[modo] {modo}" + (
+        f" — altas por presencia, corta tras {args.paginas_conocidas} "
+        f"páginas sin altas, tope {args.max_paginas}" if max_id else ""))
 
     # ── 3. Descarga desde el SEACE ────────────────────────────────────
     t0 = time.time()
     nuevas_raw: list[dict] = []
     alerta_anomala = 0
+    tomados: set[int] = set()
+    paginas_sin_altas = 0
+    motivo: str | None = None
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=not args.headed)
@@ -323,13 +353,13 @@ def main():
         total_api  = 0
         total_pags = 1
         pagina     = 1
-        stop       = False
 
-        while not stop:
+        while True:
             total_api, lote, status = _api_call(page, pagina)
             if status != 200:
                 print(f"[error] pagina {pagina}: HTTP {status}")
                 alerta_anomala = 1
+                motivo = f"http_{status}"
                 break
             if pagina == 1:
                 total_pags = -(-total_api // PAGE_SIZE) if total_api else 0
@@ -338,14 +368,23 @@ def main():
                     alerta_anomala = 1
 
             if max_id > 0:
-                nuevos = [r for r in lote if r.get("idContrato", 0) > max_id]
-                if len(nuevos) < len(lote):
-                    nuevas_raw.extend(nuevos)
-                    print(f"  p{pagina}: {len(nuevos)} nuevos "
-                          f"({len(lote)-len(nuevos)} ya conocidos) -> STOP")
-                    stop = True
+                try:
+                    if ids_locales is not None:
+                        existentes = ids_locales
+                    else:
+                        existentes = ids_existentes(
+                            supa, ids_de_lote(lote), dsn=dsn)
+                except Exception as e:
+                    print(f"[error] p{pagina}: no pude consultar existencia "
+                          f"({e}) -> STOP")
+                    alerta_anomala = 1
+                    motivo = "error_existencia"
                     break
+                nuevos = seleccionar_altas(lote, existentes, tomados)
                 nuevas_raw.extend(nuevos)
+                paginas_sin_altas = 0 if nuevos else paginas_sin_altas + 1
+                print(f"  p{pagina}: {len(nuevos)} nuevos "
+                      f"({len(lote)-len(nuevos)} ya conocidos o repetidos)")
             else:
                 nuevas_raw.extend(lote)
 
@@ -355,7 +394,17 @@ def main():
             print(f"  p{pagina}/{total_pags} +{len(lote)} "
                   f"acum={len(nuevas_raw):,} {elapsed:.0f}s ~{eta:.0f}s")
 
-            if not lote or pagina >= total_pags:
+            incremental = max_id > 0
+            motivo = motivo_parada(
+                pagina=pagina,
+                total_paginas=total_pags,
+                lote_vacio=not lote,
+                paginas_sin_altas=paginas_sin_altas,
+                paginas_conocidas=args.paginas_conocidas if incremental else 0,
+                max_paginas=args.max_paginas if incremental else 0,
+            )
+            if motivo:
+                print(f"  -> STOP ({motivo}) en p{pagina}")
                 break
             pagina += 1
 
@@ -435,7 +484,6 @@ def main():
 
     # ── 5. Upsert a Supabase (hechos SEACE, sin inferencia) ────────────
     if filas_db:
-        dsn = (os.getenv("DATABASE_URL") or "").strip()
         if dsn:
             try:
                 upsert_contratos_pg(dsn, filas_db)
@@ -497,6 +545,8 @@ def main():
             "nuevos_esta_corrida": len(nuevas_raw),
             "rechazados_esta_corrida": n_rech,
             "alerta_anomala": alerta_anomala,
+            "paginas_leidas": pagina,
+            "motivo_parada": motivo,
         },
     )
     print(f"[log] {ts}")

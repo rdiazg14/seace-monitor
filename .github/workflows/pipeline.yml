@@ -95,9 +95,10 @@ jobs:
       - name: Refresco de estado en bloque (listado)
         id: g1
         if: ${{ success() && github.event.inputs.solo_ocr != 'true' }}
-        # Tope de reloj 60 min: el listado viene ordenado por id descendente
-        # (los vigentes/nuevos primero), así que si corta, corta en la cola de
-        # culminados viejos. Los postulables TI se refrescan aparte cada 2h.
+        # Tope de reloj 60 min: el listado viene ordenado por fecha de
+        # publicación descendente (lo reciente primero), así que si corta, corta
+        # en la cola de culminados viejos. Los postulables TI se refrescan
+        # aparte cada 2h.
         run: python refrescar_estados_bloque.py --max-segundos 3600
 
       - name: Capturar resultado (Desierto/Adjudicado)
