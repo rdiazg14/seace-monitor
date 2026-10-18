@@ -5818,3 +5818,4 @@
 {"id": 102922, "tdr_tipo_extraccion": "nativo_puro", "paginas_ocr_pendientes": [], "paginas_ocr_hechas": [], "tdr_n_paginas": 13, "tdr_n_paginas_nativas": 13, "tdr_n_paginas_ocr": 0, "pdf_es_imagen": false, "chars_final": 25358}
 {"id": 102923, "tdr_tipo_extraccion": "nativo_puro", "paginas_ocr_pendientes": [], "paginas_ocr_hechas": [], "tdr_n_paginas": 15, "tdr_n_paginas_nativas": 15, "tdr_n_paginas_ocr": 0, "pdf_es_imagen": false, "chars_final": 31392}
 {"id": 102919, "tdr_tipo_extraccion": "nativo_puro", "paginas_ocr_pendientes": [], "paginas_ocr_hechas": [], "tdr_n_paginas": 9, "tdr_n_paginas_nativas": 9, "tdr_n_paginas_ocr": 0, "pdf_es_imagen": false, "chars_final": 18634}
+{"id": 102748, "tdr_tipo_extraccion": "imagen_total", "paginas_ocr_pendientes": [], "paginas_ocr_hechas": [], "tdr_n_paginas": 8, "tdr_n_paginas_nativas": 0, "tdr_n_paginas_ocr": 8, "pdf_es_imagen": true, "chars_final": 0}
