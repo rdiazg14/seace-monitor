@@ -67,7 +67,7 @@ from seace_monitor.clasificacion import (
     clasificar_categoria_it,
     clasificar_relevancia_ia,
 )
-from seace_monitor.seace_api import API_BUSCADOR, SPA_URL, parsear_fecha
+from seace_monitor.seace_api import API_BUSCADOR, IDENTIFICACION, SPA_URL, parsear_fecha
 
 cargar_env()
 
@@ -345,7 +345,7 @@ def main():
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=not args.headed)
-        page = browser.new_context(ignore_https_errors=True).new_page()
+        page = browser.new_context(ignore_https_errors=True, user_agent=IDENTIFICACION).new_page()
         print("Iniciando SPA...")
         page.goto(SPA_URL, wait_until="networkidle", timeout=90_000)
         page.wait_for_timeout(2_000)

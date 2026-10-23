@@ -18,6 +18,12 @@ API_BUSCADOR = SPA_BASE + "/v1/s8uit-services/buscadorpublico/contrataciones/bus
 # Detalle completo de un contrato (listar-completo?id_contrato=N).
 API_DETALLE = SPA_BASE + "/v1/s8uit-services/buscadorpublico/contrataciones/listar-completo"
 
+# Nombre con el que este proyecto se identifica ante el portal (cabecera
+# User-Agent) en todas sus peticiones: dice quién consulta y que es una
+# consulta automatizada. Desde el 18/10/2026 el portal rechaza con 403 los
+# nombres por defecto de las herramientas (python-httpx, HeadlessChrome).
+IDENTIFICACION = "Enertronic/1.0 (consulta automatizada del buscador publico)"
+
 _FMT_SEACE = "%d/%m/%Y %H:%M:%S"
 
 

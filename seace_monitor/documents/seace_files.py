@@ -9,7 +9,7 @@ from pathlib import Path
 import httpx
 from playwright.sync_api import sync_playwright
 
-from seace_monitor.seace_api import SPA_URL
+from seace_monitor.seace_api import IDENTIFICACION, SPA_URL
 
 
 DEFAULT_LISTAR_URL = (
@@ -80,7 +80,7 @@ class SeaceHttp:
         self._client = client or httpx.Client(
             timeout=httpx.Timeout(60.0, connect=15.0),
             follow_redirects=True,
-            headers={"Accept": "*/*"},
+            headers={"Accept": "*/*", "User-Agent": IDENTIFICACION},
         )
         self._playwright_factory = playwright_factory
         self._sleep = sleep
@@ -122,7 +122,7 @@ class SeaceHttp:
             return self._page
         self._pw = self._playwright_factory().start()
         self._browser = self._pw.chromium.launch(headless=not self.headed)
-        self._page = self._browser.new_context(ignore_https_errors=True).new_page()
+        self._page = self._browser.new_context(ignore_https_errors=True, user_agent=IDENTIFICACION).new_page()
         self._page.goto(self._spa_url, wait_until="networkidle", timeout=90_000)
         self._page.wait_for_timeout(2_000)
         return self._page

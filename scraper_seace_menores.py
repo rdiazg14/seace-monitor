@@ -35,6 +35,8 @@ from datetime import datetime, timezone
 import pandas as pd
 from playwright.sync_api import sync_playwright
 
+from seace_monitor.seace_api import IDENTIFICACION
+
 URL = "https://prod6.seace.gob.pe/buscador-publico/contrataciones"
 API = "https://prod6.seace.gob.pe/v1/s8uit-services/buscadorpublico/contrataciones/buscador"
 
@@ -238,7 +240,7 @@ def main():
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=not args.headed)
-        ctx = browser.new_context(ignore_https_errors=True)
+        ctx = browser.new_context(ignore_https_errors=True, user_agent=IDENTIFICACION)
         page = ctx.new_page()
 
         # Intercepta cualquier respuesta JSON del buscador que emita la propia

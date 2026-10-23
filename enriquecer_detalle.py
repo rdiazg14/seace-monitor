@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from seace_monitor.config import cargar_env
 from seace_monitor.db import connect
-from seace_monitor.seace_api import API_DETALLE, SPA_URL, parsear_fecha
+from seace_monitor.seace_api import API_DETALLE, IDENTIFICACION, SPA_URL, parsear_fecha
 
 import argparse
 import json
@@ -173,7 +173,7 @@ def main():
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=not args.headed)
-            page    = browser.new_context(ignore_https_errors=True).new_page()
+            page    = browser.new_context(ignore_https_errors=True, user_agent=IDENTIFICACION).new_page()
 
             print("Iniciando sesión SEACE...", flush=True)
             page.goto(SPA_URL, wait_until="networkidle", timeout=90_000)
