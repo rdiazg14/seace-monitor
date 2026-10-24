@@ -7,6 +7,9 @@ scripts que lanzan un navegador por separado.
 """
 from __future__ import annotations
 
+import os
+import time
+from collections.abc import Callable
 from datetime import datetime
 
 # Página pública del buscador y base de la API JSON.
@@ -23,6 +26,47 @@ API_DETALLE = SPA_BASE + "/v1/s8uit-services/buscadorpublico/contrataciones/list
 # consulta automatizada. Desde el 18/10/2026 el portal rechaza con 403 los
 # nombres por defecto de las herramientas (python-httpx, HeadlessChrome).
 IDENTIFICACION = "Enertronic/1.0 (consulta automatizada del buscador publico)"
+
+# Pausa mínima entre peticiones de detalle y de archivos. El portal rechaza
+# por un tiempo la dirección que pide en ráfaga (23/10/2026: 403 tras unas
+# 13 descargas seguidas sin pausa). Ajustable con SEACE_PAUSA_SEGUNDOS.
+PAUSA_SEGUNDOS_DEFECTO = 10.0
+
+
+def pausa_configurada() -> float:
+    valor = (os.getenv("SEACE_PAUSA_SEGUNDOS") or "").strip()
+    try:
+        return max(0.0, float(valor)) if valor else PAUSA_SEGUNDOS_DEFECTO
+    except ValueError:
+        return PAUSA_SEGUNDOS_DEFECTO
+
+
+class Ritmo:
+    """Garantiza un intervalo mínimo entre peticiones consecutivas.
+
+    La primera petición no espera; las siguientes esperan solo lo que falte
+    para completar el intervalo desde la anterior.
+    """
+
+    def __init__(
+        self,
+        intervalo: float | None = None,
+        *,
+        reloj: Callable[[], float] = time.monotonic,
+        dormir: Callable[[float], None] = time.sleep,
+    ):
+        self.intervalo = pausa_configurada() if intervalo is None else intervalo
+        self._reloj = reloj
+        self._dormir = dormir
+        self._ultima: float | None = None
+
+    def esperar(self) -> None:
+        if self._ultima is not None:
+            falta = self.intervalo - (self._reloj() - self._ultima)
+            if falta > 0:
+                self._dormir(falta)
+        self._ultima = self._reloj()
+
 
 _FMT_SEACE = "%d/%m/%Y %H:%M:%S"
 

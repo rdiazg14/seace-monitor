@@ -9,7 +9,7 @@ from pathlib import Path
 import httpx
 from playwright.sync_api import sync_playwright
 
-from seace_monitor.seace_api import IDENTIFICACION, SPA_URL
+from seace_monitor.seace_api import IDENTIFICACION, SPA_URL, Ritmo
 
 
 DEFAULT_LISTAR_URL = (
@@ -75,6 +75,7 @@ class SeaceHttp:
         playwright_factory=sync_playwright,
         sleep: Callable[[float], None] = time.sleep,
         spa_url: str = SPA_URL,
+        ritmo: Ritmo | None = None,
     ):
         self.headed = headed
         self._client = client or httpx.Client(
@@ -84,12 +85,14 @@ class SeaceHttp:
         )
         self._playwright_factory = playwright_factory
         self._sleep = sleep
+        self._ritmo = ritmo or Ritmo(dormir=sleep)
         self._spa_url = spa_url
         self._pw = None
         self._browser = None
         self._page = None
 
     def get_bytes(self, url: str) -> tuple[int, dict[str, str], bytes]:
+        self._ritmo.esperar()
         last_error: Exception | None = None
         for attempt in range(3):
             try:

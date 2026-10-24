@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from seace_monitor.config import cargar_env
 from seace_monitor.db import connect
-from seace_monitor.seace_api import API_DETALLE, IDENTIFICACION, SPA_URL
+from seace_monitor.seace_api import API_DETALLE, IDENTIFICACION, SPA_URL, Ritmo
 
 import argparse
 import os
@@ -184,7 +184,9 @@ def main():
         page.goto(SPA_URL, wait_until="networkidle", timeout=90_000)
         page.wait_for_timeout(2_000)
 
+        ritmo = Ritmo()
         for i, cid in enumerate(ids, 1):
+            ritmo.esperar()
             res = _fetch_resultado(page, cid)
             if res is None:
                 errores += 1

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from seace_monitor.config import cargar_env
 from seace_monitor.db import connect
-from seace_monitor.seace_api import API_DETALLE, IDENTIFICACION, SPA_URL
+from seace_monitor.seace_api import API_DETALLE, IDENTIFICACION, SPA_URL, Ritmo
 from seace_monitor.supabase_client import crear_cliente
 
 import argparse
@@ -323,9 +323,11 @@ def main():
         page.wait_for_timeout(2_000)
         print("Sesión lista.\n", flush=True)
 
+        ritmo = Ritmo()
         for i, row in enumerate(lote, 1):
             cid = int(row["id"])
             estado_bd = row.get("estado")
+            ritmo.esperar()
             info = fetch_estado(page, cid)
             if not info:
                 errores += 1

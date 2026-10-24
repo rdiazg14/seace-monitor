@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from seace_monitor.config import cargar_env
 from seace_monitor.db import connect
-from seace_monitor.seace_api import API_DETALLE, IDENTIFICACION, SPA_URL, parsear_fecha
+from seace_monitor.seace_api import API_DETALLE, IDENTIFICACION, SPA_URL, Ritmo, parsear_fecha
 
 import argparse
 import json
@@ -179,10 +179,12 @@ def main():
             page.goto(SPA_URL, wait_until="networkidle", timeout=90_000)
             page.wait_for_timeout(2_000)
             print("Sesión lista.\n", flush=True)
+            ritmo = Ritmo()
 
             for i, contrato in enumerate(vigentes, 1):
                 cid  = contrato["id"]
                 desc = (contrato.get("descripcion_contrato") or "")[:50]
+                ritmo.esperar()
                 detalle = fetch_detalle(page, cid)
 
                 if detalle:
